@@ -56,63 +56,6 @@ body {
   font-size: 14px;
 }
 
-.toolbar {
-  margin-top: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.tool {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  background: rgba(15, 23, 42, 0.04);
-  border: 1px solid rgba(15, 23, 42, 0.06);
-  padding: 8px 10px;
-  border-radius: 999px;
-}
-
-.toolLabel {
-  font-size: 14px;
-  font-weight: 800;
-  color: #111827;
-}
-
-.select {
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  border: 0;
-  background: #fff;
-  padding: 8px 34px 8px 12px;
-  border-radius: 999px;
-  font-weight: 800;
-  color: #111827;
-  box-shadow: 0 6px 16px rgba(2, 6, 23, 0.08);
-  cursor: pointer;
-  position: relative;
-}
-
-.select:focus {
-  outline: 3px solid rgba(59, 130, 246, 0.25);
-  outline-offset: 2px;
-}
-
-.pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 8px 12px;
-  border-radius: 999px;
-  font-weight: 900;
-  font-size: 14px;
-  background: linear-gradient(180deg, #fde68a, #f59e0b);
-  color: #111827;
-  box-shadow: 0 10px 24px rgba(245, 158, 11, 0.25);
-}
-
 .status {
   margin: 10px 0 14px;
   font-size: 16px;
@@ -385,10 +328,6 @@ body {
   }
   .desc {
     font-size: 13px;
-  }
-  .toolbar {
-    flex-wrap: wrap;
-    justify-content: flex-start;
   }
   .status {
     font-size: 15px;

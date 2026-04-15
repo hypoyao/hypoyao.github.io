@@ -19,7 +19,6 @@ const STORAGE_STATS_KEY = "ttt3_stats_v1"
 
 const $winRate = document.getElementById("winRate")
 const $winLoss = document.getElementById("winLoss")
-const $userId = document.getElementById("userId")
 
 let userId = null
 
@@ -114,12 +113,11 @@ function recordGameResult(winner) {
 }
 
 function renderUserStats() {
-  if (!$winRate || !$winLoss || !$userId) return
+  if (!$winRate || !$winLoss) return
 
   if (!userId) {
     $winRate.textContent = "胜率 --%"
     $winLoss.textContent = "0胜 0负"
-    $userId.textContent = "ID: --"
     return
   }
 
@@ -129,7 +127,6 @@ function renderUserStats() {
 
   $winRate.textContent = `胜率 ${rate.toFixed(total === 0 ? 0 : 1)}%`
   $winLoss.textContent = `${wins}胜 ${losses}负`
-  $userId.textContent = `ID: ${userId}`
 }
 
 function getWinLine(board, player) {
@@ -315,9 +312,6 @@ const $status = document.getElementById("status")
 const $p1Count = document.getElementById("p1Count")
 const $p2Count = document.getElementById("p2Count")
 const $resetBtn = document.getElementById("resetBtn")
-const $difficulty = document.getElementById("difficulty")
-const $difficultyText = document.getElementById("difficultyText")
-const $difficultyPill = document.getElementById("difficultyPill")
 const $resultModal = document.getElementById("resultModal")
 const $resultTitle = document.getElementById("resultTitle")
 const $resultBody = document.getElementById("resultBody")
@@ -332,21 +326,8 @@ const AI = 2 // AI：O
 const FADE_MS = 320
 let fadeTimers = Array(9).fill(null)
 
-const DIFFICULTY = {
-  easy: { label: "简单", maxDepth: 5, mistakeRate: 0.35, mistakeTopK: 5 },
-  medium: { label: "中等", maxDepth: 8, mistakeRate: 0.12, mistakeTopK: 3 },
-  hard: { label: "超强", maxDepth: 12, mistakeRate: 0, mistakeTopK: 1 },
-}
-
-let difficultyKey = "medium"
-
-function setDifficulty(key, { reset = true } = {}) {
-  difficultyKey = DIFFICULTY[key] ? key : "medium"
-  const label = DIFFICULTY[difficultyKey].label
-  if ($difficultyText) $difficultyText.textContent = label
-  if ($difficultyPill) $difficultyPill.textContent = label
-  if (reset) init()
-}
+// 固定最难（不再提供难度选择）
+const AI_CFG = { maxDepth: 12, mistakeRate: 0, mistakeTopK: 1 }
 
 function init() {
   closeResultModal()
@@ -388,18 +369,15 @@ function renderStatus() {
   if (state.winner) {
     $status.innerHTML =
       state.winner === HUMAN
-        ? `结果：<span class="p1">你（X）获胜</span>`
-        : `结果：<span class="p2">AI（O）获胜</span>`
+        ? `结果：<span class="p1">你获胜</span>`
+        : `结果：<span class="p2">AI 获胜</span>`
     return
   }
   if (isAiThinking) {
-    $status.innerHTML = `当前：<span class="p2">AI（O）思考中…</span>`
+    $status.innerHTML = `AI 思考中…`
     return
   }
-  $status.innerHTML =
-    state.currentPlayer === HUMAN
-      ? `当前：<span class="p1">你（X）</span>`
-      : `当前：<span class="p2">AI（O）</span>`
+  $status.innerHTML = state.currentPlayer === HUMAN ? `轮到你落子` : `轮到 AI 落子`
 }
 
 function handleGameOver(winner) {
@@ -509,7 +487,7 @@ function aiMove() {
   // 让浏览器先把“思考中”渲染出来
   const delay = 520 + Math.floor(Math.random() * 380) // 520~900ms，更像“在思考”
   window.setTimeout(() => {
-    const best = chooseBestMove(state, AI, HUMAN, DIFFICULTY[difficultyKey])
+    const best = chooseBestMove(state, AI, HUMAN, AI_CFG)
     if (best === null || best === undefined) {
       isAiThinking = false
       renderBoard()
@@ -548,13 +526,6 @@ $resetBtn.addEventListener("click", () => {
   closeResultModal()
   init()
 })
-if ($difficulty) {
-  $difficulty.addEventListener("change", (e) => {
-    const key = e.target.value
-    setDifficulty(key, { reset: true })
-  })
-}
-
 // 初始化：先拿到 userId 与战绩，再启动游戏
 ;(async () => {
   try {
@@ -566,7 +537,5 @@ if ($difficulty) {
     userId = fallback
   }
   renderUserStats()
-
-  setDifficulty($difficulty?.value || "medium", { reset: false })
   init()
 })()
