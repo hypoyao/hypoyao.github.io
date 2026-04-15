@@ -325,11 +325,6 @@ body {
   .card {
     padding: 14px 12px;
     border-radius: 16px;
-    /* 如果仍然超高，则允许卡片内部滚动，保证按钮可操作 */
-    max-height: calc(100svh - 24px);
-    overflow: auto;
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior: contain;
   }
   .header h1 {
     /* 去掉第一个大标题（手机端隐藏） */
@@ -365,6 +360,13 @@ body {
   }
   .actions {
     margin-top: 12px;
+    /* iOS 某些 WebView 下，父容器 overflow 滚动可能导致按钮/棋盘点击异常；
+       这里改为不让 card 自己滚动，而是让页面自然滚动，并把按钮做成 sticky 兜底。 */
+    position: sticky;
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    padding: 10px 0 calc(8px + env(safe-area-inset-bottom));
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.92) 35%, #fff 70%);
+    z-index: 2;
   }
   .btn {
     font-size: 15px;
@@ -372,5 +374,12 @@ body {
   }
   .board {
     border-radius: 18px;
+    /* 兼容部分移动端 WebView 对 aspect-ratio 的兼容问题 */
+    height: min(380px, 86vw);
+    position: relative;
+    z-index: 1;
+  }
+  .cell {
+    pointer-events: auto;
   }
 }

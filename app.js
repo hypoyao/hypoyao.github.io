@@ -16,6 +16,11 @@ const WIN_LINES = [
 
 const STORAGE_UID_KEY = "ttt3_uid_v1"
 const STORAGE_STATS_KEY = "ttt3_stats_v1"
+const STORAGE_VISIT_LOCK_KEY = "ttt3_visit_lock_v1"
+
+// 访问统计云函数（请确保云端函数名一致）
+const VISIT_FN_NAME = "page_visit_counter"
+const CLOUDBASE_ENV_ID = "hypo-7gm1818jbbd6ee3e"
 
 const $winRate = document.getElementById("winRate")
 const $winLoss = document.getElementById("winLoss")
@@ -78,6 +83,56 @@ async function getOrCreateUserId() {
   const id = `u_${hex.slice(0, 16)}`
   localStorage.setItem(STORAGE_UID_KEY, id)
   return id
+}
+
+// ========= 访问统计（纯H5：localStorage user_id + 调云函数自增） =========
+let cbApp = null
+
+async function getCloudbaseApp() {
+  // 纯H5需要在 index.html 里通过 <script> 引入 cloudbase.full.js
+  if (cbApp) return cbApp
+  if (typeof window === "undefined") return null
+  if (!window.cloudbase) return null
+
+  cbApp = window.cloudbase.init({ env: CLOUDBASE_ENV_ID })
+
+  // 尽量开启匿名登录（如果环境未开启/无需登录，失败也不影响页面）
+  try {
+    const auth = cbApp.auth({ persistence: "local" })
+    // 已登录就不重复 signIn
+    if (!auth.hasLoginState?.() && auth.anonymousAuthProvider) {
+      await auth.anonymousAuthProvider().signIn()
+    }
+  } catch {}
+
+  return cbApp
+}
+
+function acquireVisitLock(ttlMs = 1500) {
+  // 防止同一页面“短时间重复触发”（某些浏览器会重复执行 onload / bfcache 等）
+  const now = Date.now()
+  const last = Number(localStorage.getItem(STORAGE_VISIT_LOCK_KEY) || 0)
+  if (now - last < ttlMs) return false
+  localStorage.setItem(STORAGE_VISIT_LOCK_KEY, String(now))
+  return true
+}
+
+async function recordPageVisit(uid) {
+  try {
+    if (!uid) return
+    if (!acquireVisitLock()) return
+
+    const app = await getCloudbaseApp()
+    if (!app) return
+
+    // 每次刷新/打开页面调用一次：同一 user_id 会在 MySQL 里 count + 1
+    await app.callFunction({
+      name: VISIT_FN_NAME,
+      data: { user_id: uid },
+    })
+  } catch {
+    // 统计失败不影响游戏
+  }
 }
 
 function loadAllStats() {
@@ -536,6 +591,8 @@ $resetBtn.addEventListener("click", () => {
     localStorage.setItem(STORAGE_UID_KEY, fallback)
     userId = fallback
   }
+  // 记录访问次数（不阻塞 UI）
+  recordPageVisit(userId)
   renderUserStats()
   init()
 })()
