@@ -27,6 +27,18 @@
           </div>
         </header>
 
+        <section class="stats" aria-label="player stats">
+          <div class="statsMain">
+            <div class="statsTitle">你的战绩</div>
+            <div class="statsRate" id="winRate">胜率 --%</div>
+            <div class="statsSub">
+              <span id="winLoss">0胜 0负</span>
+              <span class="dot">•</span>
+              <span class="uid" id="userId">ID: --</span>
+            </div>
+          </div>
+        </section>
+
         <div class="status" id="status"></div>
 
         <div class="board" id="board" aria-label="tic-tac-toe board">
@@ -53,6 +65,18 @@
         <span>对战模式：你(X) vs AI(O)。难度：<strong id="difficultyText">中等</strong></span>
       </footer>
     </main>
+
+    <!-- 自定义结果弹窗：避免浏览器 alert 标题显示 file:// / origin -->
+    <div class="modal" id="resultModal" aria-hidden="true">
+      <div class="modalBackdrop" data-close="1"></div>
+      <div class="modalPanel" role="dialog" aria-modal="true" aria-label="result dialog">
+        <div class="modalTitle" id="resultTitle">本局结果</div>
+        <div class="modalBody" id="resultBody">--</div>
+        <div class="modalActions">
+          <button class="btn modalBtn" id="playAgainBtn" type="button">再来一局</button>
+        </div>
+      </div>
+    </div>
 
     <script src="./app.js"></script>
   </body>

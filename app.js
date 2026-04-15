@@ -9,6 +9,129 @@ const WIN_LINES = [
   [2, 4, 6],
 ]
 
+// ========= 玩家ID（fingerprint）+ 战绩统计 =========
+// 说明：
+// - 用浏览器特征生成指纹 hash 作为“初始 ID”，并持久化到 localStorage，避免指纹轻微变化导致 ID 漂移
+// - 战绩按 userId 存在 localStorage，单机多用户（不同浏览器/设备）互不影响
+
+const STORAGE_UID_KEY = "ttt3_uid_v1"
+const STORAGE_STATS_KEY = "ttt3_stats_v1"
+
+const $winRate = document.getElementById("winRate")
+const $winLoss = document.getElementById("winLoss")
+const $userId = document.getElementById("userId")
+
+let userId = null
+
+function safeJsonParse(s, fallback) {
+  try {
+    return JSON.parse(s)
+  } catch {
+    return fallback
+  }
+}
+
+function getFingerprintSeed() {
+  const nav = navigator || {}
+  const scr = screen || {}
+  const tz = (() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || ""
+    } catch {
+      return ""
+    }
+  })()
+
+  // 尽量使用稳定且“通用可用”的特征
+  // 注：不引入第三方依赖，保持项目轻量
+  return {
+    ua: nav.userAgent || "",
+    lang: nav.language || "",
+    langs: Array.isArray(nav.languages) ? nav.languages.join(",") : "",
+    platform: nav.platform || "",
+    hc: nav.hardwareConcurrency || 0,
+    dm: nav.deviceMemory || 0,
+    tz,
+    dpr: window.devicePixelRatio || 1,
+    w: scr.width || 0,
+    h: scr.height || 0,
+    cd: scr.colorDepth || 0,
+    tp: nav.maxTouchPoints || 0,
+  }
+}
+
+async function sha256Hex(input) {
+  const data = new TextEncoder().encode(input)
+  const hash = await crypto.subtle.digest("SHA-256", data)
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+}
+
+async function getOrCreateUserId() {
+  const cached = localStorage.getItem(STORAGE_UID_KEY)
+  if (cached) return cached
+
+  // 用浏览器特征生成（一次性）ID，然后写入 localStorage
+  const seed = getFingerprintSeed()
+  const raw = JSON.stringify(seed)
+  const hex = await sha256Hex(raw)
+  const id = `u_${hex.slice(0, 16)}`
+  localStorage.setItem(STORAGE_UID_KEY, id)
+  return id
+}
+
+function loadAllStats() {
+  return safeJsonParse(localStorage.getItem(STORAGE_STATS_KEY) || "{}", {})
+}
+
+function saveAllStats(all) {
+  localStorage.setItem(STORAGE_STATS_KEY, JSON.stringify(all))
+}
+
+function getUserStats(uid) {
+  const all = loadAllStats()
+  const s = all?.[uid]
+  return {
+    wins: Number(s?.wins || 0),
+    losses: Number(s?.losses || 0),
+  }
+}
+
+function setUserStats(uid, stats) {
+  const all = loadAllStats()
+  all[uid] = { wins: Number(stats.wins || 0), losses: Number(stats.losses || 0) }
+  saveAllStats(all)
+}
+
+function recordGameResult(winner) {
+  if (!userId) return
+  const s = getUserStats(userId)
+  if (winner === HUMAN) s.wins += 1
+  else if (winner === AI) s.losses += 1
+  setUserStats(userId, s)
+  renderUserStats()
+}
+
+function renderUserStats() {
+  if (!$winRate || !$winLoss || !$userId) return
+
+  if (!userId) {
+    $winRate.textContent = "胜率 --%"
+    $winLoss.textContent = "0胜 0负"
+    $userId.textContent = "ID: --"
+    return
+  }
+
+  const { wins, losses } = getUserStats(userId)
+  const total = wins + losses
+  const rate = total === 0 ? 0 : (wins / total) * 100
+
+  $winRate.textContent = `胜率 ${rate.toFixed(total === 0 ? 0 : 1)}%`
+  $winLoss.textContent = `${wins}胜 ${losses}负`
+  $userId.textContent = `ID: ${userId}`
+}
+
 function getWinLine(board, player) {
   for (const line of WIN_LINES) {
     const [a, b, c] = line
@@ -195,9 +318,14 @@ const $resetBtn = document.getElementById("resetBtn")
 const $difficulty = document.getElementById("difficulty")
 const $difficultyText = document.getElementById("difficultyText")
 const $difficultyPill = document.getElementById("difficultyPill")
+const $resultModal = document.getElementById("resultModal")
+const $resultTitle = document.getElementById("resultTitle")
+const $resultBody = document.getElementById("resultBody")
+const $playAgainBtn = document.getElementById("playAgainBtn")
 
 let state
 let isAiThinking = false
+let gameRecorded = false
 
 const HUMAN = 1 // 你：X
 const AI = 2 // AI：O
@@ -221,6 +349,7 @@ function setDifficulty(key, { reset = true } = {}) {
 }
 
 function init() {
+  closeResultModal()
   // 清理仍在执行的淡出计时器
   fadeTimers.forEach((t) => t && clearTimeout(t))
   fadeTimers = Array(9).fill(null)
@@ -234,6 +363,7 @@ function init() {
     winLine: null,
   }
   isAiThinking = false
+  gameRecorded = false
   renderBoard(true)
   renderStatus()
   renderCounts()
@@ -270,6 +400,28 @@ function renderStatus() {
     state.currentPlayer === HUMAN
       ? `当前：<span class="p1">你（X）</span>`
       : `当前：<span class="p2">AI（O）</span>`
+}
+
+function handleGameOver(winner) {
+  if (gameRecorded) return
+  gameRecorded = true
+  recordGameResult(winner)
+  openResultModal(winner)
+}
+
+function openResultModal(winner) {
+  if (!$resultModal || !$resultBody) return
+  if ($resultTitle) $resultTitle.textContent = "本局结果"
+  $resultBody.innerHTML =
+    winner === HUMAN ? `<span class="p1">你获胜！</span>` : winner === AI ? `<span class="p2">AI 获胜！</span>` : `--`
+  $resultModal.classList.add("isOpen")
+  $resultModal.setAttribute("aria-hidden", "false")
+}
+
+function closeResultModal() {
+  if (!$resultModal) return
+  $resultModal.classList.remove("isOpen")
+  $resultModal.setAttribute("aria-hidden", "true")
 }
 
 function renderCounts() {
@@ -338,7 +490,7 @@ function onCellClick(e) {
   renderCounts()
 
   if (state.winner) {
-    window.setTimeout(() => alert("你获胜！"), 10)
+    handleGameOver(HUMAN)
     return
   }
 
@@ -375,17 +527,46 @@ function aiMove() {
     renderCounts()
 
     if (state.winner) {
-      window.setTimeout(() => alert("AI 获胜！"), 10)
+      handleGameOver(AI)
     }
   }, delay)
 }
 
-$resetBtn.addEventListener("click", init)
+if ($resultModal) {
+  $resultModal.addEventListener("click", (e) => {
+    if (e.target?.dataset?.close) closeResultModal()
+  })
+}
+if ($playAgainBtn) {
+  $playAgainBtn.addEventListener("click", () => {
+    closeResultModal()
+    init()
+  })
+}
+
+$resetBtn.addEventListener("click", () => {
+  closeResultModal()
+  init()
+})
 if ($difficulty) {
   $difficulty.addEventListener("change", (e) => {
     const key = e.target.value
     setDifficulty(key, { reset: true })
   })
 }
-setDifficulty($difficulty?.value || "medium", { reset: false })
-init()
+
+// 初始化：先拿到 userId 与战绩，再启动游戏
+;(async () => {
+  try {
+    userId = await getOrCreateUserId()
+  } catch {
+    // 极少数环境（不安全上下文等）可能拿不到 crypto.subtle，允许降级为随机 id
+    const fallback = localStorage.getItem(STORAGE_UID_KEY) || `u_${Math.random().toString(16).slice(2, 10)}`
+    localStorage.setItem(STORAGE_UID_KEY, fallback)
+    userId = fallback
+  }
+  renderUserStats()
+
+  setDifficulty($difficulty?.value || "medium", { reset: false })
+  init()
+})()
