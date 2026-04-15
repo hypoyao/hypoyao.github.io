@@ -371,6 +371,10 @@ const $resultModal = document.getElementById("resultModal")
 const $resultTitle = document.getElementById("resultTitle")
 const $resultBody = document.getElementById("resultBody")
 const $playAgainBtn = document.getElementById("playAgainBtn")
+const $easterModal = document.getElementById("easterModal")
+const $easterTitle = document.getElementById("easterTitle")
+const $easterBody = document.getElementById("easterBody")
+const $easterCloseBtn = document.getElementById("easterCloseBtn")
 
 let state
 let isAiThinking = false
@@ -382,7 +386,57 @@ const FADE_MS = 320
 let fadeTimers = Array(9).fill(null)
 
 // 固定最难（不再提供难度选择）
-const AI_CFG = { maxDepth: 12, mistakeRate: 0, mistakeTopK: 1 }
+// 最低难度：降低搜索深度 + 增大“失误率”（更像休闲小游戏）
+const AI_CFG = { maxDepth: 2, mistakeRate: 0.75, mistakeTopK: 5 }
+
+// ========= 彩蛋：多次点击“胜率”弹出，显示文件更新时间 =========
+const EASTER_TAP_NEED = 7
+const EASTER_TAP_WINDOW_MS = 1600
+let easterTapCount = 0
+let easterTapTimer = null
+
+function getFileUpdateTimeText() {
+  // document.lastModified 通常由浏览器基于服务器返回的 Last-Modified 或文件时间推断
+  try {
+    const lm = document.lastModified
+    const dt = lm ? new Date(lm) : null
+    if (dt && !Number.isNaN(dt.getTime())) {
+      return dt.toLocaleString("zh-CN", { hour12: false })
+    }
+  } catch {}
+  return "未知"
+}
+
+function openEasterModal() {
+  if (!$easterModal || !$easterBody) return
+  if ($easterTitle) $easterTitle.textContent = "彩蛋"
+  const t = getFileUpdateTimeText()
+  $easterBody.innerHTML = `当前文件更新时间：<br /><strong>${t}</strong>`
+  $easterModal.classList.add("isOpen")
+  $easterModal.setAttribute("aria-hidden", "false")
+}
+
+function closeEasterModal() {
+  if (!$easterModal) return
+  $easterModal.classList.remove("isOpen")
+  $easterModal.setAttribute("aria-hidden", "true")
+}
+
+function onEasterTap() {
+  easterTapCount += 1
+  if (easterTapTimer) clearTimeout(easterTapTimer)
+  easterTapTimer = window.setTimeout(() => {
+    easterTapCount = 0
+    easterTapTimer = null
+  }, EASTER_TAP_WINDOW_MS)
+
+  if (easterTapCount >= EASTER_TAP_NEED) {
+    easterTapCount = 0
+    if (easterTapTimer) clearTimeout(easterTapTimer)
+    easterTapTimer = null
+    openEasterModal()
+  }
+}
 
 function init() {
   closeResultModal()
@@ -581,6 +635,19 @@ $resetBtn.addEventListener("click", () => {
   closeResultModal()
   init()
 })
+
+if ($easterModal) {
+  $easterModal.addEventListener("click", (e) => {
+    if (e.target?.dataset?.close) closeEasterModal()
+  })
+}
+if ($easterCloseBtn) {
+  $easterCloseBtn.addEventListener("click", () => closeEasterModal())
+}
+if ($winRate) {
+  // 点击“胜率”7次（约1.6s内）触发彩蛋
+  $winRate.addEventListener("click", onEasterTap)
+}
 // 初始化：先拿到 userId 与战绩，再启动游戏
 ;(async () => {
   try {
