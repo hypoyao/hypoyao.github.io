@@ -364,8 +364,6 @@ function chooseBestMove(s, aiPlayer, humanPlayer, cfg) {
 
 const $board = document.getElementById("board")
 const $status = document.getElementById("status")
-const $p1Count = document.getElementById("p1Count")
-const $p2Count = document.getElementById("p2Count")
 const $resetBtn = document.getElementById("resetBtn")
 const $resultModal = document.getElementById("resultModal")
 const $resultTitle = document.getElementById("resultTitle")
@@ -512,8 +510,7 @@ function closeResultModal() {
 }
 
 function renderCounts() {
-  $p1Count.textContent = `${state.queues[1].length} / 3`
-  $p2Count.textContent = `${state.queues[2].length} / 3`
+  // 已移除“你 / AI 棋子数”显示，此处保留函数避免改动过大
 }
 
 function renderBoard(rebuild = false) {
