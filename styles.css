@@ -317,22 +317,60 @@ body {
 
 @media (max-width: 420px) {
   .wrap {
-    padding: 14px;
+    /* 手机端：避免内容被底部安全区/地址栏挤压，优先让底部按钮露出来 */
+    min-height: 100svh;
+    place-items: start center;
+    padding: 12px 12px calc(16px + env(safe-area-inset-bottom));
   }
   .card {
-    padding: 16px 14px;
+    padding: 14px 12px;
     border-radius: 16px;
+    /* 如果仍然超高，则允许卡片内部滚动，保证按钮可操作 */
+    max-height: calc(100svh - 24px);
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
   .header h1 {
-    font-size: 22px;
+    /* 去掉第一个大标题（手机端隐藏） */
+    display: none;
   }
   .desc {
-    font-size: 13px;
+    font-size: 12px;
+    line-height: 1.45;
+    margin: 0 0 10px;
   }
   .status {
-    font-size: 15px;
+    margin: 8px 0 10px;
+    padding: 8px 10px;
+    font-size: 14px;
+  }
+  .stats {
+    margin: 8px 0 10px;
+    padding: 8px 10px;
+    border-radius: 14px;
+  }
+  .statsTitle {
+    font-size: 12px;
   }
   .statsRate {
-    font-size: 20px;
+    font-size: 18px;
+  }
+  .statsSub {
+    margin-top: 4px;
+    font-size: 12px;
+  }
+  .meta {
+    margin-top: 10px;
+  }
+  .actions {
+    margin-top: 12px;
+  }
+  .btn {
+    font-size: 15px;
+    padding: 11px 14px;
+  }
+  .board {
+    border-radius: 18px;
   }
 }
