@@ -62,7 +62,11 @@
         <div class="modalBody" id="easterBody">
           <div>当前文件更新时间：<strong id="easterUpdatedAt">--</strong></div>
           <div style="margin-top: 10px">当前难度等级：<strong id="easterDiff">--</strong> / 10</div>
+          <div style="margin-top: 10px">
+            全网游戏已玩次数（按访问量估算）：<strong><span id="busuanzi_value_page_pv"></span></strong> 局
+          </div>
           <div style="margin-top: 10px; font-size: 14px; font-weight: 800">
+            <span id="busuanzi_container_page_pv" style="display:none"></span>
             <span id="busuanzi_container_site_pv">本站总访问量 <span id="busuanzi_value_site_pv"></span> 次</span>
             <span style="opacity: 0.65; margin: 0 6px">·</span>
             <span id="busuanzi_container_site_uv">本站总访客 <span id="busuanzi_value_site_uv"></span> 人</span>
@@ -81,6 +85,17 @@
         <div class="tipText" id="tipText">--</div>
       </div>
     </div>
+
+    <!--
+      Vercel Web Analytics / Speed Insights（纯 HTML 接入）：
+      1) 需要把站点部署到 Vercel，并在项目里开启 Analytics / Speed Insights
+      2) Vercel 会生成一个 <unique-path>，用于加载脚本： "/<unique-path>/script.js"
+      3) 把下面两个占位符替换成你控制台里看到的 unique-path（不包含前后斜杠）
+    -->
+    <script>
+      window.__VERCEL_ANALYTICS_UNIQUE_PATH__ = "<unique-path>";
+      window.__VERCEL_SPEED_UNIQUE_PATH__ = "<unique-path>";
+    </script>
 
     <script src="./app.js"></script>
   </body>

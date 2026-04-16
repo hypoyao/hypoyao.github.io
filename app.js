@@ -131,6 +131,43 @@ function loadScriptOnce(url, id) {
   })
 }
 
+function isConfiguredUniquePath(p) {
+  if (!p) return false
+  const s = String(p).trim()
+  if (!s) return false
+  // 未替换占位符时不加载，避免 404
+  if (s.includes("<unique-path>")) return false
+  return true
+}
+
+function initVercelAnalyticsAndSpeedInsights() {
+  if (!canLoadRemoteScripts()) return
+  if (typeof window === "undefined") return
+
+  const vaPath = window.__VERCEL_ANALYTICS_UNIQUE_PATH__
+  const siPath = window.__VERCEL_SPEED_UNIQUE_PATH__
+
+  if (isConfiguredUniquePath(vaPath)) {
+    // 文档：window.va + /<unique-path>/script.js
+    window.va =
+      window.va ||
+      function () {
+        ;(window.vaq = window.vaq || []).push(arguments)
+      }
+    loadScriptOnce(`/${vaPath}/script.js`, "vercel-web-analytics").catch(() => {})
+  }
+
+  if (isConfiguredUniquePath(siPath)) {
+    // 文档：window.si + /<unique-path>/script.js
+    window.si =
+      window.si ||
+      function () {
+        ;(window.siq = window.siq || []).push(arguments)
+      }
+    loadScriptOnce(`/${siPath}/script.js`, "vercel-speed-insights").catch(() => {})
+  }
+}
+
 async function getCloudbaseApp() {
   if (cbApp) return cbApp
   if (typeof window === "undefined") return null
@@ -415,20 +452,33 @@ function minimax(s, depth, alpha, beta, aiPlayer, humanPlayer, memo) {
 }
 
 function chooseBestMove(s, aiPlayer, humanPlayer, cfg) {
-  // 先看一步必胜/必防
   const moves = availableMoves(s)
-  for (const m of moves) {
-    const ns = applyMove(s, m, aiPlayer)
-    if (ns.winner === aiPlayer) return m
-  }
-  for (const m of moves) {
-    const ns = applyMove(s, m, humanPlayer)
-    if (ns.winner === humanPlayer) return m
+
+  // 超低难度下允许“随便走一步”，让体验更轻松
+  const randomRate = cfg?.randomRate ?? 0
+  if (randomRate > 0 && Math.random() < randomRate && moves.length > 0) {
+    return moves[Math.floor(Math.random() * moves.length)]
   }
 
+  // 低难度下允许“漏看”一步必胜/必防（否则即使深度很低也会很难）
+  const tacticalMistakeRate = cfg?.tacticalMistakeRate ?? 0
+  const allowTactics = !(tacticalMistakeRate > 0 && Math.random() < tacticalMistakeRate)
+
+  // 先看一步必胜/必防（在低难度下可能会被跳过）
+  if (allowTactics) {
+    for (const m of moves) {
+      const ns = applyMove(s, m, aiPlayer)
+      if (ns.winner === aiPlayer) return m
+    }
+    for (const m of moves) {
+      const ns = applyMove(s, m, humanPlayer)
+      if (ns.winner === humanPlayer) return m
+    }
+  }
   // 深度越大越强，但也更耗时；本盘面很小，适当深度即可
   const MAX_DEPTH = cfg?.maxDepth ?? 10
   const memo = new Map()
+
 
   const scored = []
 
@@ -485,11 +535,11 @@ function getAiCfgByDifficulty(level) {
   const d = clamp(Number(level) || 1, 1, 10)
 
   // 1 档：非常容易
-  const L1 = { maxDepth: 1, mistakeRate: 0.9, mistakeTopK: 7 }
+  const L1 = { maxDepth: 1, mistakeRate: 0.95, mistakeTopK: 9, tacticalMistakeRate: 0.85, randomRate: 0.35 }
   // 5 档：当前体验（作为基准）
-  const L5 = { maxDepth: 2, mistakeRate: 0.75, mistakeTopK: 5 }
+  const L5 = { maxDepth: 2, mistakeRate: 0.85, mistakeTopK: 6, tacticalMistakeRate: 0.25, randomRate: 0.05 }
   // 10 档：接近“最强”（接近之前的最难）
-  const L10 = { maxDepth: 12, mistakeRate: 0, mistakeTopK: 1 }
+  const L10 = { maxDepth: 10, mistakeRate: 0.05, mistakeTopK: 2, tacticalMistakeRate: 0, randomRate: 0 }
 
   if (d <= 5) {
     // 1~5：从 L1 线性过渡到 L5
@@ -497,10 +547,14 @@ function getAiCfgByDifficulty(level) {
     const maxDepth = Math.round(L1.maxDepth + (L5.maxDepth - L1.maxDepth) * t)
     const mistakeRate = L1.mistakeRate + (L5.mistakeRate - L1.mistakeRate) * t
     const mistakeTopK = Math.round(L1.mistakeTopK + (L5.mistakeTopK - L1.mistakeTopK) * t)
+    const tacticalMistakeRate = L1.tacticalMistakeRate + (L5.tacticalMistakeRate - L1.tacticalMistakeRate) * t
+    const randomRate = L1.randomRate + (L5.randomRate - L1.randomRate) * t
     return {
       maxDepth: clamp(maxDepth, 1, 12),
       mistakeRate: clamp(mistakeRate, 0, 0.95),
       mistakeTopK: clamp(mistakeTopK, 1, 9),
+      tacticalMistakeRate: clamp(tacticalMistakeRate, 0, 0.95),
+      randomRate: clamp(randomRate, 0, 0.95),
     }
   }
 
@@ -509,10 +563,14 @@ function getAiCfgByDifficulty(level) {
   const maxDepth = Math.round(L5.maxDepth + (L10.maxDepth - L5.maxDepth) * t)
   const mistakeRate = L5.mistakeRate + (L10.mistakeRate - L5.mistakeRate) * t
   const mistakeTopK = Math.round(L5.mistakeTopK + (L10.mistakeTopK - L5.mistakeTopK) * t)
+  const tacticalMistakeRate = L5.tacticalMistakeRate + (L10.tacticalMistakeRate - L5.tacticalMistakeRate) * t
+  const randomRate = L5.randomRate + (L10.randomRate - L5.randomRate) * t
   return {
     maxDepth: clamp(maxDepth, 1, 12),
     mistakeRate: clamp(mistakeRate, 0, 0.95),
     mistakeTopK: clamp(mistakeTopK, 1, 9),
+    tacticalMistakeRate: clamp(tacticalMistakeRate, 0, 0.95),
+    randomRate: clamp(randomRate, 0, 0.95),
   }
 }
 
@@ -807,6 +865,9 @@ if ($tipModal) {
   }
   // 初始化：新用户默认难度 1（存储里没有时 getUserDifficulty 会返回 1）
   difficulty = getUserDifficulty(userId)
+
+  // Vercel Web Analytics / Speed Insights：页面打开即初始化（仅当你已替换 unique-path）
+  initVercelAnalyticsAndSpeedInsights()
 
   // 不蒜子：页面打开就加载（但仅限 http/https，避免 file:// 报错）
   if (canLoadRemoteScripts()) {
