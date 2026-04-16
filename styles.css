@@ -137,6 +137,35 @@ body {
   border-color: rgba(15, 23, 42, 0.92);
 }
 
+.diffPicker {
+  margin-top: 6px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 18px;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  background: rgba(255, 255, 255, 0.55);
+  width: fit-content;
+}
+
+.diffPickDot {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  border: 1px solid rgba(15, 23, 42, 0.22);
+  background: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+.diffPickDot.isOn {
+  background: rgba(15, 23, 42, 0.92);
+  border-color: rgba(15, 23, 42, 0.92);
+}
+
 .srOnly {
   position: absolute;
   width: 1px;
@@ -449,6 +478,16 @@ body {
     width: 9px;
     height: 9px;
     border-radius: 3px;
+  }
+  .diffPicker {
+    grid-auto-columns: 16px;
+    gap: 5px;
+    padding: 5px 7px;
+  }
+  .diffPickDot {
+    width: 16px;
+    height: 16px;
+    border-radius: 6px;
   }
   .statsSub {
     margin-top: 4px;

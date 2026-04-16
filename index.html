@@ -3,14 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>井字棋挑战赛</title>
+    <title>井字棋对决</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <main class="wrap">
       <section class="card">
         <header class="header">
-          <h1>井字棋挑战赛</h1>
+          <h1>井字棋对决</h1>
           <p class="desc">
             规则：两人轮流落子；每人最多 3 子；当你落下第 4 子时，会移除你<strong>最早</strong>落下的那颗；三子连成一线获胜。
           </p>
@@ -42,8 +42,8 @@
 
         <div class="actions">
           <button class="btn" id="resetBtn" type="button">重新开始</button>
-          <a class="btn btnSecondary" href="./memory.html">健脑运动</a>
-          <a class="btn btnSecondary" href="./mole.html">打地鼠</a>
+          <a class="btn btnSecondary" href="./memory.html">记忆闪击</a>
+          <a class="btn btnSecondary" href="./mole.html">极速打地鼠</a>
         </div>
       </section>
 
@@ -90,6 +90,24 @@
       <div class="modalBackdrop" data-close="1"></div>
       <div class="modalPanel tipPanel" role="dialog" aria-modal="true" aria-label="tip dialog">
         <div class="tipText" id="tipText">--</div>
+      </div>
+    </div>
+
+    <!-- 难度调节彩蛋：连续点击“轮到你落子”3次触发 -->
+    <div class="modal" id="diffModal" aria-hidden="true">
+      <div class="modalBackdrop" data-close="1"></div>
+      <div class="modalPanel" role="dialog" aria-modal="true" aria-label="difficulty dialog">
+        <div class="modalTitle">难度调节</div>
+        <div class="modalBody" style="font-size: 16px">
+          <div>手动选择难度等级（1-10）：</div>
+          <div class="diffPicker" id="diffModalPicker" aria-label="difficulty picker"></div>
+          <div style="margin-top: 10px; font-size: 13px; color: rgba(100, 116, 139, 0.95)">
+            当前难度等级：<strong id="diffModalCurrent">--</strong>
+          </div>
+        </div>
+        <div class="modalActions">
+          <button class="btn modalBtn" id="diffModalCloseBtn" type="button">关闭</button>
+        </div>
       </div>
     </div>
 

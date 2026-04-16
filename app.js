@@ -516,6 +516,10 @@ const $easterBody = document.getElementById("easterBody")
 const $easterCloseBtn = document.getElementById("easterCloseBtn")
 const $easterUpdatedAt = document.getElementById("easterUpdatedAt")
 const $easterDiff = document.getElementById("easterDiff")
+const $diffModal = document.getElementById("diffModal")
+const $diffModalPicker = document.getElementById("diffModalPicker")
+const $diffModalCurrent = document.getElementById("diffModalCurrent")
+const $diffModalCloseBtn = document.getElementById("diffModalCloseBtn")
 
 let state
 let isAiThinking = false
@@ -578,6 +582,57 @@ const EASTER_TAP_NEED = 7
 const EASTER_TAP_WINDOW_MS = 1600
 let easterTapCount = 0
 let easterTapTimer = null
+
+// 连续点击“轮到你落子”3次打开彩蛋（用于手动调难度）
+const STATUS_EASTER_NEED = 3
+const STATUS_EASTER_WINDOW_MS = 1200
+let statusTapCount = 0
+let statusTapTimer = null
+
+function setDifficultyManual(next) {
+  // 手动调节：写入本地难度，并立即更新 UI + AI 参数
+  const lv = clamp(Number(next) || 1, 1, 10)
+  if (!userId) return
+  setUserDifficulty(userId, lv)
+  difficulty = lv
+  AI_CFG = getAiCfgByDifficulty(difficulty)
+  renderDifficultyBadge()
+  if ($easterDiff) $easterDiff.textContent = String(difficulty)
+  renderDiffModalPicker()
+}
+
+function renderDiffModalPicker() {
+  if ($diffModalCurrent) $diffModalCurrent.textContent = String(difficulty)
+  if (!$diffModalPicker) return
+  if ($diffModalPicker.childElementCount !== 10) {
+    $diffModalPicker.innerHTML = ""
+    for (let i = 1; i <= 10; i++) {
+      const dot = document.createElement("span")
+      dot.className = "diffPickDot"
+      dot.dataset.level = String(i)
+      dot.title = `难度等级 ${i}`
+      $diffModalPicker.appendChild(dot)
+    }
+  }
+  const dots = $diffModalPicker.querySelectorAll(".diffPickDot")
+  dots.forEach((el) => {
+    const lv = Number(el.dataset.level || 0)
+    el.classList.toggle("isOn", lv > 0 && lv <= difficulty)
+  })
+}
+
+function openDiffModal() {
+  if (!$diffModal) return
+  renderDiffModalPicker()
+  $diffModal.classList.add("isOpen")
+  $diffModal.setAttribute("aria-hidden", "false")
+}
+
+function closeDiffModal() {
+  if (!$diffModal) return
+  $diffModal.classList.remove("isOpen")
+  $diffModal.setAttribute("aria-hidden", "true")
+}
 
 function getFileUpdateTimeText() {
   // document.lastModified 通常由浏览器基于服务器返回的 Last-Modified 或文件时间推断
@@ -837,6 +892,22 @@ if ($easterModal) {
 if ($easterCloseBtn) {
   $easterCloseBtn.addEventListener("click", () => closeEasterModal())
 }
+
+if ($diffModal) {
+  $diffModal.addEventListener("click", (e) => {
+    if (e.target?.dataset?.close) closeDiffModal()
+  })
+}
+if ($diffModalCloseBtn) {
+  $diffModalCloseBtn.addEventListener("click", () => closeDiffModal())
+}
+if ($diffModalPicker) {
+  $diffModalPicker.addEventListener("click", (e) => {
+    const t = e.target
+    const lv = Number(t?.dataset?.level || 0)
+    if (lv >= 1 && lv <= 10) setDifficultyManual(lv)
+  })
+}
 if ($winRate) {
   // 点击“胜率”7次（约1.6s内）触发彩蛋
   $winRate.addEventListener("click", onEasterTap)
@@ -856,6 +927,26 @@ if ($tipModal) {
   // 点空白（遮罩）关闭
   $tipModal.addEventListener("click", (e) => {
     if (e.target?.dataset?.close) closeTipModal()
+  })
+}
+
+if ($status) {
+  $status.addEventListener("click", () => {
+    // 仅当文字为“轮到你落子”时才计数
+    if (!$status.textContent || !$status.textContent.includes("轮到你落子")) return
+    statusTapCount += 1
+    if (statusTapTimer) clearTimeout(statusTapTimer)
+    statusTapTimer = window.setTimeout(() => {
+      statusTapCount = 0
+      statusTapTimer = null
+    }, STATUS_EASTER_WINDOW_MS)
+
+    if (statusTapCount >= STATUS_EASTER_NEED) {
+      statusTapCount = 0
+      if (statusTapTimer) clearTimeout(statusTapTimer)
+      statusTapTimer = null
+      openDiffModal()
+    }
   })
 }
 // 初始化：先拿到 userId 与战绩，再启动游戏
