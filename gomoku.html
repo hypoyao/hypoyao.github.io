@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>五子棋·限五子 - 井字棋对决</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./gomoku.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <section class="card">
+        <header class="header">
+          <h1>五子棋·限五子</h1>
+          <p class="desc">
+            规则：8×8 棋盘。您（×）对战 AI（○）。每方最多同时存在 5 颗子；当你要下第 6 颗时，最早那颗会先变浅，落子后它会消失。连成
+            5 颗即获胜。
+          </p>
+        </header>
+
+        <div class="goStatus" id="status">
+          <span id="turnText">轮到 您</span>
+          <span class="goSep">·</span>
+          <span class="goDiffLabel">难度等级</span>
+          <div class="goDiffGrid" id="diffGrid" aria-label="difficulty"></div>
+          <span class="srOnly" id="diffText">难度等级 --</span>
+        </div>
+
+        <div class="goBoard" id="board" aria-label="gomoku board"></div>
+
+        <div class="actions">
+          <button class="btn" id="resetBtn" type="button">重新开始</button>
+          <a class="btn btnSecondary" href="./index.html">井字棋对决</a>
+          <a class="btn btnSecondary" href="./memory.html">记忆闪击</a>
+          <a class="btn btnSecondary" href="./mole.html">极速打地鼠</a>
+        </div>
+      </section>
+    </main>
+
+    <!-- 结果弹窗 -->
+    <div class="modal" id="goModal" aria-hidden="true">
+      <div class="modalBackdrop" data-close="1"></div>
+      <div class="modalPanel" role="dialog" aria-modal="true" aria-label="gomoku result dialog">
+        <div class="modalTitle">本局结果</div>
+        <div class="modalBody" id="goModalBody">--</div>
+        <div class="modalActions">
+          <button class="btn modalBtn" id="goAgainBtn" type="button">再来一局</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 难度彩蛋：连续点击“难度等级”3次触发 -->
+    <div class="modal" id="goDiffModal" aria-hidden="true">
+      <div class="modalBackdrop" data-close="1"></div>
+      <div class="modalPanel" role="dialog" aria-modal="true" aria-label="gomoku difficulty dialog">
+        <div class="modalTitle">难度调节</div>
+        <div class="modalBody" style="font-size: 16px">
+          <div>手动选择难度等级（1-10）：</div>
+          <div class="diffPicker" id="goDiffPicker" aria-label="difficulty picker"></div>
+          <div style="margin-top: 10px; font-size: 13px; color: rgba(100, 116, 139, 0.95)">
+            当前难度等级：<strong id="goDiffCurrent">--</strong>
+          </div>
+        </div>
+        <div class="modalActions">
+          <button class="btn modalBtn" id="goDiffCloseBtn" type="button">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="./gomoku.js"></script>
+  </body>
+</html>

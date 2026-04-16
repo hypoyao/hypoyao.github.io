@@ -1,0 +1,173 @@
+:root {
+  --go-line: rgba(15, 23, 42, 0.12);
+  --go-x: rgba(239, 68, 68, 0.96);
+  --go-o: rgba(37, 99, 235, 0.96);
+}
+
+.goStatus {
+  margin: 10px 0 14px;
+  font-size: 14px;
+  font-weight: 800;
+  background: rgba(15, 23, 42, 0.04);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  padding: 10px 12px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.goSep {
+  opacity: 0.55;
+  margin: 0 4px;
+}
+
+.goDiffLabel {
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.68);
+  white-space: nowrap;
+}
+
+.goDiffGrid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 10px;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(15, 23, 42, 0.10);
+}
+
+.goDiffDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  border: 1px solid rgba(15, 23, 42, 0.22);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.goDiffDot.isOn {
+  background: rgba(15, 23, 42, 0.92);
+  border-color: rgba(15, 23, 42, 0.92);
+}
+
+.goBoard {
+  width: min(460px, 100%);
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  grid-template-rows: repeat(8, 1fr);
+  border: 3px solid var(--go-line);
+  border-radius: 18px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: var(--shadow-soft);
+}
+
+.goCell {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: linear-gradient(180deg, #ffffff, #f8fafc);
+  border-right: 2px solid var(--go-line);
+  border-bottom: 2px solid var(--go-line);
+  cursor: pointer;
+  width: 100%;
+  height: 100%;
+  touch-action: manipulation;
+  user-select: none;
+  position: relative;
+  transition: filter 160ms ease, transform 90ms ease, background 160ms ease;
+}
+
+.goCell:nth-child(8n) {
+  border-right: 0;
+}
+.goCell:nth-last-child(-n + 8) {
+  border-bottom: 0;
+}
+
+.goCell:active {
+  transform: scale(0.985);
+}
+
+.goCell:disabled {
+  cursor: not-allowed;
+  opacity: 0.98;
+}
+
+.goMark {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-weight: 1000;
+  font-size: clamp(26px, 7.4vw, 52px);
+  line-height: 1;
+  transform: translateZ(0);
+  text-shadow: 0 10px 20px rgba(2, 6, 23, 0.10);
+}
+
+.goMark.x {
+  color: var(--go-x);
+}
+.goMark.o {
+  color: var(--go-o);
+  -webkit-text-stroke: 1.2px rgba(37, 99, 235, 0.96);
+  text-stroke: 1.2px rgba(37, 99, 235, 0.96);
+}
+
+.goMark.about {
+  opacity: 0.35;
+  filter: saturate(0.6) brightness(1.08);
+}
+
+.goMark.fading {
+  animation: goVanish 260ms ease-out forwards;
+}
+
+@keyframes goVanish {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.goCell.win {
+  background: #fef9c3;
+}
+
+@media (max-width: 420px) {
+  .goStatus {
+    margin: 8px 0 10px;
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+  .goDiffLabel {
+    font-size: 11px;
+  }
+  .goDiffGrid {
+    grid-auto-columns: 9px;
+    gap: 3px;
+    padding: 3px 5px;
+  }
+  .goDiffDot {
+    width: 9px;
+    height: 9px;
+    border-radius: 3px;
+  }
+  .goBoard {
+    border-radius: 16px;
+    height: min(380px, 86vw);
+  }
+  .goCell {
+    border-right: 2px solid var(--go-line);
+    border-bottom: 2px solid var(--go-line);
+  }
+}
