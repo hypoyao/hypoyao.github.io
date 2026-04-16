@@ -90,8 +90,10 @@
          说明：inject 适用于“通过 npm 安装”的项目；纯静态页这里用 ESM CDN 来引入。
          为避免在 GitHub Pages 上产生 404 噪音，这里仅在 *.vercel.app 域名下启用。 -->
     <script type="module">
-      import { inject } from "https://esm.sh/@vercel/analytics"
-      if (location.hostname.endsWith("vercel.app")) inject()
+      import { injectSpeedInsights } from './vendor/@vercel/speed-insights/dist/index.mjs';
+      import { inject } from './vendor/@vercel/analytics/index.mjs';
+      injectSpeedInsights();
+      inject();
     </script>
 
     <script src="./app.js"></script>
