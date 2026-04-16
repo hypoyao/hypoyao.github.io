@@ -18,13 +18,18 @@
 
         <section class="stats" aria-label="player stats">
           <div class="statsMain">
-            <div class="statsTitle">你的战绩</div>
-            <div class="statsRate">
-              <span id="winRate">胜率 --%</span>
-              <span class="diffBadge" id="diffBadge" aria-label="difficulty">难度等级 1</span>
-            </div>
-            <div class="statsSub">
-              <span id="winLoss">0胜 0负</span>
+            <div class="statsRow">
+              <div class="diffWrap" aria-label="difficulty">
+                <div class="diffLabel">难度等级</div>
+                <div class="diffGrid" id="diffGrid" role="button" tabindex="0" aria-label="难度等级"></div>
+                <span class="srOnly" id="diffText">难度等级 --</span>
+              </div>
+              <div class="statsSide">
+                <div class="statsRateSmall" id="winRate">胜率 --%</div>
+                <div class="statsSub">
+                  <span id="winLoss">0胜 0负</span>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -69,7 +74,7 @@
             <span id="busuanzi_container_page_pv" style="display:none"></span>
             <span id="busuanzi_container_site_pv">本站总访问量 <span id="busuanzi_value_site_pv"></span> 次</span>
             <span style="opacity: 0.65; margin: 0 6px">·</span>
-            <span id="busuanzi_container_site_uv">本站总访客 <span id="busuanzi_value_site_uv"></span> 人</span>
+            <span>UV（按“重新开始”次数）：<span id="restartUv">0</span></span>
           </div>
         </div>
         <div class="modalActions">

@@ -18,6 +18,7 @@ const STORAGE_UID_KEY = "ttt3_uid_v1"
 const STORAGE_STATS_KEY = "ttt3_stats_v1"
 const STORAGE_VISIT_LOCK_KEY = "ttt3_visit_lock_v1"
 const STORAGE_DIFF_KEY = "ttt3_diff_v1"
+const STORAGE_RESTART_UV_KEY = "ttt3_restart_uv_v1"
 
 // 访问统计云函数（请确保云端函数名一致）
 const VISIT_FN_NAME = "page_visit_counter"
@@ -25,9 +26,11 @@ const CLOUDBASE_ENV_ID = "hypo-7gm1818jbbd6ee3e"
 
 const $winRate = document.getElementById("winRate")
 const $winLoss = document.getElementById("winLoss")
-const $diffBadge = document.getElementById("diffBadge")
+const $diffGrid = document.getElementById("diffGrid")
+const $diffText = document.getElementById("diffText")
 const $tipModal = document.getElementById("tipModal")
 const $tipText = document.getElementById("tipText")
+const $restartUv = document.getElementById("restartUv")
 
 let userId = null
 let difficulty = 1 // 1~10：不外显，仅彩蛋展示；默认新用户从 1 开始
@@ -42,6 +45,22 @@ function safeJsonParse(s, fallback) {
 
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n))
+}
+
+function getRestartUv() {
+  return Math.max(0, Number(localStorage.getItem(STORAGE_RESTART_UV_KEY) || 0) || 0)
+}
+
+function incRestartUv() {
+  const next = getRestartUv() + 1
+  localStorage.setItem(STORAGE_RESTART_UV_KEY, String(next))
+  if ($restartUv) $restartUv.textContent = String(next)
+  return next
+}
+
+function renderRestartUv() {
+  if (!$restartUv) return
+  $restartUv.textContent = String(getRestartUv())
 }
 
 function openTipModal(text) {
@@ -274,8 +293,23 @@ function renderUserStats() {
 }
 
 function renderDifficultyBadge() {
-  if (!$diffBadge) return
-  $diffBadge.textContent = `难度等级 ${difficulty}`
+  // 以 10 个小格子显示难度：<= 当前等级涂黑，其余空白
+  if ($diffText) $diffText.textContent = `难度等级 ${difficulty}`
+  if (!$diffGrid) return
+  if ($diffGrid.childElementCount !== 10) {
+    $diffGrid.innerHTML = ""
+    for (let i = 1; i <= 10; i++) {
+      const dot = document.createElement("span")
+      dot.className = "diffDot"
+      dot.dataset.level = String(i)
+      $diffGrid.appendChild(dot)
+    }
+  }
+  const dots = $diffGrid.querySelectorAll(".diffDot")
+  dots.forEach((el) => {
+    const lv = Number(el.dataset.level || 0)
+    el.classList.toggle("isOn", lv > 0 && lv <= difficulty)
+  })
 }
 
 function getWinLine(board, player) {
@@ -563,6 +597,7 @@ function openEasterModal() {
   const t = getFileUpdateTimeText()
   if ($easterUpdatedAt) $easterUpdatedAt.textContent = t
   if ($easterDiff) $easterDiff.textContent = String(difficulty)
+  renderRestartUv()
 
   $easterModal.classList.add("isOpen")
   $easterModal.setAttribute("aria-hidden", "false")
@@ -789,6 +824,8 @@ if ($playAgainBtn) {
 
 $resetBtn.addEventListener("click", () => {
   closeResultModal()
+  // 统计一次“UV”（按用户点击“重新开始”的次数）
+  incRestartUv()
   init()
 })
 
@@ -804,9 +841,14 @@ if ($winRate) {
   // 点击“胜率”7次（约1.6s内）触发彩蛋
   $winRate.addEventListener("click", onEasterTap)
 }
-if ($diffBadge) {
-  $diffBadge.addEventListener("click", () => {
-    openTipModal("难度等级 1-10，输赢后会自动升降等级")
+if ($diffGrid) {
+  const onTip = () => openTipModal("难度等级 1-10，输赢后会自动升降等级")
+  $diffGrid.addEventListener("click", onTip)
+  $diffGrid.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault()
+      onTip()
+    }
   })
 }
 
@@ -828,6 +870,7 @@ if ($tipModal) {
   }
   // 初始化：新用户默认难度 1（存储里没有时 getUserDifficulty 会返回 1）
   difficulty = getUserDifficulty(userId)
+  renderRestartUv()
 
   // 不蒜子：页面打开就加载（但仅限 http/https，避免 file:// 报错）
   if (canLoadRemoteScripts()) {
