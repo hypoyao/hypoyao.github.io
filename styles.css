@@ -459,13 +459,7 @@ body {
   }
   .actions {
     margin-top: 12px;
-    /* iOS 某些 WebView 下，父容器 overflow 滚动可能导致按钮/棋盘点击异常；
-       这里改为不让 card 自己滚动，而是让页面自然滚动，并把按钮做成 sticky 兜底。 */
-    position: sticky;
-    bottom: calc(8px + env(safe-area-inset-bottom));
-    padding: 10px 0 calc(8px + env(safe-area-inset-bottom));
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.92) 35%, #fff 70%);
-    z-index: 2;
+    /* 按钮随页面自然滚动（不固定/不吸底） */
   }
   .btn {
     font-size: 15px;

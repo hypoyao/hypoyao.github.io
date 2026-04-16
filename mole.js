@@ -5,7 +5,7 @@
 // - 1 秒内点到算成功（得分 +1），并立刻换位置（并重置 1 秒计时）
 // - 若 1 秒结束仍未点到，算漏击 +1，然后换位置
 
-const GAME_MS = 60_000
+const GAME_MS = 30_000
 const START_MOVE_MS = 1000
 const MIN_MOVE_MS = 500
 
@@ -15,6 +15,7 @@ const $startBtn = document.getElementById("startBtn")
 const $score = document.getElementById("score")
 const $miss = document.getElementById("miss")
 const $timeLeft = document.getElementById("timeLeft")
+const $best = document.getElementById("best")
 const $moleModal = document.getElementById("moleModal")
 const $moleModalBody = document.getElementById("moleModalBody")
 const $moleAgainBtn = document.getElementById("moleAgainBtn")
@@ -28,6 +29,9 @@ let timer = null
 let tickTimer = null
 let startedAt = 0
 let endsAt = 0
+let bestScore = 0
+
+const STORAGE_MOLE_BEST_KEY = "mole_best_v1"
 
 // ========= 音效（WebAudio） =========
 // iOS/Safari 需要用户手势启动音频，因此在 startNewGame()/首次点击棋盘时初始化
@@ -98,6 +102,7 @@ function setStatus(t) {
 function renderHud() {
   if ($score) $score.textContent = String(score)
   if ($miss) $miss.textContent = String(miss)
+  if ($best) $best.textContent = String(bestScore)
 }
 
 function renderTimeLeft(ms) {
@@ -204,6 +209,15 @@ function endGame() {
   clearTick()
   if ($startBtn) $startBtn.textContent = "开始"
   renderTimeLeft(0)
+  // 记录历史最佳
+  if (score > bestScore) {
+    bestScore = score
+    try {
+      localStorage.setItem(STORAGE_MOLE_BEST_KEY, String(bestScore))
+    } catch {}
+  }
+  renderHud()
+
   setStatus(`时间到！本局得分：${score}`)
   openResultModal()
 }
@@ -268,6 +282,7 @@ function onCellClick(e) {
 
 function init() {
   buildBoard()
+  bestScore = Math.max(0, Number(localStorage.getItem(STORAGE_MOLE_BEST_KEY) || 0) || 0)
   renderHud()
   setStatus("点击“开始”或点任意格子开始")
   renderTimeLeft(GAME_MS)
