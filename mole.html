@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>打地鼠 - 井字棋挑战赛</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./mole.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <section class="card">
+        <header class="header">
+          <h1>打地鼠</h1>
+          <p class="desc">规则：红色方块（地鼠）每 1 秒换到随机位置；你需要在 1 秒内点到它。点中后会立刻换位置。</p>
+        </header>
+
+        <section class="moleHud" aria-label="mole stats">
+          <div class="moleHudItem"><span class="moleHudLabel">得分</span><span class="moleHudVal" id="score">0</span></div>
+          <div class="moleHudItem"><span class="moleHudLabel">漏击</span><span class="moleHudVal" id="miss">0</span></div>
+          <div class="moleHudItem"><span class="moleHudLabel">剩余</span><span class="moleHudVal" id="timeLeft">60s</span></div>
+        </section>
+
+        <div class="moleStatus" id="status">点击“开始”或点任意格子开始</div>
+
+        <div class="moleBoard" id="board" aria-label="mole board"></div>
+
+        <div class="actions moleActions">
+          <button class="btn" id="startBtn" type="button">开始</button>
+          <a class="btn btnSecondary" href="./index.html">井字棋挑战赛</a>
+          <a class="btn btnSecondary" href="./memory.html">健脑运动</a>
+        </div>
+      </section>
+    </main>
+
+    <!-- 结算弹窗 -->
+    <div class="modal" id="moleModal" aria-hidden="true">
+      <div class="modalBackdrop" data-close="1"></div>
+      <div class="modalPanel" role="dialog" aria-modal="true" aria-label="mole result dialog">
+        <div class="modalTitle">时间到</div>
+        <div class="modalBody" id="moleModalBody">--</div>
+        <div class="modalActions">
+          <button class="btn modalBtn" id="moleAgainBtn" type="button">再来一局</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="./mole.js"></script>
+  </body>
+</html>
