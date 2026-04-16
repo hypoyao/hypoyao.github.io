@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>健脑运动 - 井字棋挑战赛</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./memory.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <section class="card">
+        <header class="header">
+          <h1>健脑运动</h1>
+          <p class="desc">
+            规则：系统会按顺序亮起几个方块；你需要<strong>按亮起顺序依次点击</strong>。
+          </p>
+        </header>
+
+        <section class="memHud" aria-label="difficulty and progress">
+          <div class="memHudLeft">
+            <div class="memHudLabel">难度等级</div>
+            <div class="memLevelGrid" id="levelGrid" role="img" aria-label="level progress"></div>
+          </div>
+          <div class="memHudRight">
+            <div class="memStatusLine" id="levelText">第 1 级</div>
+            <div class="memStatusSub" id="trialText">本级进度：0 / 3</div>
+          </div>
+        </section>
+
+        <div class="memStatus" id="status">点击“开始”进入挑战</div>
+
+        <div class="memBoard" id="board" aria-label="memory board"></div>
+
+        <div class="actions memActions">
+          <button class="btn" id="startBtn" type="button">开始</button>
+        </div>
+      </section>
+    </main>
+
+    <!-- 结果提示弹窗 -->
+    <div class="modal" id="memModal" aria-hidden="true">
+      <div class="modalBackdrop" data-close="1"></div>
+      <div class="modalPanel memModalPanel" role="dialog" aria-modal="true" aria-label="memory result dialog">
+        <div class="memModalBody" id="memModalBody">--</div>
+        <div class="modalActions">
+          <button class="btn modalBtn" id="memModalBtn" type="button">继续</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="./memory.js"></script>
+  </body>
+</html>
