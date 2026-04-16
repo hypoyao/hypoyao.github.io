@@ -85,7 +85,9 @@
     <script src="./app.js"></script>
     <script type="module">
       import { injectSpeedInsights } from './vendor/@vercel/speed-insights/dist/index.mjs';
+      import { inject } from './vendor/@vercel/analytics/index.mjs';
       injectSpeedInsights();
+      inject();
     </script>
   </body>
 </html>
