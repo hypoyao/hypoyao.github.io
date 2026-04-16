@@ -21,6 +21,8 @@ const $goDiffModal = document.getElementById("goDiffModal")
 const $goDiffPicker = document.getElementById("goDiffPicker")
 const $goDiffCurrent = document.getElementById("goDiffCurrent")
 const $goDiffCloseBtn = document.getElementById("goDiffCloseBtn")
+const $goTipModal = document.getElementById("goTipModal")
+const $goTipText = document.getElementById("goTipText")
 
 let state = null
 let fadeTimers = Array(SIZE * SIZE).fill(null)
@@ -132,6 +134,19 @@ function closeGoDiffModal() {
   if (!$goDiffModal) return
   $goDiffModal.classList.remove("isOpen")
   $goDiffModal.setAttribute("aria-hidden", "true")
+}
+
+function openTipModal() {
+  if (!$goTipModal) return
+  if ($goTipText) $goTipText.textContent = "难度等级 1-10，输赢后会自动升降等级"
+  $goTipModal.classList.add("isOpen")
+  $goTipModal.setAttribute("aria-hidden", "false")
+}
+
+function closeTipModal() {
+  if (!$goTipModal) return
+  $goTipModal.classList.remove("isOpen")
+  $goTipModal.setAttribute("aria-hidden", "true")
 }
 
 function openModal(winner) {
@@ -428,14 +443,17 @@ function reset() {
   renderDifficulty()
 }
 
-// 连续点击“难度等级”3次打开难度彩蛋
+// 连续点击“轮到您”3次打开难度彩蛋
 const DIFF_TAP_NEED = 3
 const DIFF_TAP_WINDOW_MS = 1200
 let diffTapCount = 0
 let diffTapTimer = null
 
-if ($diffGrid) {
-  $diffGrid.addEventListener("click", () => {
+if ($turnText) {
+  $turnText.addEventListener("click", () => {
+    // 仅当文案处于“轮到 您”时才计数，避免在“结果”状态误触
+    if (!$turnText.textContent || !$turnText.textContent.includes("轮到 您")) return
+
     diffTapCount += 1
     if (diffTapTimer) clearTimeout(diffTapTimer)
     diffTapTimer = window.setTimeout(() => {
@@ -449,6 +467,17 @@ if ($diffGrid) {
       diffTapTimer = null
       openGoDiffModal()
     }
+  })
+}
+
+// 点击“难度等级”显示提示
+if ($diffGrid) {
+  $diffGrid.addEventListener("click", () => openTipModal())
+}
+
+if ($goTipModal) {
+  $goTipModal.addEventListener("click", (e) => {
+    if (e.target?.dataset?.close) closeTipModal()
   })
 }
 

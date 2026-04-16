@@ -28,6 +28,8 @@ const $trialText = document.getElementById("trialText")
 const $memModal = document.getElementById("memModal")
 const $memModalBody = document.getElementById("memModalBody")
 const $memModalBtn = document.getElementById("memModalBtn")
+const $memTipModal = document.getElementById("memTipModal")
+const $memTipText = document.getElementById("memTipText")
 
 let level = MIN_LEVEL
 let streak = 0 // 当前等级已成功次数（0~2）
@@ -246,6 +248,19 @@ function closeModal() {
   }
 }
 
+function openTipModal() {
+  if (!$memTipModal) return
+  if ($memTipText) $memTipText.textContent = "难度等级 1-10，输赢后会自动升降等级"
+  $memTipModal.classList.add("isOpen")
+  $memTipModal.setAttribute("aria-hidden", "false")
+}
+
+function closeTipModal() {
+  if (!$memTipModal) return
+  $memTipModal.classList.remove("isOpen")
+  $memTipModal.setAttribute("aria-hidden", "true")
+}
+
 async function playSequence() {
   const token = ++runToken
   phase = "showing"
@@ -394,6 +409,15 @@ if ($memModal) {
 }
 if ($memModalBtn) {
   $memModalBtn.addEventListener("click", () => closeModal())
+}
+
+if ($levelGrid) {
+  $levelGrid.addEventListener("click", () => openTipModal())
+}
+if ($memTipModal) {
+  $memTipModal.addEventListener("click", (e) => {
+    if (e.target?.dataset?.close) closeTipModal()
+  })
 }
 
 init()

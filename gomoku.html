@@ -67,6 +67,15 @@
       </div>
     </div>
 
+    <!-- 难度提示：点击“难度等级”弹出 -->
+    <div class="modal" id="goTipModal" aria-hidden="true">
+      <div class="modalBackdrop" data-close="1"></div>
+      <div class="modalPanel tipPanel" role="dialog" aria-modal="true" aria-label="gomoku tip dialog">
+        <div class="tipText" id="goTipText">难度等级 1-10，输赢后会自动升降等级</div>
+      </div>
+    </div>
+
+    <script src="./rest.js"></script>
     <script src="./gomoku.js"></script>
   </body>
 </html>
