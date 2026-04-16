@@ -1,0 +1,7 @@
+# Dependencies
+node_modules/
+
+# Lock files are needed for reproducible builds
+# package-lock.json
+# pnpm-lock.yaml
+# yarn.lock
