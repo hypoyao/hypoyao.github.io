@@ -26,6 +26,8 @@ const CLOUDBASE_ENV_ID = "hypo-7gm1818jbbd6ee3e"
 const $winRate = document.getElementById("winRate")
 const $winLoss = document.getElementById("winLoss")
 const $diffBadge = document.getElementById("diffBadge")
+const $tipModal = document.getElementById("tipModal")
+const $tipText = document.getElementById("tipText")
 
 let userId = null
 let difficulty = 1 // 1~10：不外显，仅彩蛋展示；默认新用户从 1 开始
@@ -40,6 +42,19 @@ function safeJsonParse(s, fallback) {
 
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n))
+}
+
+function openTipModal(text) {
+  if (!$tipModal || !$tipText) return
+  $tipText.textContent = text || ""
+  $tipModal.classList.add("isOpen")
+  $tipModal.setAttribute("aria-hidden", "false")
+}
+
+function closeTipModal() {
+  if (!$tipModal) return
+  $tipModal.classList.remove("isOpen")
+  $tipModal.setAttribute("aria-hidden", "true")
 }
 
 function getFingerprintSeed() {
@@ -506,7 +521,6 @@ const EASTER_TAP_NEED = 7
 const EASTER_TAP_WINDOW_MS = 1600
 let easterTapCount = 0
 let easterTapTimer = null
-let busuanziLoaded = false
 
 function getFileUpdateTimeText() {
   // document.lastModified 通常由浏览器基于服务器返回的 Last-Modified 或文件时间推断
@@ -526,14 +540,6 @@ function openEasterModal() {
   const t = getFileUpdateTimeText()
   if ($easterUpdatedAt) $easterUpdatedAt.textContent = t
   if ($easterDiff) $easterDiff.textContent = String(difficulty)
-
-  // 懒加载不蒜子：仅在 http/https 下加载（file:// 会变成 file://busuanzi... 导致失败）
-  if (canLoadRemoteScripts() && !busuanziLoaded) {
-    busuanziLoaded = true
-    loadScriptOnce("https://busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js", "busuanzi-sdk").catch(() => {
-      // 失败不影响彩蛋展示
-    })
-  }
 
   $easterModal.classList.add("isOpen")
   $easterModal.setAttribute("aria-hidden", "false")
@@ -775,6 +781,18 @@ if ($winRate) {
   // 点击“胜率”7次（约1.6s内）触发彩蛋
   $winRate.addEventListener("click", onEasterTap)
 }
+if ($diffBadge) {
+  $diffBadge.addEventListener("click", () => {
+    openTipModal("难度等级 1-10，输赢后会自动升降等级")
+  })
+}
+
+if ($tipModal) {
+  // 点空白（遮罩）关闭
+  $tipModal.addEventListener("click", (e) => {
+    if (e.target?.dataset?.close) closeTipModal()
+  })
+}
 // 初始化：先拿到 userId 与战绩，再启动游戏
 ;(async () => {
   try {
@@ -787,6 +805,14 @@ if ($winRate) {
   }
   // 初始化：新用户默认难度 1（存储里没有时 getUserDifficulty 会返回 1）
   difficulty = getUserDifficulty(userId)
+
+  // 不蒜子：页面打开就加载（但仅限 http/https，避免 file:// 报错）
+  if (canLoadRemoteScripts()) {
+    loadScriptOnce("https://busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js", "busuanzi-sdk").catch(() => {
+      // 失败不影响游戏
+    })
+  }
+
   // 记录访问次数（不阻塞 UI）
   recordPageVisit(userId)
   renderUserStats()

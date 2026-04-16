@@ -331,6 +331,18 @@ body {
   width: min(320px, 100%);
 }
 
+.tipPanel {
+  width: min(420px, 100%);
+  padding: 14px 14px;
+}
+
+.tipText {
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.5;
+  color: rgba(15, 23, 42, 0.86);
+}
+
 @media (max-width: 420px) {
   .wrap {
     /* 手机端：避免内容被底部安全区/地址栏挤压，优先让底部按钮露出来 */
@@ -401,5 +413,8 @@ body {
   }
   .cell {
     pointer-events: auto;
+  }
+  .tipText {
+    font-size: 15px;
   }
 }
