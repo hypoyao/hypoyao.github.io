@@ -17,6 +17,7 @@ const WIN_LINES = [
 const STORAGE_UID_KEY = "ttt3_uid_v1"
 const STORAGE_STATS_KEY = "ttt3_stats_v1"
 const STORAGE_VISIT_LOCK_KEY = "ttt3_visit_lock_v1"
+const STORAGE_DIFF_KEY = "ttt3_diff_v1"
 
 // 访问统计云函数（请确保云端函数名一致）
 const VISIT_FN_NAME = "page_visit_counter"
@@ -24,8 +25,10 @@ const CLOUDBASE_ENV_ID = "hypo-7gm1818jbbd6ee3e"
 
 const $winRate = document.getElementById("winRate")
 const $winLoss = document.getElementById("winLoss")
+const $diffBadge = document.getElementById("diffBadge")
 
 let userId = null
+let difficulty = 1 // 1~10：不外显，仅彩蛋展示；默认新用户从 1 开始
 
 function safeJsonParse(s, fallback) {
   try {
@@ -33,6 +36,10 @@ function safeJsonParse(s, fallback) {
   } catch {
     return fallback
   }
+}
+
+function clamp(n, min, max) {
+  return Math.max(min, Math.min(max, n))
 }
 
 function getFingerprintSeed() {
@@ -87,11 +94,43 @@ async function getOrCreateUserId() {
 
 // ========= 访问统计（纯H5：localStorage user_id + 调云函数自增） =========
 let cbApp = null
+let cloudbaseScriptLoading = null
+
+function canLoadRemoteScripts() {
+  // file:// 下很多第三方脚本会失败（例如不蒜子会拼出 file://busuanzi...）
+  return typeof location !== "undefined" && (location.protocol === "http:" || location.protocol === "https:")
+}
+
+function loadScriptOnce(url, id) {
+  if (typeof document === "undefined") return Promise.reject(new Error("no document"))
+  if (id && document.getElementById(id)) return Promise.resolve(true)
+
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script")
+    if (id) s.id = id
+    s.async = true
+    s.src = url
+    s.onload = () => resolve(true)
+    s.onerror = () => reject(new Error(`加载失败: ${url}`))
+    document.head.appendChild(s)
+  })
+}
 
 async function getCloudbaseApp() {
-  // 纯H5需要在 index.html 里通过 <script> 引入 cloudbase.full.js
   if (cbApp) return cbApp
   if (typeof window === "undefined") return null
+  if (!canLoadRemoteScripts()) return null
+
+  // 懒加载 CloudBase Web SDK，避免 file:// 或某些预览环境报错
+  if (!window.cloudbase) {
+    if (!cloudbaseScriptLoading) {
+      cloudbaseScriptLoading = loadScriptOnce(
+        "https://imgcache.qq.com/qcloud/cloudbase-js-sdk/2.9.0/cloudbase.full.js",
+        "cloudbase-web-sdk"
+      ).catch(() => null)
+    }
+    await cloudbaseScriptLoading
+  }
   if (!window.cloudbase) return null
 
   cbApp = window.cloudbase.init({ env: CLOUDBASE_ENV_ID })
@@ -158,6 +197,37 @@ function setUserStats(uid, stats) {
   saveAllStats(all)
 }
 
+function loadAllDifficulty() {
+  return safeJsonParse(localStorage.getItem(STORAGE_DIFF_KEY) || "{}", {})
+}
+
+function saveAllDifficulty(all) {
+  localStorage.setItem(STORAGE_DIFF_KEY, JSON.stringify(all))
+}
+
+function getUserDifficulty(uid) {
+  const all = loadAllDifficulty()
+  const v = Number(all?.[uid])
+  return clamp(Number.isFinite(v) ? v : 1, 1, 10)
+}
+
+function setUserDifficulty(uid, level) {
+  const all = loadAllDifficulty()
+  all[uid] = clamp(Number(level) || 1, 1, 10)
+  saveAllDifficulty(all)
+}
+
+function updateDifficultyByResult(winner) {
+  // 赢 +1，输 -1；范围 1~10
+  if (!userId) return
+  const cur = getUserDifficulty(userId)
+  const next =
+    winner === HUMAN ? clamp(cur + 1, 1, 10) : winner === AI ? clamp(cur - 1, 1, 10) : clamp(cur, 1, 10)
+  setUserDifficulty(userId, next)
+  difficulty = next
+  renderDifficultyBadge()
+}
+
 function recordGameResult(winner) {
   if (!userId) return
   const s = getUserStats(userId)
@@ -173,6 +243,7 @@ function renderUserStats() {
   if (!userId) {
     $winRate.textContent = "胜率 --%"
     $winLoss.textContent = "0胜 0负"
+    renderDifficultyBadge()
     return
   }
 
@@ -182,6 +253,12 @@ function renderUserStats() {
 
   $winRate.textContent = `胜率 ${rate.toFixed(total === 0 ? 0 : 1)}%`
   $winLoss.textContent = `${wins}胜 ${losses}负`
+  renderDifficultyBadge()
+}
+
+function renderDifficultyBadge() {
+  if (!$diffBadge) return
+  $diffBadge.textContent = `难度等级 ${difficulty}`
 }
 
 function getWinLine(board, player) {
@@ -373,6 +450,8 @@ const $easterModal = document.getElementById("easterModal")
 const $easterTitle = document.getElementById("easterTitle")
 const $easterBody = document.getElementById("easterBody")
 const $easterCloseBtn = document.getElementById("easterCloseBtn")
+const $easterUpdatedAt = document.getElementById("easterUpdatedAt")
+const $easterDiff = document.getElementById("easterDiff")
 
 let state
 let isAiThinking = false
@@ -383,15 +462,51 @@ const AI = 2 // AI：O
 const FADE_MS = 320
 let fadeTimers = Array(9).fill(null)
 
-// 固定最难（不再提供难度选择）
-// 最低难度：降低搜索深度 + 增大“失误率”（更像休闲小游戏）
-const AI_CFG = { maxDepth: 2, mistakeRate: 0.75, mistakeTopK: 5 }
+// 难度 1~10（不外显），通过深度与“失误率”映射到 AI 参数
+// 约定：当前版本体验作为 5 档
+function getAiCfgByDifficulty(level) {
+  const d = clamp(Number(level) || 1, 1, 10)
+
+  // 1 档：非常容易
+  const L1 = { maxDepth: 1, mistakeRate: 0.9, mistakeTopK: 7 }
+  // 5 档：当前体验（作为基准）
+  const L5 = { maxDepth: 2, mistakeRate: 0.75, mistakeTopK: 5 }
+  // 10 档：接近“最强”（接近之前的最难）
+  const L10 = { maxDepth: 12, mistakeRate: 0, mistakeTopK: 1 }
+
+  if (d <= 5) {
+    // 1~5：从 L1 线性过渡到 L5
+    const t = (d - 1) / 4 // 0~1
+    const maxDepth = Math.round(L1.maxDepth + (L5.maxDepth - L1.maxDepth) * t)
+    const mistakeRate = L1.mistakeRate + (L5.mistakeRate - L1.mistakeRate) * t
+    const mistakeTopK = Math.round(L1.mistakeTopK + (L5.mistakeTopK - L1.mistakeTopK) * t)
+    return {
+      maxDepth: clamp(maxDepth, 1, 12),
+      mistakeRate: clamp(mistakeRate, 0, 0.95),
+      mistakeTopK: clamp(mistakeTopK, 1, 9),
+    }
+  }
+
+  // 6~10：从 L5 线性过渡到 L10
+  const t = (d - 5) / 5 // 0.2~1
+  const maxDepth = Math.round(L5.maxDepth + (L10.maxDepth - L5.maxDepth) * t)
+  const mistakeRate = L5.mistakeRate + (L10.mistakeRate - L5.mistakeRate) * t
+  const mistakeTopK = Math.round(L5.mistakeTopK + (L10.mistakeTopK - L5.mistakeTopK) * t)
+  return {
+    maxDepth: clamp(maxDepth, 1, 12),
+    mistakeRate: clamp(mistakeRate, 0, 0.95),
+    mistakeTopK: clamp(mistakeTopK, 1, 9),
+  }
+}
+
+let AI_CFG = getAiCfgByDifficulty(difficulty)
 
 // ========= 彩蛋：多次点击“胜率”弹出，显示文件更新时间 =========
 const EASTER_TAP_NEED = 7
 const EASTER_TAP_WINDOW_MS = 1600
 let easterTapCount = 0
 let easterTapTimer = null
+let busuanziLoaded = false
 
 function getFileUpdateTimeText() {
   // document.lastModified 通常由浏览器基于服务器返回的 Last-Modified 或文件时间推断
@@ -406,10 +521,20 @@ function getFileUpdateTimeText() {
 }
 
 function openEasterModal() {
-  if (!$easterModal || !$easterBody) return
+  if (!$easterModal) return
   if ($easterTitle) $easterTitle.textContent = "彩蛋"
   const t = getFileUpdateTimeText()
-  $easterBody.innerHTML = `当前文件更新时间：<br /><strong>${t}</strong>`
+  if ($easterUpdatedAt) $easterUpdatedAt.textContent = t
+  if ($easterDiff) $easterDiff.textContent = String(difficulty)
+
+  // 懒加载不蒜子：仅在 http/https 下加载（file:// 会变成 file://busuanzi... 导致失败）
+  if (canLoadRemoteScripts() && !busuanziLoaded) {
+    busuanziLoaded = true
+    loadScriptOnce("https://busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js", "busuanzi-sdk").catch(() => {
+      // 失败不影响彩蛋展示
+    })
+  }
+
   $easterModal.classList.add("isOpen")
   $easterModal.setAttribute("aria-hidden", "false")
 }
@@ -438,6 +563,9 @@ function onEasterTap() {
 
 function init() {
   closeResultModal()
+  // 每局开始时按当前难度刷新 AI 参数
+  AI_CFG = getAiCfgByDifficulty(difficulty)
+  renderDifficultyBadge()
   // 清理仍在执行的淡出计时器
   fadeTimers.forEach((t) => t && clearTimeout(t))
   fadeTimers = Array(9).fill(null)
@@ -490,6 +618,8 @@ function renderStatus() {
 function handleGameOver(winner) {
   if (gameRecorded) return
   gameRecorded = true
+  // 先更新难度，再刷新战绩 UI，避免 UI 仍显示旧难度
+  updateDifficultyByResult(winner)
   recordGameResult(winner)
   openResultModal(winner)
 }
@@ -655,6 +785,8 @@ if ($winRate) {
     localStorage.setItem(STORAGE_UID_KEY, fallback)
     userId = fallback
   }
+  // 初始化：新用户默认难度 1（存储里没有时 getUserDifficulty 会返回 1）
+  difficulty = getUserDifficulty(userId)
   // 记录访问次数（不阻塞 UI）
   recordPageVisit(userId)
   renderUserStats()

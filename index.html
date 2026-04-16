@@ -19,7 +19,10 @@
         <section class="stats" aria-label="player stats">
           <div class="statsMain">
             <div class="statsTitle">你的战绩</div>
-            <div class="statsRate" id="winRate">胜率 --%</div>
+            <div class="statsRate">
+              <span id="winRate">胜率 --%</span>
+              <span class="diffBadge" id="diffBadge" aria-label="difficulty">难度等级 1</span>
+            </div>
             <div class="statsSub">
               <span id="winLoss">0胜 0负</span>
             </div>
@@ -56,15 +59,21 @@
       <div class="modalBackdrop" data-close="1"></div>
       <div class="modalPanel" role="dialog" aria-modal="true" aria-label="easter egg dialog">
         <div class="modalTitle" id="easterTitle">彩蛋</div>
-        <div class="modalBody" id="easterBody">--</div>
+        <div class="modalBody" id="easterBody">
+          <div>当前文件更新时间：<strong id="easterUpdatedAt">--</strong></div>
+          <div style="margin-top: 10px">当前难度等级：<strong id="easterDiff">--</strong> / 10</div>
+          <div style="margin-top: 10px; font-size: 14px; font-weight: 800">
+            <span id="busuanzi_container_site_pv">本站总访问量 <span id="busuanzi_value_site_pv"></span> 次</span>
+            <span style="opacity: 0.65; margin: 0 6px">·</span>
+            <span id="busuanzi_container_site_uv">本站总访客 <span id="busuanzi_value_site_uv"></span> 人</span>
+          </div>
+        </div>
         <div class="modalActions">
           <button class="btn modalBtn" id="easterCloseBtn" type="button">关闭</button>
         </div>
       </div>
     </div>
 
-    <!-- CloudBase Web SDK（用于纯H5调用云函数） -->
-    <script src="https://imgcache.qq.com/qcloud/cloudbase-js-sdk/2.9.0/cloudbase.full.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

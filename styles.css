@@ -86,6 +86,22 @@ body {
   font-weight: 1000;
   font-size: 22px;
   letter-spacing: 0.4px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.diffBadge {
+  font-weight: 900;
+  font-size: 12px;
+  letter-spacing: 0.2px;
+  color: rgba(15, 23, 42, 0.78);
+  background: rgba(255, 255, 255, 0.70);
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  border-radius: 999px;
+  padding: 4px 8px;
+  white-space: nowrap;
 }
 
 .statsSub {
@@ -350,6 +366,10 @@ body {
   }
   .statsRate {
     font-size: 18px;
+  }
+  .diffBadge {
+    font-size: 11px;
+    padding: 3px 7px;
   }
   .statsSub {
     margin-top: 4px;
