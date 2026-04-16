@@ -140,7 +140,9 @@ async function getCloudbaseApp() {
   if (!window.cloudbase) {
     if (!cloudbaseScriptLoading) {
       cloudbaseScriptLoading = loadScriptOnce(
-        "https://imgcache.qq.com/qcloud/cloudbase-js-sdk/2.9.0/cloudbase.full.js",
+        // 官方文档提供的 CDN 域名：static.cloudbase.net
+        // 注：imgcache.qq.com 在部分网络/地区可能出现 404 或访问不稳定
+        "https://static.cloudbase.net/cloudbase-js-sdk/2.9.0/cloudbase.full.js",
         "cloudbase-web-sdk"
       ).catch(() => null)
     }
