@@ -131,43 +131,6 @@ function loadScriptOnce(url, id) {
   })
 }
 
-function isConfiguredUniquePath(p) {
-  if (!p) return false
-  const s = String(p).trim()
-  if (!s) return false
-  // 未替换占位符时不加载，避免 404
-  if (s.includes("<unique-path>")) return false
-  return true
-}
-
-function initVercelAnalyticsAndSpeedInsights() {
-  if (!canLoadRemoteScripts()) return
-  if (typeof window === "undefined") return
-
-  const vaPath = window.__VERCEL_ANALYTICS_UNIQUE_PATH__
-  const siPath = window.__VERCEL_SPEED_UNIQUE_PATH__
-
-  if (isConfiguredUniquePath(vaPath)) {
-    // 文档：window.va + /<unique-path>/script.js
-    window.va =
-      window.va ||
-      function () {
-        ;(window.vaq = window.vaq || []).push(arguments)
-      }
-    loadScriptOnce(`/${vaPath}/script.js`, "vercel-web-analytics").catch(() => {})
-  }
-
-  if (isConfiguredUniquePath(siPath)) {
-    // 文档：window.si + /<unique-path>/script.js
-    window.si =
-      window.si ||
-      function () {
-        ;(window.siq = window.siq || []).push(arguments)
-      }
-    loadScriptOnce(`/${siPath}/script.js`, "vercel-speed-insights").catch(() => {})
-  }
-}
-
 async function getCloudbaseApp() {
   if (cbApp) return cbApp
   if (typeof window === "undefined") return null
@@ -865,9 +828,6 @@ if ($tipModal) {
   }
   // 初始化：新用户默认难度 1（存储里没有时 getUserDifficulty 会返回 1）
   difficulty = getUserDifficulty(userId)
-
-  // Vercel Web Analytics / Speed Insights：页面打开即初始化（仅当你已替换 unique-path）
-  initVercelAnalyticsAndSpeedInsights()
 
   // 不蒜子：页面打开就加载（但仅限 http/https，避免 file:// 报错）
   if (canLoadRemoteScripts()) {

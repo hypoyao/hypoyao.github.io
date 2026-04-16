@@ -86,21 +86,14 @@
       </div>
     </div>
 
-    <!--
-      Vercel Web Analytics / Speed Insights（纯 HTML 接入）：
-      1) 需要把站点部署到 Vercel，并在项目里开启 Analytics / Speed Insights
-      2) Vercel 会生成一个 <unique-path>，用于加载脚本： "/<unique-path>/script.js"
-      3) 把下面两个占位符替换成你控制台里看到的 unique-path（不包含前后斜杠）
-    -->
-    <script>
-      window.__VERCEL_ANALYTICS_UNIQUE_PATH__ = "<unique-path>";
-      window.__VERCEL_SPEED_UNIQUE_PATH__ = "<unique-path>";
+    <!-- Vercel Web Analytics（inject 方式）
+         说明：inject 适用于“通过 npm 安装”的项目；纯静态页这里用 ESM CDN 来引入。
+         为避免在 GitHub Pages 上产生 404 噪音，这里仅在 *.vercel.app 域名下启用。 -->
+    <script type="module">
+      import { inject } from "https://esm.sh/@vercel/analytics"
+      if (location.hostname.endsWith("vercel.app")) inject()
     </script>
 
     <script src="./app.js"></script>
-    <script type="module">
-      import { injectSpeedInsights } from './vendor/@vercel/speed-insights/dist/index.mjs';
-      injectSpeedInsights();
-    </script>
   </body>
 </html>
