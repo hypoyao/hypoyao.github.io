@@ -1,19 +1,4 @@
 {
-  "name": "hypoyao-tictactoe",
-  "version": "1.0.0",
-  "description": "井字棋挑战赛 - Tic-tac-toe challenge game",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "lint": "echo 'No linter configured'",
-    "test": "echo 'No tests configured'"
-  },
-  "keywords": [
-    "tic-tac-toe",
-    "game"
-  ],
-  "author": "hypoyao",
-  "license": "MIT",
   "dependencies": {
     "@vercel/analytics": "^2.0.1",
     "@vercel/speed-insights": "^2.0.0"

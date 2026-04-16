@@ -62,7 +62,11 @@
         <div class="modalBody" id="easterBody">
           <div>当前文件更新时间：<strong id="easterUpdatedAt">--</strong></div>
           <div style="margin-top: 10px">当前难度等级：<strong id="easterDiff">--</strong> / 10</div>
+          <div style="margin-top: 10px">
+            全网游戏已玩次数（按访问量估算）：<strong><span id="busuanzi_value_page_pv"></span></strong> 局
+          </div>
           <div style="margin-top: 10px; font-size: 14px; font-weight: 800">
+            <span id="busuanzi_container_page_pv" style="display:none"></span>
             <span id="busuanzi_container_site_pv">本站总访问量 <span id="busuanzi_value_site_pv"></span> 次</span>
             <span style="opacity: 0.65; margin: 0 6px">·</span>
             <span id="busuanzi_container_site_uv">本站总访客 <span id="busuanzi_value_site_uv"></span> 人</span>
@@ -82,12 +86,16 @@
       </div>
     </div>
 
-    <script src="./app.js"></script>
+    <!-- Vercel Web Analytics（inject 方式）
+         说明：inject 适用于“通过 npm 安装”的项目；纯静态页这里用 ESM CDN 来引入。
+         为避免在 GitHub Pages 上产生 404 噪音，这里仅在 *.vercel.app 域名下启用。 -->
     <script type="module">
       import { injectSpeedInsights } from './vendor/@vercel/speed-insights/dist/index.mjs';
       import { inject } from './vendor/@vercel/analytics/index.mjs';
       injectSpeedInsights();
       inject();
     </script>
+
+    <script src="./app.js"></script>
   </body>
 </html>

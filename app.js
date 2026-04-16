@@ -415,20 +415,33 @@ function minimax(s, depth, alpha, beta, aiPlayer, humanPlayer, memo) {
 }
 
 function chooseBestMove(s, aiPlayer, humanPlayer, cfg) {
-  // 先看一步必胜/必防
   const moves = availableMoves(s)
-  for (const m of moves) {
-    const ns = applyMove(s, m, aiPlayer)
-    if (ns.winner === aiPlayer) return m
-  }
-  for (const m of moves) {
-    const ns = applyMove(s, m, humanPlayer)
-    if (ns.winner === humanPlayer) return m
+
+  // 超低难度下允许“随便走一步”，让体验更轻松
+  const randomRate = cfg?.randomRate ?? 0
+  if (randomRate > 0 && Math.random() < randomRate && moves.length > 0) {
+    return moves[Math.floor(Math.random() * moves.length)]
   }
 
+  // 低难度下允许“漏看”一步必胜/必防（否则即使深度很低也会很难）
+  const tacticalMistakeRate = cfg?.tacticalMistakeRate ?? 0
+  const allowTactics = !(tacticalMistakeRate > 0 && Math.random() < tacticalMistakeRate)
+
+  // 先看一步必胜/必防（在低难度下可能会被跳过）
+  if (allowTactics) {
+    for (const m of moves) {
+      const ns = applyMove(s, m, aiPlayer)
+      if (ns.winner === aiPlayer) return m
+    }
+    for (const m of moves) {
+      const ns = applyMove(s, m, humanPlayer)
+      if (ns.winner === humanPlayer) return m
+    }
+  }
   // 深度越大越强，但也更耗时；本盘面很小，适当深度即可
   const MAX_DEPTH = cfg?.maxDepth ?? 10
   const memo = new Map()
+
 
   const scored = []
 
@@ -485,11 +498,11 @@ function getAiCfgByDifficulty(level) {
   const d = clamp(Number(level) || 1, 1, 10)
 
   // 1 档：非常容易
-  const L1 = { maxDepth: 1, mistakeRate: 0.9, mistakeTopK: 7 }
+  const L1 = { maxDepth: 1, mistakeRate: 0.95, mistakeTopK: 9, tacticalMistakeRate: 0.85, randomRate: 0.35 }
   // 5 档：当前体验（作为基准）
-  const L5 = { maxDepth: 2, mistakeRate: 0.75, mistakeTopK: 5 }
+  const L5 = { maxDepth: 2, mistakeRate: 0.85, mistakeTopK: 6, tacticalMistakeRate: 0.25, randomRate: 0.05 }
   // 10 档：接近“最强”（接近之前的最难）
-  const L10 = { maxDepth: 12, mistakeRate: 0, mistakeTopK: 1 }
+  const L10 = { maxDepth: 10, mistakeRate: 0.05, mistakeTopK: 2, tacticalMistakeRate: 0, randomRate: 0 }
 
   if (d <= 5) {
     // 1~5：从 L1 线性过渡到 L5
@@ -497,10 +510,14 @@ function getAiCfgByDifficulty(level) {
     const maxDepth = Math.round(L1.maxDepth + (L5.maxDepth - L1.maxDepth) * t)
     const mistakeRate = L1.mistakeRate + (L5.mistakeRate - L1.mistakeRate) * t
     const mistakeTopK = Math.round(L1.mistakeTopK + (L5.mistakeTopK - L1.mistakeTopK) * t)
+    const tacticalMistakeRate = L1.tacticalMistakeRate + (L5.tacticalMistakeRate - L1.tacticalMistakeRate) * t
+    const randomRate = L1.randomRate + (L5.randomRate - L1.randomRate) * t
     return {
       maxDepth: clamp(maxDepth, 1, 12),
       mistakeRate: clamp(mistakeRate, 0, 0.95),
       mistakeTopK: clamp(mistakeTopK, 1, 9),
+      tacticalMistakeRate: clamp(tacticalMistakeRate, 0, 0.95),
+      randomRate: clamp(randomRate, 0, 0.95),
     }
   }
 
@@ -509,10 +526,14 @@ function getAiCfgByDifficulty(level) {
   const maxDepth = Math.round(L5.maxDepth + (L10.maxDepth - L5.maxDepth) * t)
   const mistakeRate = L5.mistakeRate + (L10.mistakeRate - L5.mistakeRate) * t
   const mistakeTopK = Math.round(L5.mistakeTopK + (L10.mistakeTopK - L5.mistakeTopK) * t)
+  const tacticalMistakeRate = L5.tacticalMistakeRate + (L10.tacticalMistakeRate - L5.tacticalMistakeRate) * t
+  const randomRate = L5.randomRate + (L10.randomRate - L5.randomRate) * t
   return {
     maxDepth: clamp(maxDepth, 1, 12),
     mistakeRate: clamp(mistakeRate, 0, 0.95),
     mistakeTopK: clamp(mistakeTopK, 1, 9),
+    tacticalMistakeRate: clamp(tacticalMistakeRate, 0, 0.95),
+    randomRate: clamp(randomRate, 0, 0.95),
   }
 }
 
