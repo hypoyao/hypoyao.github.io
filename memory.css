@@ -132,6 +132,7 @@
 
 .memActions {
   margin-top: 14px;
+  gap: 10px;
 }
 
 .memModalPanel {

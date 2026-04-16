@@ -284,6 +284,8 @@ body {
   margin-top: 16px;
   display: flex;
   justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .btn {
@@ -298,10 +300,19 @@ body {
   cursor: pointer;
   box-shadow: 0 10px 24px rgba(22, 163, 74, 0.25);
   touch-action: manipulation;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .btn:hover {
   filter: brightness(1.05);
+}
+
+.btnSecondary {
+  background: linear-gradient(180deg, rgba(37, 99, 235, 0.92), rgba(29, 78, 216, 0.92));
+  box-shadow: 0 10px 24px rgba(37, 99, 235, 0.20);
 }
 
 .footer {
