@@ -24,6 +24,8 @@ body {
     linear-gradient(180deg, #f8fafc, #eef2ff);
   color: var(--text);
   -webkit-tap-highlight-color: transparent;
+  /* 防止页面整体出现横向滚动条（横滑仅在指定横向列表中发生） */
+  overflow-x: hidden;
 }
 
 .wrap {
@@ -543,14 +545,14 @@ body {
     /* 手机端：避免内容被底部安全区/地址栏挤压，优先让底部按钮露出来 */
     min-height: 100svh;
     place-items: start center;
-    padding: 12px 12px calc(16px + env(safe-area-inset-bottom));
+    padding: 6px 6px calc(14px + env(safe-area-inset-bottom));
   }
   .card {
-    padding: 14px 12px;
+    padding: 14px 10px;
     border-radius: 16px;
   }
-  .header h1 {
-    /* 去掉第一个大标题（手机端隐藏） */
+  /* 手机端：游戏页隐藏大标题（首页/创作者页保留标题） */
+  .card:not(.homeCard) .header h1 {
     display: none;
   }
   .desc {

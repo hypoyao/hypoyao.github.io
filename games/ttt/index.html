@@ -4,14 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>井字棋对决</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="wrap">
       <section class="card">
         <header class="header">
           <h1>井字棋对决</h1>
-          <a class="creatorBadge" aria-label="创作者" href="./creator-yaohaibo.html">
+          <a class="creatorBadge" aria-label="创作者" href="/creator-yaohaibo.html">
             <img class="creatorBadgeAvatar" src="/assets/avatars/yaohaibo.svg" alt="海波头像" />
             <span class="creatorBadgeName">创作者：海波</span>
           </a>
@@ -46,7 +46,7 @@
 
         <div class="actions">
           <button class="btn" id="resetBtn" type="button">重新开始</button>
-          <a class="btn btnSecondary" href="./index.html">更多游戏</a>
+          <a class="btn btnSecondary" href="/">更多游戏</a>
         </div>
       </section>
     </main>
@@ -115,13 +115,13 @@
 
     <!-- Vercel Web Analytics（inject 方式） -->
     <script type="module">
-      import { injectSpeedInsights } from "./vendor/@vercel/speed-insights/dist/index.mjs"
-      import { inject } from "./vendor/@vercel/analytics/index.mjs"
+      import { injectSpeedInsights } from "/vendor/@vercel/speed-insights/dist/index.mjs"
+      import { inject } from "/vendor/@vercel/analytics/index.mjs"
       injectSpeedInsights()
       inject()
     </script>
 
-    <script src="./rest.js"></script>
+    <script src="/rest.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>
