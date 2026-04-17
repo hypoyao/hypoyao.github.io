@@ -99,7 +99,8 @@ function renderDifficulty() {
   const dots = $diffGrid.querySelectorAll(".goDiffDot")
   dots.forEach((el) => {
     const lv = Number(el.dataset.level || 0)
-    el.classList.toggle("isOn", lv > 0 && lv <= difficulty)
+    el.classList.toggle("isDone", lv > 0 && lv < difficulty)
+    el.classList.toggle("isCurrent", lv > 0 && lv === difficulty)
   })
 }
 
@@ -119,7 +120,8 @@ function renderGoDiffPicker() {
   const dots = $goDiffPicker.querySelectorAll(".diffPickDot")
   dots.forEach((el) => {
     const lv = Number(el.dataset.level || 0)
-    el.classList.toggle("isOn", lv > 0 && lv <= difficulty)
+    el.classList.toggle("isDone", lv > 0 && lv < difficulty)
+    el.classList.toggle("isCurrent", lv > 0 && lv === difficulty)
   })
 }
 

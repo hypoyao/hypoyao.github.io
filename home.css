@@ -1,0 +1,94 @@
+:root {
+  --tile-border: rgba(15, 23, 42, 0.10);
+}
+
+.homeCard {
+  width: min(920px, 100%);
+}
+
+.homeSub {
+  margin: -6px 0 14px;
+  color: var(--muted);
+  line-height: 1.55;
+  font-size: 13px;
+}
+
+.gameGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+}
+
+.gameItem {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 16px;
+  border: 1px solid var(--tile-border);
+  background: rgba(255, 255, 255, 0.65);
+  box-shadow: 0 10px 24px rgba(2, 6, 23, 0.06);
+  text-decoration: none;
+  color: inherit;
+  transition: transform 120ms ease, filter 120ms ease;
+}
+
+.gameItem:hover {
+  filter: brightness(1.02);
+}
+
+.gameItem:active {
+  transform: scale(0.992);
+}
+
+.gameThumb {
+  width: 100%;
+  /* 截图通常偏“竖版卡片”，用更接近的比例让内容更大更清晰 */
+  aspect-ratio: 3 / 4;
+  border-radius: 12px;
+  object-fit: contain;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: linear-gradient(180deg, #ffffff, #f1f5f9);
+}
+
+.gameName {
+  font-weight: 1000;
+  font-size: 15px;
+  letter-spacing: 0.2px;
+}
+
+.gameDesc {
+  margin-top: 4px;
+  font-size: 12px;
+  color: rgba(100, 116, 139, 0.95);
+  line-height: 1.4;
+}
+
+.gameMeta {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(15, 23, 42, 0.72);
+}
+
+.homeFooter {
+  margin-top: 14px;
+  display: flex;
+  justify-content: center;
+}
+
+.homeFooter .btn {
+  min-width: 160px;
+}
+
+@media (max-width: 420px) {
+  .gameGrid {
+    grid-template-columns: 1fr;
+  }
+  .gameItem {
+    border-radius: 14px;
+  }
+  .gameName {
+    font-size: 15px;
+  }
+}

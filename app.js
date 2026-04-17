@@ -293,7 +293,7 @@ function renderUserStats() {
 }
 
 function renderDifficultyBadge() {
-  // 以 10 个小格子显示难度：<= 当前等级涂黑，其余空白
+  // 以 10 个小格子显示难度：已完成（< 当前等级）涂黑；当前等级涂灰；其余空白
   if ($diffText) $diffText.textContent = `难度等级 ${difficulty}`
   if (!$diffGrid) return
   if ($diffGrid.childElementCount !== 10) {
@@ -308,7 +308,8 @@ function renderDifficultyBadge() {
   const dots = $diffGrid.querySelectorAll(".diffDot")
   dots.forEach((el) => {
     const lv = Number(el.dataset.level || 0)
-    el.classList.toggle("isOn", lv > 0 && lv <= difficulty)
+    el.classList.toggle("isDone", lv > 0 && lv < difficulty)
+    el.classList.toggle("isCurrent", lv > 0 && lv === difficulty)
   })
 }
 
@@ -617,7 +618,8 @@ function renderDiffModalPicker() {
   const dots = $diffModalPicker.querySelectorAll(".diffPickDot")
   dots.forEach((el) => {
     const lv = Number(el.dataset.level || 0)
-    el.classList.toggle("isOn", lv > 0 && lv <= difficulty)
+    el.classList.toggle("isDone", lv > 0 && lv < difficulty)
+    el.classList.toggle("isCurrent", lv > 0 && lv === difficulty)
   })
 }
 

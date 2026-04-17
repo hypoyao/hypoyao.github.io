@@ -1,0 +1,193 @@
+:root {
+  --ch-light: #f8fafc;
+  --ch-dark: #e2e8f0;
+  --ch-line: rgba(15, 23, 42, 0.14);
+  --ch-sel: rgba(37, 99, 235, 0.18);
+  --ch-move: rgba(34, 197, 94, 0.22);
+  --ch-cap: rgba(239, 68, 68, 0.20);
+  --ch-hint: rgba(245, 158, 11, 0.22);
+}
+
+.chHud {
+  margin: 10px 0 12px;
+  border-radius: 16px;
+  padding: 12px 12px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.08), rgba(34, 197, 94, 0.06));
+  box-shadow: 0 10px 24px rgba(2, 6, 23, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chLeft {
+  display: grid;
+  gap: 4px;
+}
+
+.chStatus {
+  font-weight: 1000;
+  font-size: 14px;
+  color: rgba(15, 23, 42, 0.9);
+}
+
+.chHintText {
+  font-size: 12px;
+  color: rgba(100, 116, 139, 0.95);
+}
+
+.chRight {
+  display: grid;
+  place-items: center end;
+  gap: 4px;
+  min-width: 140px;
+}
+
+.chDiffLabel {
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.7);
+}
+
+.chDiffGrid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 10px;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  cursor: pointer;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+.chDiffDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  border: 1px solid rgba(15, 23, 42, 0.22);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.chDiffDot.isDone {
+  background: rgba(15, 23, 42, 0.92);
+  border-color: rgba(15, 23, 42, 0.92);
+}
+.chDiffDot.isCurrent {
+  background: rgba(148, 163, 184, 0.92);
+  border-color: rgba(148, 163, 184, 0.92);
+}
+
+.chBoard {
+  width: min(520px, 100%);
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  grid-template-rows: repeat(8, 1fr);
+  border: 3px solid var(--ch-line);
+  border-radius: 18px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: var(--shadow-soft);
+}
+
+.chCell {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  display: grid;
+  place-items: center;
+  font-size: clamp(22px, 5.4vw, 44px);
+  font-weight: 900;
+  line-height: 1;
+  position: relative;
+  transition: transform 90ms ease, filter 120ms ease, background 120ms ease;
+}
+
+.chCell.light {
+  background: var(--ch-light);
+}
+.chCell.dark {
+  background: var(--ch-dark);
+}
+
+.chCell:active {
+  transform: scale(0.985);
+}
+
+.chCell.sel {
+  background: var(--ch-sel);
+}
+
+.chCell.move::after,
+.chCell.capture::after,
+.chCell.hintFrom::after,
+.chCell.hintTo::after {
+  content: "";
+  position: absolute;
+  inset: 14%;
+  border-radius: 999px;
+  background: transparent;
+}
+.chCell.move::after {
+  background: var(--ch-move);
+}
+.chCell.capture::after {
+  background: var(--ch-cap);
+}
+.chCell.hintFrom::after,
+.chCell.hintTo::after {
+  background: var(--ch-hint);
+}
+.chCell.hintTo::after {
+  inset: 10%;
+  border: 2px solid rgba(245, 158, 11, 0.65);
+  background: transparent;
+}
+
+.promoRow {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.promoBtn {
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.8);
+  padding: 10px 0;
+  font-size: 20px;
+  font-weight: 1000;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+@media (max-width: 420px) {
+  .chHud {
+    padding: 8px 10px;
+    border-radius: 14px;
+  }
+  .chDiffGrid {
+    grid-auto-columns: 9px;
+    gap: 3px;
+    padding: 3px 5px;
+  }
+  .chDiffDot {
+    width: 9px;
+    height: 9px;
+  }
+  .chBoard {
+    border-radius: 16px;
+    height: min(380px, 86vw);
+  }
+}
+

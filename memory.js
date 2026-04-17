@@ -160,8 +160,9 @@ function renderLevel() {
     const dots = $levelGrid.querySelectorAll(".memLevelDot")
     dots.forEach((el) => {
       const lv = Number(el.dataset.level || 0)
-      // “已完成”定义：低于当前等级的等级都算完成
+      // 已完成（< 当前等级）涂黑；当前等级涂灰
       el.classList.toggle("isDone", lv > 0 && lv < level)
+      el.classList.toggle("isCurrent", lv > 0 && lv === level)
     })
   }
 }

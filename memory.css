@@ -48,6 +48,11 @@
   border-color: var(--mem-on);
 }
 
+.memLevelDot.isCurrent {
+  background: rgba(148, 163, 184, 0.92);
+  border-color: rgba(148, 163, 184, 0.92);
+}
+
 .memHudRight {
   text-align: right;
   display: grid;
