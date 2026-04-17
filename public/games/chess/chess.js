@@ -13,10 +13,17 @@ const MAX_DIFF = 10
 const $board = document.getElementById("board")
 const $status = document.getElementById("status")
 const $hintText = document.getElementById("hintText")
+const $winProb = document.getElementById("winProb")
+const $winProbVal = document.getElementById("winProbVal")
 const $resetBtn = document.getElementById("resetBtn")
 const $hintBtn = document.getElementById("hintBtn")
+const $undoBtn = document.getElementById("undoBtn")
 const $diffGrid = document.getElementById("diffGrid")
 const $diffText = document.getElementById("diffText")
+const $diffModal = document.getElementById("diffModal")
+const $diffModalPicker = document.getElementById("diffModalPicker")
+const $diffModalCurrent = document.getElementById("diffModalCurrent")
+const $diffModalCloseBtn = document.getElementById("diffModalCloseBtn")
 
 const $chModal = document.getElementById("chModal")
 const $chModalTitle = document.getElementById("chModalTitle")
@@ -28,6 +35,11 @@ const $chTipText = document.getElementById("chTipText")
 
 const $promoModal = document.getElementById("promoModal")
 const $promoRow = document.getElementById("promoRow")
+
+const $resetModal = document.getElementById("resetModal")
+const $resetModalBody = document.getElementById("resetModalBody")
+const $resetCancelBtn = document.getElementById("resetCancelBtn")
+const $resetConfirmBtn = document.getElementById("resetConfirmBtn")
 
 // piece chars: white uppercase, black lowercase
 // P N B R Q K
@@ -53,6 +65,20 @@ const PIECE_TIP = {
   R: "车：沿横竖直线任意格数移动。",
   Q: "后：车 + 象的走法（横竖/斜线任意格）。",
   K: "王：向任意方向走 1 格；可进行王车易位（在特定条件下）。",
+}
+
+function setWinProbText(text) {
+  if ($winProbVal) $winProbVal.textContent = text
+  else if ($winProb) $winProb.textContent = `本局胜率：${text}`
+}
+
+function setWinProbStyle(pct) {
+  if (!$winProb) return
+  $winProb.classList.remove("isLow", "isMid", "isHigh")
+  // <=30 红；31-60 橙（含 60）；61-99 绿（含 99）
+  if (pct <= 30) $winProb.classList.add("isLow")
+  else if (pct <= 60) $winProb.classList.add("isMid")
+  else $winProb.classList.add("isHigh")
 }
 
 function clamp(n, min, max) {
@@ -86,6 +112,18 @@ let hintMove = null
 
 let thinking = false
 let pendingPromotion = null // {from,to,piece,captured,flags}
+
+// 走子历史：保存 makeMove 返回的 undo 信息，用于悔棋
+const undoStack = []
+
+// 重新开始二次确认状态
+let resetConfirmStage = 0
+
+// 连续点击“轮到 您”3次打开彩蛋（用于手动调难度）
+const STATUS_EASTER_NEED = 3
+const STATUS_EASTER_WINDOW_MS = 1200
+let statusTapCount = 0
+let statusTapTimer = null
 
 // Flags
 const FLAG_CAPTURE = 1
@@ -159,7 +197,7 @@ function setHint(text) {
 }
 
 function renderDifficulty() {
-  if ($diffText) $diffText.textContent = `难度等级 ${difficulty} / 10`
+  if ($diffText) $diffText.textContent = `当前难度 ${difficulty} / 10`
   if (!$diffGrid) return
   if ($diffGrid.childElementCount !== 10) {
     $diffGrid.innerHTML = ""
@@ -214,6 +252,12 @@ function renderBoard() {
     cell.classList.remove("sel", "move", "capture", "hintFrom", "hintTo")
   })
 
+  // action buttons
+  if ($undoBtn) {
+    const need = G?.turn === "w" ? 2 : 1
+    $undoBtn.disabled = thinking || !!pendingPromotion || undoStack.length < need
+  }
+
   if (selected >= 0) {
     cells[selected]?.classList.add("sel")
     legalForSelected.forEach((m) => {
@@ -233,6 +277,11 @@ function renderBoard() {
   } else {
     setStatus(G.turn === "w" ? "轮到 您" : "轮到 AI")
   }
+
+  // 胜率展示（粗略估算）：基于当前局面物质优势 + 是否被将军，映射为 0-100%
+  const p = calcWinProb(G)
+  setWinProbText(`${p}%`)
+  setWinProbStyle(p)
 }
 
 function openModal(title, body) {
@@ -251,7 +300,7 @@ function closeModal() {
 
 function openTipModal() {
   if (!$chTipModal) return
-  if ($chTipText) $chTipText.textContent = "难度等级 1-10，输赢后会自动升降等级"
+  if ($chTipText) $chTipText.textContent = "当前难度 1-10，输赢后会自动升降难度"
   $chTipModal.classList.add("isOpen")
   $chTipModal.setAttribute("aria-hidden", "false")
 }
@@ -304,6 +353,112 @@ function closePromoModal() {
   if (!$promoModal) return
   $promoModal.classList.remove("isOpen")
   $promoModal.setAttribute("aria-hidden", "true")
+}
+
+function openResetModal() {
+  if (!$resetModal) return
+  resetConfirmStage = 0
+  if ($resetModalBody) $resetModalBody.textContent = "确定要重新开始吗？"
+  if ($resetConfirmBtn) $resetConfirmBtn.textContent = "继续"
+  $resetModal.classList.add("isOpen")
+  $resetModal.setAttribute("aria-hidden", "false")
+}
+
+function closeResetModal() {
+  if (!$resetModal) return
+  resetConfirmStage = 0
+  $resetModal.classList.remove("isOpen")
+  $resetModal.setAttribute("aria-hidden", "true")
+}
+
+function setDifficultyManual(next) {
+  const lv = clamp(Number(next) || 1, MIN_DIFF, MAX_DIFF)
+  difficulty = lv
+  saveDifficulty(difficulty)
+  renderDifficulty()
+  renderDiffModalPicker()
+  setHint(`已设置当前难度 ${difficulty} / 10`)
+}
+
+function renderDiffModalPicker() {
+  if ($diffModalCurrent) $diffModalCurrent.textContent = String(difficulty)
+  if (!$diffModalPicker) return
+  if ($diffModalPicker.childElementCount !== 10) {
+    $diffModalPicker.innerHTML = ""
+    for (let i = 1; i <= 10; i++) {
+      const dot = document.createElement("span")
+      dot.className = "diffPickDot"
+      dot.dataset.level = String(i)
+      dot.title = `当前难度 ${i}`
+      $diffModalPicker.appendChild(dot)
+    }
+  }
+  const dots = $diffModalPicker.querySelectorAll(".diffPickDot")
+  dots.forEach((el) => {
+    const lv = Number(el.dataset.level || 0)
+    el.classList.toggle("isDone", lv > 0 && lv < difficulty)
+    el.classList.toggle("isCurrent", lv > 0 && lv === difficulty)
+  })
+}
+
+function openDiffModal() {
+  if (!$diffModal) return
+  renderDiffModalPicker()
+  $diffModal.classList.add("isOpen")
+  $diffModal.setAttribute("aria-hidden", "false")
+}
+
+function closeDiffModal() {
+  if (!$diffModal) return
+  $diffModal.classList.remove("isOpen")
+  $diffModal.setAttribute("aria-hidden", "true")
+}
+
+function onResetClick() {
+  if (!G || thinking) return
+  if (pendingPromotion) return
+  openResetModal()
+}
+
+function onResetConfirm() {
+  if (!G || thinking) return
+  if (resetConfirmStage === 0) {
+    resetConfirmStage = 1
+    if ($resetModalBody) $resetModalBody.textContent = "再点一次确认将清空当前对局。"
+    if ($resetConfirmBtn) $resetConfirmBtn.textContent = "确定重开"
+    return
+  }
+  closeResetModal()
+  resetGame()
+}
+
+function applyGameMove(m) {
+  const u = makeMove(G, m)
+  undoStack.push(u)
+  return u
+}
+
+function undoLastTurn() {
+  if (!G || thinking || pendingPromotion) return
+  // 默认：悔棋回到“您走子之前”的局面（撤销 AI + 自己各一步）
+  const plies = G.turn === "w" ? 2 : 1
+  const n = Math.min(plies, undoStack.length)
+  if (n <= 0) return
+
+  // 如果已经结束，允许悔棋把对局拉回继续
+  G.winner = null
+  G.reason = ""
+
+  selected = -1
+  legalForSelected = []
+  hintMove = null
+  for (let i = 0; i < n; i++) {
+    const u = undoStack.pop()
+    if (!u) break
+    undoMove(G, u)
+  }
+  setHint("已悔棋：轮到您")
+  renderBoard()
 }
 
 // ===== Move generation =====
@@ -718,6 +873,37 @@ function gameOutcome(state) {
   return { winner: "draw", reason: "无子可走" }
 }
 
+function evalMaterialOnly(state) {
+  // 正值代表白方（玩家）优势
+  let s = 0
+  for (let i = 0; i < 64; i++) {
+    const p = state.board[i]
+    if (!p || p === ".") continue
+    const v = VAL[pieceType(p)] || 0
+    s += isWhitePiece(p) ? v : -v
+  }
+  // 处于被将军状态会显著降低“胜率”观感
+  try {
+    if (isInCheck(state, "w")) s -= 180
+    if (isInCheck(state, "b")) s += 180
+  } catch {}
+  return s
+}
+
+function calcWinProb(state) {
+  if (!state) return 50
+  if (state.winner) {
+    if (state.winner === "w") return 100
+    if (state.winner === "b") return 0
+    return 50
+  }
+  const score = evalMaterialOnly(state) // roughly -4000..4000
+  // logistic 映射，400 为“1 个小子”的大概尺度
+  const p = 1 / (1 + Math.exp(-score / 400))
+  const pct = Math.round(p * 100)
+  return clamp(pct, 1, 99)
+}
+
 // ===== Evaluation + AI =====
 const VAL = { p: 100, n: 320, b: 330, r: 500, q: 900, k: 0 }
 
@@ -831,6 +1017,12 @@ function search(state, depth, alpha, beta, maximizingWhite) {
 
 // ===== Gameplay =====
 function resetGame() {
+  // 关闭所有弹窗，避免“再来一局”看起来没反应
+  closeModal()
+  closeTipModal()
+  closePromoModal()
+  closeResetModal()
+  closeDiffModal()
   thinking = false
   pendingPromotion = null
   selected = -1
@@ -838,6 +1030,7 @@ function resetGame() {
   hintMove = null
   difficulty = loadDifficulty()
   G = startPosition()
+  undoStack.length = 0
   setHint("点击您的棋子查看走法")
   renderBoard()
 }
@@ -866,7 +1059,7 @@ function finalizeMove(m) {
   if (m.flags & FLAG_PROMO && !m.promo) {
     return openPromoModal(m, color)
   }
-  makeMove(G, m)
+  applyGameMove(m)
 
   // clear selection
   selected = -1
@@ -889,16 +1082,19 @@ function finalizeMove(m) {
 }
 
 function onGameOver(out) {
+  const reason = out?.reason ? `（${out.reason}）` : ""
   if (out.winner === "w") {
     difficulty = clamp(difficulty + 1, MIN_DIFF, MAX_DIFF)
     saveDifficulty(difficulty)
-    openModal("您赢了！", "恭喜晋级，难度 +1")
+    openModal("您赢了！", `恭喜晋级，难度 +1${reason}`)
   } else if (out.winner === "b") {
     difficulty = clamp(difficulty - 1, MIN_DIFF, MAX_DIFF)
     saveDifficulty(difficulty)
-    openModal("AI 赢了", "再试一次，难度 -1")
+    // 说明：国际象棋规则里不会“吃王”，输棋通常是被将死（王被将军且无路可走）
+    const tip = out.reason === "将死" ? "将死：王被将军且无路可走（不需要吃王）。" : "再试一次。"
+    openModal("AI 赢了", `${tip} 难度 -1${reason}`)
   } else {
-    openModal("和棋", "平局不升不降")
+    openModal("和棋", `平局不升不降${reason}`)
   }
 }
 
@@ -941,7 +1137,7 @@ function aiTurn() {
 
     // AI 升变默认升后
     if (m.flags & FLAG_PROMO && !m.promo) m.promo = "q"
-    makeMove(G, m)
+    applyGameMove(m)
 
     const out = gameOutcome(G)
     if (out) {
@@ -974,8 +1170,9 @@ function onHint() {
 }
 
 // ===== Events =====
-if ($resetBtn) $resetBtn.addEventListener("click", resetGame)
+if ($resetBtn) $resetBtn.addEventListener("click", onResetClick)
 if ($hintBtn) $hintBtn.addEventListener("click", onHint)
+if ($undoBtn) $undoBtn.addEventListener("click", undoLastTurn)
 if ($diffGrid) $diffGrid.addEventListener("click", () => openTipModal())
 if ($chTipModal) {
   $chTipModal.addEventListener("click", (e) => {
@@ -987,6 +1184,51 @@ if ($chModal) {
     if (e.target?.dataset?.close) closeModal()
   })
 }
-if ($chModalBtn) $chModalBtn.addEventListener("click", () => resetGame())
+if ($chModalBtn)
+  $chModalBtn.addEventListener("click", () => {
+    closeModal()
+    resetGame()
+  })
+if ($resetModal) {
+  $resetModal.addEventListener("click", (e) => {
+    if (e.target?.dataset?.close) closeResetModal()
+  })
+}
+if ($resetCancelBtn) $resetCancelBtn.addEventListener("click", closeResetModal)
+if ($resetConfirmBtn) $resetConfirmBtn.addEventListener("click", onResetConfirm)
+
+if ($diffModal) {
+  $diffModal.addEventListener("click", (e) => {
+    if (e.target?.dataset?.close) closeDiffModal()
+  })
+}
+if ($diffModalCloseBtn) $diffModalCloseBtn.addEventListener("click", closeDiffModal)
+if ($diffModalPicker) {
+  $diffModalPicker.addEventListener("click", (e) => {
+    const t = e.target
+    const lv = Number(t?.dataset?.level || 0)
+    if (lv >= MIN_DIFF && lv <= MAX_DIFF) setDifficultyManual(lv)
+  })
+}
+
+if ($status) {
+  $status.addEventListener("click", () => {
+    // 仅当文字为“轮到 您”时才计数（避免其它状态误触发）
+    if (!$status.textContent || !$status.textContent.includes("轮到 您")) return
+    statusTapCount += 1
+    if (statusTapTimer) clearTimeout(statusTapTimer)
+    statusTapTimer = window.setTimeout(() => {
+      statusTapCount = 0
+      statusTapTimer = null
+    }, STATUS_EASTER_WINDOW_MS)
+
+    if (statusTapCount >= STATUS_EASTER_NEED) {
+      statusTapCount = 0
+      if (statusTapTimer) clearTimeout(statusTapTimer)
+      statusTapTimer = null
+      openDiffModal()
+    }
+  })
+}
 
 resetGame()

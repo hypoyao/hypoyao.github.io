@@ -8,8 +8,8 @@
 
 ;(function () {
   const PLAY_MS = 10 * 60_000
-  const REST_MS = 20_000
-  const MESSAGE = "记得休息小眼睛哦，看6米外面20秒再来玩吧"
+  const REST_MS = 60_000
+  const MESSAGE = "记得休息小眼睛哦，看6米外面1分钟再来玩吧"
 
   let playTimer = null
   let restTimer = null
