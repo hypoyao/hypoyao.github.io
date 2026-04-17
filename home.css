@@ -13,6 +13,46 @@
   font-size: 13px;
 }
 
+.homeSection {
+  margin-top: 14px;
+}
+
+.homeSectionHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 2px 10px;
+}
+
+.homeSectionTitle {
+  font-size: 14px;
+  font-weight: 1000;
+  color: rgba(15, 23, 42, 0.88);
+  letter-spacing: 0.2px;
+}
+
+.homeSectionSub {
+  font-size: 12px;
+  color: rgba(100, 116, 139, 0.95);
+  white-space: nowrap;
+}
+
+.gameRow {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding: 2px 2px 10px;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+}
+
+.gameItemRow {
+  flex: 0 0 auto;
+  width: min(240px, 70vw);
+  scroll-snap-align: start;
+}
+
 .gameGrid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -90,5 +130,8 @@
   }
   .gameName {
     font-size: 15px;
+  }
+  .gameRow {
+    gap: 10px;
   }
 }
