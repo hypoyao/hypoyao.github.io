@@ -1,7 +1,13 @@
 # Dependencies
 node_modules/
 
+# Next.js
+.next/
+out/
+
 # Lock files are needed for reproducible builds
 # package-lock.json
 # pnpm-lock.yaml
 # yarn.lock
+.vercel
+.env*.local
