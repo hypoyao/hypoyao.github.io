@@ -382,6 +382,16 @@ body {
   width: 100%;
 }
 
+.gameFooter {
+  margin-top: 14px;
+  display: flex;
+  justify-content: center;
+}
+
+.gameFooter .btn {
+  width: min(360px, 100%);
+}
+
 .btn {
   width: min(360px, 100%);
   background: linear-gradient(180deg, #22c55e, #16a34a);

@@ -19,6 +19,7 @@ const $diffGrid = document.getElementById("diffGrid")
 const $diffText = document.getElementById("diffText")
 const $resetBtn = document.getElementById("resetBtn")
 const $hintBtn = document.getElementById("hintBtn")
+const $undoBtn = document.getElementById("undoBtn")
 
 const $xqModal = document.getElementById("xqModal")
 const $xqModalTitle = document.getElementById("xqModalTitle")
@@ -81,6 +82,9 @@ let thinking = false
 let hintMove = null // {from,to}
 let lastMove = null // {from,to} 用于高亮 AI 最近一步
 let $pointsLayer = null
+
+// 悔棋：保存 makeMove 的 undo 信息
+const undoStack = []
 
 // 重新开始一次确认
 
@@ -287,6 +291,12 @@ function renderBoard() {
   const p = calcWinProb(G)
   setWinProbText(`${p}%`)
   setWinProbStyle(p)
+
+  // action buttons
+  if ($undoBtn) {
+    const need = G?.turn === "r" ? 2 : 1 // 默认：回到“我方走子之前”（撤销 AI + 我方各一步）
+    $undoBtn.disabled = thinking || !!G?.winner || undoStack.length < need
+  }
 }
 
 function calcWinProb(state) {
@@ -773,8 +783,10 @@ function resetGame() {
   selected = -1
   legalForSelected = []
   hintMove = null
+  lastMove = null
   difficulty = loadDifficulty()
   G = startPosition()
+  undoStack.length = 0
   setHint("点击红方棋子查看走法")
   renderBoard()
 }
@@ -792,7 +804,7 @@ function selectSquare(i) {
 }
 
 function finalizeMove(m) {
-  makeMove(G, m)
+  applyGameMove(m)
   selected = -1
   legalForSelected = []
   hintMove = null
@@ -833,7 +845,7 @@ function aiTurn() {
       thinking = false
       return
     }
-    makeMove(G, m)
+    applyGameMove(m)
     // 高亮 AI 最近一步（短暂）
     lastMove = { from: m.from, to: m.to }
     window.setTimeout(() => {
@@ -853,6 +865,36 @@ function aiTurn() {
     setHint("轮到您：点击红方棋子查看走法")
     renderBoard()
   }, 420)
+}
+
+function applyGameMove(m) {
+  const u = makeMove(G, m)
+  undoStack.push(u)
+  return u
+}
+
+function undoLastTurn() {
+  if (!G || thinking) return
+  // 如果已经结束，允许悔棋把对局拉回继续
+  G.winner = null
+  G.reason = ""
+
+  const plies = G.turn === "r" ? 2 : 1
+  const n = Math.min(plies, undoStack.length)
+  if (n <= 0) return
+
+  selected = -1
+  legalForSelected = []
+  hintMove = null
+  lastMove = null
+
+  for (let i = 0; i < n; i++) {
+    const u = undoStack.pop()
+    if (!u) break
+    undoMove(G, u)
+  }
+  setHint("已悔棋：轮到您")
+  renderBoard()
 }
 
 function pickHintMove(state) {
@@ -911,6 +953,7 @@ function onCellClick(e) {
 // ===== Events =====
 if ($resetBtn) $resetBtn.addEventListener("click", onResetClick)
 if ($hintBtn) $hintBtn.addEventListener("click", onHint)
+if ($undoBtn) $undoBtn.addEventListener("click", undoLastTurn)
 if ($xqModal) {
   $xqModal.addEventListener("click", (e) => {
     if (e.target?.dataset?.close) closeModal()

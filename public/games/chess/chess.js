@@ -248,7 +248,8 @@ function renderBoard() {
   cells.forEach((cell, i) => {
     const p = G.board[i]
     cell.textContent = p === "." ? "" : PIECE_UNICODE[p] || ""
-    cell.disabled = thinking || !!G.winner
+    // 仅允许在“轮到您”时操作棋盘（避免误操作导致走子/吃子异常）
+    cell.disabled = thinking || !!G.winner || !!pendingPromotion || G.turn !== "w"
     cell.classList.remove("sel", "move", "capture", "hintFrom", "hintTo", "lastFrom", "lastTo", "pieceW", "pieceB", "inCheck")
     if (p !== ".") {
       if (isWhitePiece(p)) cell.classList.add("pieceW")
@@ -485,8 +486,10 @@ function attackedBy(board, color, sq, epTargetIdx = -1) {
   const { r, c } = idxToRC(sq)
 
   // pawn attacks
-  // 注意：坐标系 r=0 在最上方（8 段），白兵向“上”（r-1）攻击；黑兵向“下”（r+1）攻击
-  const pr = isW ? r - 1 : r + 1
+  // 注意：坐标系 r=0 在最上方（8 段）
+  // - 白兵向“上”（r-1）攻击，因此若 sq 被白兵攻击，则白兵应位于 sq 的下一行（r+1）
+  // - 黑兵向“下”（r+1）攻击，因此若 sq 被黑兵攻击，则黑兵应位于 sq 的上一行（r-1）
+  const pr = isW ? r + 1 : r - 1
   const pawnCols = [c - 1, c + 1]
   for (const pc of pawnCols) {
     if (!inBounds(pr, pc)) continue
@@ -1059,6 +1062,13 @@ function clearSelection() {
 }
 
 function finalizeMove(m) {
+  // 兜底保护：避免在非本方回合/状态错乱时执行走子
+  try {
+    const p = G?.board?.[m?.from]
+    if (!p || p === "." || colorOf(p) !== G.turn) return
+  } catch {
+    return
+  }
   // apply with promotion if needed
   const color = G.turn
   if (m.flags & FLAG_PROMO && !m.promo) {
@@ -1121,7 +1131,7 @@ function onGameOver(out) {
 }
 
 function onCellClick(e) {
-  if (!G || thinking || G.winner) return
+  if (!G || thinking || G.winner || pendingPromotion) return
   if (G.turn !== "w") return
   const idx = Number(e.currentTarget?.dataset?.idx)
   if (!Number.isFinite(idx)) return

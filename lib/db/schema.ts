@@ -5,7 +5,7 @@ export const creators = pgTable("creators", {
   name: text("name").notNull(),
   avatarUrl: text("avatar_url").notNull(),
   profilePath: text("profile_path").notNull(),
-  // 登录账号（可选）：手机号/微信 openid
+  // 登录账号（可选）：手机号（历史字段 openid 目前不再使用）
   phone: text("phone"),
   openid: text("openid"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
