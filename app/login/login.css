@@ -49,6 +49,15 @@
   min-width: 140px;
   padding-left: 14px;
   padding-right: 14px;
+  /* 获取验证码按钮：降低饱和度，偏稳重的深灰蓝 */
+  background: linear-gradient(180deg, rgba(71, 85, 105, 0.96), rgba(51, 65, 85, 0.96));
+  box-shadow: 0 10px 22px rgba(51, 65, 85, 0.20);
+}
+.loginBtn:hover {
+  filter: brightness(1.02);
+}
+.loginBtn:active {
+  transform: scale(0.99);
 }
 
 .loginFooterActions {

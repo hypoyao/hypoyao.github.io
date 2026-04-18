@@ -6,11 +6,11 @@ export default function PhoneLoginForm() {
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [msg, setMsg] = useState("");
-  const [testCode, setTestCode] = useState<string | null>(null);
+  const [tempCode, setTempCode] = useState<string | null>(null);
 
   async function sendCode() {
     setMsg("发送中…");
-    setTestCode(null);
+    setTempCode(null);
     const r = await fetch("/api/auth/phone/send-code", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -21,10 +21,12 @@ export default function PhoneLoginForm() {
       setMsg(`发送失败：${data?.error || r.status}`);
       return;
     }
-    setMsg("验证码已发送。");
-    if (data?.testCode) {
-      setTestCode(String(data.testCode));
-      setMsg("验证码已发送（测试模式：已在下方显示）。");
+    const c = data?.tempCode ? String(data.tempCode) : data?.testCode ? String(data.testCode) : null;
+    if (c) {
+      setTempCode(c);
+      setMsg("临时验证码已生成（已在下方显示）。");
+    } else {
+      setMsg("验证码已发送。");
     }
   }
 
@@ -68,10 +70,10 @@ export default function PhoneLoginForm() {
           </button>
         </div>
 
-        {(msg || testCode) && (
+        {(msg || tempCode) && (
           <div className="loginNotice">
             {msg ? <div>{msg}</div> : null}
-            {testCode ? <div className="loginTestCode">测试验证码：{testCode}</div> : null}
+            {tempCode ? <div className="loginTestCode">临时验证码：{tempCode}</div> : null}
           </div>
         )}
       </div>

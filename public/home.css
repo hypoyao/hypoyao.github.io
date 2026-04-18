@@ -13,6 +13,12 @@
   gap: 12px;
 }
 
+.homeAccountRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .homeLoginBtn {
   flex: 0 0 auto;
   padding: 8px 12px;
@@ -52,6 +58,27 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.homeLogoutBtn {
+  appearance: none;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: rgba(255, 255, 255, 0.65);
+  box-shadow: 0 10px 22px rgba(2, 6, 23, 0.06);
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.78);
+  cursor: pointer;
+  user-select: none;
+  transition: transform 120ms ease, filter 120ms ease;
+}
+.homeLogoutBtn:hover {
+  filter: brightness(1.02);
+}
+.homeLogoutBtn:active {
+  transform: scale(0.99);
 }
 
 .homeSub {

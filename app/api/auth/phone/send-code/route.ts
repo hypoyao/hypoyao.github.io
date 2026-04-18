@@ -32,8 +32,6 @@ export async function POST(req: Request) {
     maxAge: 5 * 60,
   });
 
-  // 测试模式：直接返回验证码（生产环境应接短信服务商）
-  const testMode = process.env.SMS_TEST_MODE === "1" || process.env.NODE_ENV !== "production";
-  return json(200, { ok: true, testCode: testMode ? code : undefined });
+  // 临时方案：直接返回验证码（后续如接入短信服务商，再改为仅服务端发送）
+  return json(200, { ok: true, tempCode: code });
 }
-
