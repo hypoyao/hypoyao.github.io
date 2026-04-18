@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>中国象棋·人机对战</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="./xiangqi.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <section class="card">
+        <header class="header">
+          <h1>中国象棋·人机对战</h1>
+          <a class="creatorBadge" aria-label="创作者" href="/creators/tianqing">
+            <img class="creatorBadgeAvatar" src="/assets/avatars/yaotianjing.svg" alt="天晴头像" />
+            <span class="creatorBadgeName">创作者：天晴</span>
+          </a>
+          <p class="desc">规则：您（红方）先手对战 AI（黑方）。胜利难度 +1，失败难度 -1。</p>
+        </header>
+
+        <section class="xqHud" aria-label="xiangqi hud">
+          <div class="xqLeft">
+            <div class="xqStatus" id="status">轮到 您（红）</div>
+            <div class="xqHint" id="hintText">点击红方棋子查看走法</div>
+          </div>
+          <div class="xqRight">
+            <div class="xqDiffLabel">当前难度</div>
+            <div class="xqDiffGrid" id="diffGrid" aria-label="当前难度"></div>
+            <span class="srOnly" id="diffText">当前难度 --</span>
+          </div>
+        </section>
+
+        <div class="xqBoard" id="board" aria-label="xiangqi board"></div>
+
+        <div class="actions">
+          <button class="btn" id="resetBtn" type="button">重新开始</button>
+          <a class="btn btnSecondary" href="/">更多游戏</a>
+        </div>
+      </section>
+    </main>
+
+    <!-- 结果弹窗 -->
+    <div class="modal" id="xqModal" aria-hidden="true">
+      <div class="modalBackdrop" data-close="1"></div>
+      <div class="modalPanel" role="dialog" aria-modal="true" aria-label="xiangqi result dialog">
+        <div class="modalTitle" id="xqModalTitle">本局结果</div>
+        <div class="modalBody" id="xqModalBody" style="font-size: 18px">--</div>
+        <div class="modalActions">
+          <button class="btn modalBtn" id="xqModalBtn" type="button">再来一局</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/rest.js"></script>
+    <script src="./xiangqi.js"></script>
+  </body>
+</html>
+

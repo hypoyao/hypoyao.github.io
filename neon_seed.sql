@@ -95,6 +95,15 @@ values
     '/assets/screenshots/chess.png',
     '/games/chess/',
     'tianqing'
+  ),
+  (
+    'xiangqi',
+    '中国象棋·人机对战',
+    '中国象棋：您（红）对战 AI（黑）',
+    '规则：您（红方）先手对战 AI（黑方）。胜利难度 +1，失败难度 -1。',
+    '/assets/screenshots/xiangqi.svg',
+    '/games/xiangqi/',
+    'tianqing'
   )
 on conflict (id) do update set
   title = excluded.title,

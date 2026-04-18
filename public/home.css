@@ -6,6 +6,35 @@
   width: min(920px, 100%);
 }
 
+.homeHeaderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.homeLoginBtn {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: rgba(255, 255, 255, 0.65);
+  box-shadow: 0 10px 22px rgba(2, 6, 23, 0.06);
+  font-size: 13px;
+  font-weight: 900;
+  text-decoration: none;
+  color: rgba(15, 23, 42, 0.85);
+  user-select: none;
+  transition: transform 120ms ease, filter 120ms ease;
+}
+
+.homeLoginBtn:hover {
+  filter: brightness(1.02);
+}
+.homeLoginBtn:active {
+  transform: scale(0.99);
+}
+
 .homeSub {
   margin: -6px 0 14px;
   color: var(--muted);

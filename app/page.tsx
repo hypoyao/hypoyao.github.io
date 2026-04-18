@@ -1,4 +1,5 @@
 import { listGames } from "@/lib/db/queries";
+import { getSession } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
@@ -9,13 +10,25 @@ function toGameEntryHref(path: string) {
 }
 
 export default async function HomePage() {
+  const sess = await getSession();
   const games = await listGames();
 
   return (
     <main className="wrap">
       <section className="card homeCard">
         <header className="header">
-          <h1>AI创意小游戏</h1>
+          <div className="homeHeaderRow">
+            <h1>AI创意小游戏</h1>
+            {sess ? (
+              <a className="homeLoginBtn" href="/login" aria-label="账户">
+                已登录
+              </a>
+            ) : (
+              <a className="homeLoginBtn" href="/login" aria-label="登录">
+                登录
+              </a>
+            )}
+          </div>
           <p className="desc">用 AI，释放孩子的奇思妙想，体验创造的快乐。</p>
         </header>
 
