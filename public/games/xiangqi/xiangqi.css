@@ -227,6 +227,32 @@
   background: transparent;
 }
 
+/* 帅/将被将军：红圈闪烁提示 */
+.xqPoint.inCheck::before {
+  content: "";
+  position: absolute;
+  inset: 8%;
+  border-radius: 999px;
+  border: 3px solid rgba(239, 68, 68, 0.95);
+  box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.12);
+  animation: xqCheckPulse 900ms ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes xqCheckPulse {
+  0% {
+    opacity: 0.35;
+    transform: scale(0.98);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0.35;
+    transform: scale(0.98);
+  }
+}
+
 .xqPiece {
   width: calc(var(--stone) * 0.96);
   height: calc(var(--stone) * 0.96);

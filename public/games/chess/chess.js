@@ -249,7 +249,11 @@ function renderBoard() {
     const p = G.board[i]
     cell.textContent = p === "." ? "" : PIECE_UNICODE[p] || ""
     cell.disabled = thinking || !!G.winner
-    cell.classList.remove("sel", "move", "capture", "hintFrom", "hintTo", "lastFrom", "lastTo")
+    cell.classList.remove("sel", "move", "capture", "hintFrom", "hintTo", "lastFrom", "lastTo", "pieceW", "pieceB", "inCheck")
+    if (p !== ".") {
+      if (isWhitePiece(p)) cell.classList.add("pieceW")
+      else if (isBlackPiece(p)) cell.classList.add("pieceB")
+    }
   })
 
   // action buttons
@@ -273,6 +277,12 @@ function renderBoard() {
   if (lastMove) {
     if (Number.isFinite(lastMove.from)) cells[lastMove.from]?.classList.add("lastFrom")
     if (Number.isFinite(lastMove.to)) cells[lastMove.to]?.classList.add("lastTo")
+  }
+
+  // 王被将军时：红圈闪烁提示（提示“再不应对就会被吃/将死”）
+  if (!G.winner && isInCheck(G, G.turn)) {
+    const k = G.kingPos?.[G.turn] ?? findKing(G.board, G.turn)
+    if (k >= 0) cells[k]?.classList.add("inCheck")
   }
 
   if (G.winner) {

@@ -244,7 +244,7 @@ function renderBoard() {
     const p = G.board[i]
     cell.innerHTML = ""
     cell.disabled = thinking || !!G.winner
-    cell.classList.remove("sel", "move", "capture", "hintFrom", "hintTo", "lastFrom", "lastTo")
+    cell.classList.remove("sel", "move", "capture", "hintFrom", "hintTo", "lastFrom", "lastTo", "inCheck")
     if (p !== ".") {
       const el = document.createElement("div")
       el.className = `xqPiece ${isRed(p) ? "red" : "black"}`
@@ -269,6 +269,12 @@ function renderBoard() {
   if (lastMove) {
     if (Number.isFinite(lastMove.from)) cells[lastMove.from]?.classList.add("lastFrom")
     if (Number.isFinite(lastMove.to)) cells[lastMove.to]?.classList.add("lastTo")
+  }
+
+  // 帅/将被将军时：红圈闪烁提示（提示需要应对）
+  if (!G.winner && isInCheck(G, G.turn)) {
+    const k = findKing(G.board, G.turn)
+    if (k >= 0) cells[k]?.classList.add("inCheck")
   }
 
   if (G.winner) {
