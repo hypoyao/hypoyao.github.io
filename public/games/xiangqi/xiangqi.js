@@ -13,14 +13,27 @@ const MAX_DIFF = 10
 const $board = document.getElementById("board")
 const $status = document.getElementById("status")
 const $hintText = document.getElementById("hintText")
+const $winProb = document.getElementById("winProb")
+const $winProbVal = document.getElementById("winProbVal")
 const $diffGrid = document.getElementById("diffGrid")
 const $diffText = document.getElementById("diffText")
 const $resetBtn = document.getElementById("resetBtn")
+const $hintBtn = document.getElementById("hintBtn")
 
 const $xqModal = document.getElementById("xqModal")
 const $xqModalTitle = document.getElementById("xqModalTitle")
 const $xqModalBody = document.getElementById("xqModalBody")
 const $xqModalBtn = document.getElementById("xqModalBtn")
+
+const $diffModal = document.getElementById("diffModal")
+const $diffModalPicker = document.getElementById("diffModalPicker")
+const $diffModalCurrent = document.getElementById("diffModalCurrent")
+const $diffModalCloseBtn = document.getElementById("diffModalCloseBtn")
+
+const $resetModal = document.getElementById("resetModal")
+const $resetModalBody = document.getElementById("resetModalBody")
+const $resetCancelBtn = document.getElementById("resetCancelBtn")
+const $resetConfirmBtn = document.getElementById("resetConfirmBtn")
 
 // pieces: red uppercase, black lowercase
 // R 车, N 马, B 相/象, A 士/仕, K 将/帅, C 炮, P 兵/卒
@@ -65,6 +78,17 @@ let G = null
 let selected = -1
 let legalForSelected = []
 let thinking = false
+let hintMove = null // {from,to}
+let $pointsLayer = null
+
+// 重新开始二次确认状态
+let resetConfirmStage = 0
+
+// 连续点击“轮到 您”3次打开彩蛋（用于手动调难度）
+const STATUS_EASTER_NEED = 3
+const STATUS_EASTER_WINDOW_MS = 1200
+let statusTapCount = 0
+let statusTapTimer = null
 
 function idx(r, c) {
   return r * 9 + c
@@ -122,6 +146,17 @@ function setStatus(text) {
 function setHint(text) {
   if ($hintText) $hintText.textContent = text
 }
+function setWinProbText(text) {
+  if ($winProbVal) $winProbVal.textContent = text
+}
+function setWinProbStyle(pct) {
+  if (!$winProb) return
+  $winProb.classList.remove("isLow", "isMid", "isHigh")
+  // <=30 红；31-60 橙（含 60）；61-99 绿（含 99）
+  if (pct <= 30) $winProb.classList.add("isLow")
+  else if (pct <= 60) $winProb.classList.add("isMid")
+  else $winProb.classList.add("isHigh")
+}
 
 function renderDifficulty() {
   if ($diffText) $diffText.textContent = `当前难度 ${difficulty} / 10`
@@ -145,16 +180,57 @@ function renderDifficulty() {
 
 function ensureBoard() {
   if (!$board) return
-  if ($board.childElementCount === 90) return
+  const exist = $board.querySelector(".xqPoints")
+  if (exist && exist.childElementCount === 90) {
+    $pointsLayer = exist
+    return
+  }
+
   $board.innerHTML = ""
+  const canvas = document.createElement("div")
+  canvas.className = "xqCanvas"
+  // 用 SVG 精确绘制象棋棋盘（含：楚河汉界 + 九宫斜线/将军府）
+  canvas.innerHTML = `
+    <svg class="xqSvg" viewBox="0 0 8 9" preserveAspectRatio="none" aria-hidden="true">
+      <g stroke="rgba(15,23,42,0.22)" stroke-width="0.05" stroke-linecap="square">
+        <!-- horizontals (0..9) -->
+        ${Array.from({ length: 10 }, (_, y) => `<line x1="0" y1="${y}" x2="8" y2="${y}" />`).join("")}
+        <!-- verticals (0..8), break at river between y=4 and y=5 for inner files -->
+        ${Array.from({ length: 9 }, (_, x) => {
+          if (x === 0 || x === 8) return `<line x1="${x}" y1="0" x2="${x}" y2="9" />`
+          return `<line x1="${x}" y1="0" x2="${x}" y2="4" /><line x1="${x}" y1="5" x2="${x}" y2="9" />`
+        }).join("")}
+        <!-- palaces diagonals (将军府) -->
+        <line x1="3" y1="0" x2="5" y2="2" />
+        <line x1="5" y1="0" x2="3" y2="2" />
+        <line x1="3" y1="7" x2="5" y2="9" />
+        <line x1="5" y1="7" x2="3" y2="9" />
+      </g>
+      <g font-family="system-ui, -apple-system, Segoe UI, Roboto, Noto Sans SC, Arial"
+         font-weight="1000" fill="rgba(100,116,139,0.70)" font-size="0.55">
+        <text x="2" y="4.5" text-anchor="middle" dominant-baseline="middle">楚河</text>
+        <text x="6" y="4.5" text-anchor="middle" dominant-baseline="middle">汉界</text>
+      </g>
+    </svg>
+  `
+  $board.appendChild(canvas)
+
+  const points = document.createElement("div")
+  points.className = "xqPoints"
+  $board.appendChild(points)
+  $pointsLayer = points
+
   for (let i = 0; i < 90; i++) {
     const { r, c } = rc(i)
     const btn = document.createElement("button")
     btn.type = "button"
-    btn.className = `xqCell ${(r + c) % 2 === 0 ? "light" : "dark"}`
+    btn.className = "xqPoint"
     btn.dataset.idx = String(i)
+    // 关键：用“交点坐标”定位（避免不同屏幕下偏离线/格）
+    btn.style.left = `calc(var(--pad) + (100% - (var(--pad) * 2)) * ${c} / 8)`
+    btn.style.top = `calc(var(--pad) + (100% - (var(--pad) * 2)) * ${r} / 9)`
     btn.addEventListener("click", onCellClick)
-    $board.appendChild(btn)
+    points.appendChild(btn)
   }
 }
 
@@ -163,12 +239,12 @@ function renderBoard() {
   renderDifficulty()
   if (!$board) return
 
-  const cells = $board.querySelectorAll(".xqCell")
+  const cells = ($pointsLayer || $board).querySelectorAll(".xqPoint")
   cells.forEach((cell, i) => {
     const p = G.board[i]
     cell.innerHTML = ""
     cell.disabled = thinking || !!G.winner
-    cell.classList.remove("sel", "move", "capture")
+    cell.classList.remove("sel", "move", "capture", "hintFrom", "hintTo")
     if (p !== ".") {
       const el = document.createElement("div")
       el.className = `xqPiece ${isRed(p) ? "red" : "black"}`
@@ -186,11 +262,107 @@ function renderBoard() {
     })
   }
 
+  if (hintMove) {
+    cells[hintMove.from]?.classList.add("hintFrom")
+    cells[hintMove.to]?.classList.add("hintTo")
+  }
+
   if (G.winner) {
     setStatus(G.winner === "r" ? "结果：您获胜" : "结果：AI 获胜")
   } else {
     setStatus(G.turn === "r" ? "轮到 您（红）" : "轮到 AI（黑）")
   }
+
+  // 本局胜率（粗略估算）：基于局面评估映射到 1-99%，结束局为 0/100
+  const p = calcWinProb(G)
+  setWinProbText(`${p}%`)
+  setWinProbStyle(p)
+}
+
+function calcWinProb(state) {
+  if (!state) return 50
+  if (state.winner) return state.winner === "r" ? 100 : 0
+  const out = outcome(state)
+  if (out) return out.winner === "r" ? 100 : 0
+  const score = evalBoard(state) // positive means red better
+  const p = 1 / (1 + Math.exp(-score / 600))
+  return clamp(Math.round(p * 100), 1, 99)
+}
+
+function renderDiffModalPicker() {
+  if ($diffModalCurrent) $diffModalCurrent.textContent = String(difficulty)
+  if (!$diffModalPicker) return
+  if ($diffModalPicker.childElementCount !== 10) {
+    $diffModalPicker.innerHTML = ""
+    for (let i = 1; i <= 10; i++) {
+      const dot = document.createElement("span")
+      dot.className = "diffPickDot"
+      dot.dataset.level = String(i)
+      dot.title = `当前难度 ${i}`
+      $diffModalPicker.appendChild(dot)
+    }
+  }
+  const dots = $diffModalPicker.querySelectorAll(".diffPickDot")
+  dots.forEach((el) => {
+    const lv = Number(el.dataset.level || 0)
+    el.classList.toggle("isDone", lv > 0 && lv < difficulty)
+    el.classList.toggle("isCurrent", lv > 0 && lv === difficulty)
+  })
+}
+
+function openDiffModal() {
+  if (!$diffModal) return
+  renderDiffModalPicker()
+  $diffModal.classList.add("isOpen")
+  $diffModal.setAttribute("aria-hidden", "false")
+}
+
+function closeDiffModal() {
+  if (!$diffModal) return
+  $diffModal.classList.remove("isOpen")
+  $diffModal.setAttribute("aria-hidden", "true")
+}
+
+function openResetModal() {
+  if (!$resetModal) return
+  resetConfirmStage = 0
+  if ($resetModalBody) $resetModalBody.textContent = "确定要重新开始吗？"
+  if ($resetConfirmBtn) $resetConfirmBtn.textContent = "继续"
+  $resetModal.classList.add("isOpen")
+  $resetModal.setAttribute("aria-hidden", "false")
+}
+
+function closeResetModal() {
+  if (!$resetModal) return
+  resetConfirmStage = 0
+  $resetModal.classList.remove("isOpen")
+  $resetModal.setAttribute("aria-hidden", "true")
+}
+
+function onResetClick() {
+  if (!G || thinking) return
+  openResetModal()
+}
+
+function onResetConfirm() {
+  if (!G || thinking) return
+  if (resetConfirmStage === 0) {
+    resetConfirmStage = 1
+    if ($resetModalBody) $resetModalBody.textContent = "再点一次确认将清空当前对局。"
+    if ($resetConfirmBtn) $resetConfirmBtn.textContent = "确定重开"
+    return
+  }
+  closeResetModal()
+  resetGame()
+}
+
+function setDifficultyManual(next) {
+  const lv = clamp(Number(next) || 1, MIN_DIFF, MAX_DIFF)
+  difficulty = lv
+  saveDifficulty(difficulty)
+  renderDifficulty()
+  renderDiffModalPicker()
+  setHint(`已设置当前难度 ${difficulty} / 10`)
 }
 
 // ===== Core rules =====
@@ -594,9 +766,12 @@ function closeModal() {
 
 function resetGame() {
   closeModal()
+  closeDiffModal()
+  closeResetModal()
   thinking = false
   selected = -1
   legalForSelected = []
+  hintMove = null
   difficulty = loadDifficulty()
   G = startPosition()
   setHint("点击红方棋子查看走法")
@@ -619,6 +794,7 @@ function finalizeMove(m) {
   makeMove(G, m)
   selected = -1
   legalForSelected = []
+  hintMove = null
 
   const out = outcome(G)
   if (out) {
@@ -672,6 +848,38 @@ function aiTurn() {
   }, 420)
 }
 
+function pickHintMove(state) {
+  const { depth } = cfgByDifficulty(difficulty)
+  const moves = legalMoves(state, "r")
+  if (moves.length === 0) return null
+  let best = null
+  let bestScore = -Infinity
+  for (const m of moves) {
+    const u = makeMove(state, m)
+    const sc = search(state, depth - 1, -Infinity, Infinity, false)
+    undoMove(state, u)
+    if (sc > bestScore) {
+      bestScore = sc
+      best = m
+    }
+  }
+  return best || moves[0]
+}
+
+function onHint() {
+  if (!G || thinking || G.winner) return
+  if (G.turn !== "r") return
+  const m = pickHintMove(G)
+  if (!m) return
+  hintMove = { from: m.from, to: m.to }
+  setHint("已高亮提示路径：点击棋子并走到高亮位置")
+  renderBoard()
+  window.setTimeout(() => {
+    hintMove = null
+    renderBoard()
+  }, 1800)
+}
+
 function onCellClick(e) {
   if (!G || thinking || G.winner) return
   if (G.turn !== "r") return
@@ -694,7 +902,8 @@ function onCellClick(e) {
 }
 
 // ===== Events =====
-if ($resetBtn) $resetBtn.addEventListener("click", resetGame)
+if ($resetBtn) $resetBtn.addEventListener("click", onResetClick)
+if ($hintBtn) $hintBtn.addEventListener("click", onHint)
 if ($xqModal) {
   $xqModal.addEventListener("click", (e) => {
     if (e.target?.dataset?.close) closeModal()
@@ -702,5 +911,46 @@ if ($xqModal) {
 }
 if ($xqModalBtn) $xqModalBtn.addEventListener("click", () => resetGame())
 
-resetGame()
+if ($diffModal) {
+  $diffModal.addEventListener("click", (e) => {
+    if (e.target?.dataset?.close) closeDiffModal()
+  })
+}
+if ($diffModalCloseBtn) $diffModalCloseBtn.addEventListener("click", closeDiffModal)
+if ($diffModalPicker) {
+  $diffModalPicker.addEventListener("click", (e) => {
+    const t = e.target
+    const lv = Number(t?.dataset?.level || 0)
+    if (lv >= MIN_DIFF && lv <= MAX_DIFF) setDifficultyManual(lv)
+  })
+}
 
+if ($resetModal) {
+  $resetModal.addEventListener("click", (e) => {
+    if (e.target?.dataset?.close) closeResetModal()
+  })
+}
+if ($resetCancelBtn) $resetCancelBtn.addEventListener("click", closeResetModal)
+if ($resetConfirmBtn) $resetConfirmBtn.addEventListener("click", onResetConfirm)
+
+if ($status) {
+  $status.addEventListener("click", () => {
+    // 仅当文字包含“轮到 您”时才计数（避免结果/AI 回合误触发）
+    if (!$status.textContent || !$status.textContent.includes("轮到 您")) return
+    statusTapCount += 1
+    if (statusTapTimer) clearTimeout(statusTapTimer)
+    statusTapTimer = window.setTimeout(() => {
+      statusTapCount = 0
+      statusTapTimer = null
+    }, STATUS_EASTER_WINDOW_MS)
+
+    if (statusTapCount >= STATUS_EASTER_NEED) {
+      statusTapCount = 0
+      if (statusTapTimer) clearTimeout(statusTapTimer)
+      statusTapTimer = null
+      openDiffModal()
+    }
+  })
+}
+
+resetGame()

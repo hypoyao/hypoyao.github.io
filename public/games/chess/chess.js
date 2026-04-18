@@ -1061,6 +1061,23 @@ function finalizeMove(m) {
   }
   applyGameMove(m)
 
+  // 兜底：如果发生“吃王”（实现上的允许），立刻判胜负
+  // 注：标准国际象棋不会出现吃王；胜负应以将死为准。
+  if (findKing(G.board, "b") < 0) {
+    G.winner = "w"
+    G.reason = "吃王"
+    onGameOver({ winner: "w", reason: "吃王" })
+    renderBoard()
+    return
+  }
+  if (findKing(G.board, "w") < 0) {
+    G.winner = "b"
+    G.reason = "吃王"
+    onGameOver({ winner: "b", reason: "吃王" })
+    renderBoard()
+    return
+  }
+
   // clear selection
   selected = -1
   legalForSelected = []
@@ -1138,6 +1155,26 @@ function aiTurn() {
     // AI 升变默认升后
     if (m.flags & FLAG_PROMO && !m.promo) m.promo = "q"
     applyGameMove(m)
+
+    // 兜底：吃王直接结束
+    if (findKing(G.board, "b") < 0) {
+      const out = { winner: "w", reason: "吃王" }
+      G.winner = out.winner
+      G.reason = out.reason
+      thinking = false
+      onGameOver(out)
+      renderBoard()
+      return
+    }
+    if (findKing(G.board, "w") < 0) {
+      const out = { winner: "b", reason: "吃王" }
+      G.winner = out.winner
+      G.reason = out.reason
+      thinking = false
+      onGameOver(out)
+      renderBoard()
+      return
+    }
 
     const out = gameOutcome(G)
     if (out) {

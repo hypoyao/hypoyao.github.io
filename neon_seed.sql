@@ -104,6 +104,15 @@ values
     '/assets/screenshots/xiangqi.svg',
     '/games/xiangqi/',
     'tianqing'
+  ),
+  (
+    'weiqi',
+    '围棋对弈·人机',
+    '围棋 9×9：您（黑）对战 AI（白）',
+    '规则：您（黑）先手对战 AI（白）。双方连续 Pass 后数目判胜负；胜利难度 +1，失败难度 -1。',
+    '/assets/screenshots/weiqi.svg',
+    '/games/weiqi/',
+    'tianqing'
   )
 on conflict (id) do update set
   title = excluded.title,

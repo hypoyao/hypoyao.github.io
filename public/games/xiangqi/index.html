@@ -21,7 +21,13 @@
 
         <section class="xqHud" aria-label="xiangqi hud">
           <div class="xqLeft">
-            <div class="xqStatus" id="status">轮到 您（红）</div>
+            <div class="xqTopRow">
+              <div class="xqStatus" id="status">轮到 您（红）</div>
+              <div class="xqProb" id="winProb" aria-label="win probability">
+                <span class="xqProbLabel">本局胜率</span><span class="xqProbSep">：</span>
+                <span class="xqProbVal" id="winProbVal">--%</span>
+              </div>
+            </div>
             <div class="xqHint" id="hintText">点击红方棋子查看走法</div>
           </div>
           <div class="xqRight">
@@ -34,6 +40,7 @@
         <div class="xqBoard" id="board" aria-label="xiangqi board"></div>
 
         <div class="actions">
+          <button class="btn" id="hintBtn" type="button">提示一步</button>
           <button class="btn" id="resetBtn" type="button">重新开始</button>
           <a class="btn btnSecondary" href="/">更多游戏</a>
         </div>
@@ -52,8 +59,38 @@
       </div>
     </div>
 
+    <!-- 难度调节彩蛋：连续点击“轮到 您”3次触发 -->
+    <div class="modal" id="diffModal" aria-hidden="true">
+      <div class="modalBackdrop" data-close="1"></div>
+      <div class="modalPanel" role="dialog" aria-modal="true" aria-label="difficulty dialog">
+        <div class="modalTitle">难度调节</div>
+        <div class="modalBody" style="font-size: 16px">
+          <div>手动选择当前难度（1-10）：</div>
+          <div class="diffPicker" id="diffModalPicker" aria-label="difficulty picker"></div>
+          <div style="margin-top: 10px; font-size: 13px; color: rgba(100, 116, 139, 0.95)">
+            当前难度：<strong id="diffModalCurrent">--</strong>
+          </div>
+        </div>
+        <div class="modalActions">
+          <button class="btn modalBtn" id="diffModalCloseBtn" type="button">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 重新开始：两次确认 -->
+    <div class="modal" id="resetModal" aria-hidden="true">
+      <div class="modalBackdrop" data-close="1"></div>
+      <div class="modalPanel" role="dialog" aria-modal="true" aria-label="reset confirm dialog">
+        <div class="modalTitle">重新开始</div>
+        <div class="modalBody" id="resetModalBody" style="font-size: 16px">确定要重新开始吗？</div>
+        <div class="modalActions">
+          <button class="btn btnSecondary modalBtn" id="resetCancelBtn" type="button">取消</button>
+          <button class="btn modalBtn" id="resetConfirmBtn" type="button">继续</button>
+        </div>
+      </div>
+    </div>
+
     <script src="/rest.js"></script>
     <script src="./xiangqi.js"></script>
   </body>
 </html>
-
