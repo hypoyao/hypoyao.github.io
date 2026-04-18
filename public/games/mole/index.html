@@ -16,7 +16,7 @@
             <img class="creatorBadgeAvatar" src="/assets/avatars/yaotianjing.svg" alt="天晴头像" />
             <span class="creatorBadgeName">创作者：天晴</span>
           </a>
-          <p class="desc">规则：红色方块（地鼠）每 1 秒换到随机位置；你需要在 1 秒内点到它。点中后会立刻换位置。</p>
+          <p class="desc" id="ruleText">规则：红色方块（地鼠）每 1 秒换到随机位置；你需要在 1 秒内点到它。点中后会立刻换位置。</p>
         </header>
 
         <section class="moleHud" aria-label="mole stats">
@@ -56,5 +56,34 @@
     <script src="/rest.js"></script>
     <script src="/publish-entry.js"></script>
     <script src="./mole.js"></script>
+    <script>
+      ;(function () {
+        try {
+          const p = location.pathname || ""
+          const gi = p.indexOf("/games/")
+          if (gi < 0) return
+          const base = p.slice(0, gi)
+          const m = p.slice(gi).match(/^\/games\/([^/]+)\//)
+          const gid = m && m[1]
+          if (!gid) return
+          fetch(`${base}/api/games/${encodeURIComponent(gid)}`, { cache: "no-store" })
+            .then((r) => r.json())
+            .then((j) => {
+              const g = j && j.ok && j.game ? j.game : null
+              if (!g) return
+              if (g.ruleText) {
+                const el = document.getElementById("ruleText")
+                if (el) el.textContent = g.ruleText
+              }
+              if (g.title) {
+                document.title = g.title
+                const h1 = document.querySelector("h1")
+                if (h1) h1.textContent = g.title
+              }
+            })
+            .catch(() => {})
+        } catch {}
+      })()
+    </script>
   </body>
 </html>

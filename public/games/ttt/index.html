@@ -15,7 +15,7 @@
             <img class="creatorBadgeAvatar" src="/assets/avatars/yaohaibo.svg" alt="海波头像" />
             <span class="creatorBadgeName">创作者：海波</span>
           </a>
-          <p class="desc">
+          <p class="desc" id="ruleText">
             规则：两人轮流落子；每人最多 3 子；当你落下第 4 子时，会移除你<strong>最早</strong>落下的那颗；三子连成一线获胜。
           </p>
         </header>
@@ -120,5 +120,34 @@
     <script src="/rest.js"></script>
     <script src="/publish-entry.js"></script>
     <script src="./app.js"></script>
+    <script>
+      ;(function () {
+        try {
+          const p = location.pathname || ""
+          const gi = p.indexOf("/games/")
+          if (gi < 0) return
+          const base = p.slice(0, gi)
+          const m = p.slice(gi).match(/^\/games\/([^/]+)\//)
+          const gid = m && m[1]
+          if (!gid) return
+          fetch(`${base}/api/games/${encodeURIComponent(gid)}`, { cache: "no-store" })
+            .then((r) => r.json())
+            .then((j) => {
+              const g = j && j.ok && j.game ? j.game : null
+              if (!g) return
+              if (g.ruleText) {
+                const el = document.getElementById("ruleText")
+                if (el) el.textContent = g.ruleText
+              }
+              if (g.title) {
+                document.title = g.title
+                const h1 = document.querySelector("h1")
+                if (h1) h1.textContent = g.title
+              }
+            })
+            .catch(() => {})
+        } catch {}
+      })()
+    </script>
   </body>
 </html>

@@ -54,7 +54,7 @@ export default function PhoneLoginForm() {
             <div className="loginLabel">手机号</div>
             <input className="restInput" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="请输入手机号" />
           </label>
-          <button className="btn loginBtn" type="button" onClick={sendCode}>
+          <button className="btn btnGray loginBtn" type="button" onClick={sendCode}>
             获取验证码
           </button>
         </div>

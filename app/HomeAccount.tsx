@@ -40,23 +40,17 @@ export default function HomeAccount() {
   }
 
   const c = me.creator;
-  return (
-    <div className="homeAccountRow" aria-label="账户操作">
-      {c?.profilePath && c?.avatarUrl ? (
-        <a className="homeAvatarBtn" href={c.profilePath} aria-label="个人主页">
-          <img className="homeAvatarImg" src={c.avatarUrl} alt={`${c.name || "用户"}头像`} />
-        </a>
-      ) : (
-        <a className="homeLoginBtn" href="/login" aria-label="账户">
-          已登录
-        </a>
-      )}
+  if (c?.profilePath && c?.avatarUrl) {
+    return (
+      <a className="homeAvatarBtn" href={c.profilePath} aria-label="个人主页">
+        <img className="homeAvatarImg" src={c.avatarUrl} alt={`${c.name || "用户"}头像`} />
+      </a>
+    );
+  }
 
-      <form action="/api/auth/logout" method="post">
-        <button className="homeLogoutBtn" type="submit">
-          退出
-        </button>
-      </form>
-    </div>
+  return (
+    <a className="homeLoginBtn" href="/login" aria-label="账户">
+      已登录
+    </a>
   );
 }

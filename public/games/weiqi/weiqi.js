@@ -186,7 +186,8 @@ function renderBoard() {
   const cells = ($pointsLayer || $board).querySelectorAll(".gPoint")
   cells.forEach((cell, i) => {
     cell.classList.remove("sel", "hintFrom", "hintTo", "lastTo")
-    cell.disabled = thinking || !!G.winner
+    // 仅允许在“轮到您”时落子，避免用户在 AI 回合点击出现“没反应”的体验
+    cell.disabled = thinking || !!G.winner || G.turn !== "b"
     cell.innerHTML = ""
     const p = G.board[i]
     if (p !== ".") {

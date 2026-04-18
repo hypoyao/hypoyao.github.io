@@ -13,19 +13,37 @@ export async function GET() {
   }
 
   // 尽量查到对应的 creator（让“作者”也能更新自己的游戏 + 首页显示头像）
-  let creator: { id: string; name: string; avatarUrl: string; profilePath: string } | null = null;
+  let creator:
+    | { id: string; name: string; avatarUrl: string; profilePath: string; gender: string | null; age: number | null; city: string | null }
+    | null = null;
   try {
     await ensureCreatorsAuthFields();
     if (sess.phone) {
       const [row] = await db
-        .select({ id: creators.id, name: creators.name, avatarUrl: creators.avatarUrl, profilePath: creators.profilePath })
+        .select({
+          id: creators.id,
+          name: creators.name,
+          avatarUrl: creators.avatarUrl,
+          profilePath: creators.profilePath,
+          gender: creators.gender,
+          age: creators.age,
+          city: creators.city,
+        })
         .from(creators)
         .where(eq(creators.phone, sess.phone))
         .limit(1);
       creator = row ? { ...row } : null;
     } else if (sess.openid) {
       const [row] = await db
-        .select({ id: creators.id, name: creators.name, avatarUrl: creators.avatarUrl, profilePath: creators.profilePath })
+        .select({
+          id: creators.id,
+          name: creators.name,
+          avatarUrl: creators.avatarUrl,
+          profilePath: creators.profilePath,
+          gender: creators.gender,
+          age: creators.age,
+          city: creators.city,
+        })
         .from(creators)
         .where(eq(creators.openid, sess.openid))
         .limit(1);

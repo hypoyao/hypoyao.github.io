@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { integer, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
 export const creators = pgTable("creators", {
   id: text("id").primaryKey(), // slug，例如 'haibo'
@@ -8,6 +8,10 @@ export const creators = pgTable("creators", {
   // 登录账号（可选）：手机号（历史字段 openid 目前不再使用）
   phone: text("phone"),
   openid: text("openid"),
+  // 个人信息（可选）
+  gender: text("gender"), // '男' | '女' | '其他' | '保密'
+  age: integer("age"),
+  city: text("city"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

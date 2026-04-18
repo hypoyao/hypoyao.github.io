@@ -45,12 +45,78 @@
   font-size: 12px;
   font-weight: 900;
   color: rgba(100, 116, 139, 0.95);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.creatorTagSep {
+  opacity: 0.6;
+}
+
+.creatorActions {
+  margin: 6px 2px 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+.creatorActions .btn {
+  width: auto;
+  min-width: 132px;
+  padding: 10px 14px;
+  font-size: 14px;
 }
 
 .creatorWorks {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 12px;
+}
+
+/* ===== profile edit ===== */
+.profileForm {
+  display: grid;
+  gap: 12px;
+  padding: 8px 4px 2px;
+}
+.profileGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.profileField {
+  display: grid;
+  gap: 6px;
+}
+.profileLabel {
+  font-size: 13px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.80);
+}
+.profileAvatarRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.profileAvatarPick {
+  appearance: none;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: rgba(255, 255, 255, 0.65);
+  padding: 8px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.78);
+  cursor: pointer;
+}
+.profileAvatarPick.isOn {
+  border-color: rgba(59, 130, 246, 0.45);
+  box-shadow: 0 10px 22px rgba(59, 130, 246, 0.12);
+}
+.profileMsg {
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.72);
 }
 
 .gameItemCompact {
@@ -70,5 +136,7 @@
     width: 56px;
     height: 56px;
   }
+  .profileGrid {
+    grid-template-columns: 1fr;
+  }
 }
-
