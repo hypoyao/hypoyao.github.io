@@ -24,6 +24,14 @@ function normalizeId(id: string) {
   return id.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
 }
 
+function isAllowedCoverUrl(s: string) {
+  if (!s) return true;
+  if (s.startsWith("/")) return true;
+  // 允许 dataURL（前端上传/裁剪后作为封面存储）
+  if (/^data:image\/(png|jpeg|webp|svg\+xml);base64,/i.test(s)) return true;
+  return false;
+}
+
 async function isAuthorized(req: Request) {
   const key = process.env.ADMIN_API_KEY;
   const auth = req.headers.get("authorization") || "";
@@ -80,15 +88,25 @@ export async function POST(req: Request) {
     return json(400, { ok: false, error: "MISSING_FIELDS" });
   }
 
-  const coverUrl =
-    typeof body.coverUrl === "string" && body.coverUrl.trim()
-      ? body.coverUrl.trim()
-      : `/assets/screenshots/${id}.png`;
-  const path =
-    typeof body.path === "string" && body.path.trim() ? body.path.trim() : `/games/${id}/`;
+  // 如果是“更新”场景：id/creatorId/path 不允许更改（以 DB 现有值为准）
+  const [existing] = await db
+    .select({ creatorId: games.creatorId, path: games.path, coverUrl: games.coverUrl })
+    .from(games)
+    .where(eq(games.id, id))
+    .limit(1);
+
+  const effCreatorId = existing?.creatorId || creatorId;
+  const effPath =
+    existing?.path || (typeof body.path === "string" && body.path.trim() ? body.path.trim() : `/games/${id}/`);
+
+  const rawCover = typeof body.coverUrl === "string" ? body.coverUrl.trim() : "";
+  let coverUrl = rawCover || existing?.coverUrl || `/assets/screenshots/${id}.png`;
+  // 限制长度（避免异常大 payload）
+  coverUrl = coverUrl.slice(0, 260_000);
+  if (!isAllowedCoverUrl(coverUrl)) return json(400, { ok: false, error: "INVALID_COVER_URL" });
 
   // 校验 creator 是否存在
-  const [creator] = await db.select({ id: creators.id }).from(creators).where(eq(creators.id, creatorId)).limit(1);
+  const [creator] = await db.select({ id: creators.id }).from(creators).where(eq(creators.id, effCreatorId)).limit(1);
   if (!creator) return json(400, { ok: false, error: "CREATOR_NOT_FOUND" });
 
   // 作者权限：非管理员只能以自己的 creatorId 发布/更新
@@ -100,7 +118,8 @@ export async function POST(req: Request) {
     const isAdmin = isSuperAdminId(meCreatorId);
 
     if (!isAdmin) {
-      if (!meCreatorId || meCreatorId !== creatorId) {
+      // 仅允许更新“自己是作者”的游戏；更新场景以 DB 现有 creatorId 为准
+      if (!meCreatorId || meCreatorId !== effCreatorId) {
         return json(403, { ok: false, error: "FORBIDDEN_NOT_AUTHOR" });
       }
     }
@@ -115,8 +134,8 @@ export async function POST(req: Request) {
       shortDesc,
       ruleText,
       coverUrl,
-      path,
-      creatorId,
+      path: effPath,
+      creatorId: effCreatorId,
     })
     // drizzle 的 onConflictDoUpdate 支持在 postgres 上做 upsert
     .onConflictDoUpdate({
@@ -126,11 +145,9 @@ export async function POST(req: Request) {
         shortDesc,
         ruleText,
         coverUrl,
-        path,
-        creatorId,
         updatedAt: new Date(),
       },
     });
 
-  return json(200, { ok: true, id, path });
+  return json(200, { ok: true, id, path: effPath });
 }

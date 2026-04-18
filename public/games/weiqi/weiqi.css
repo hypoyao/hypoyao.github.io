@@ -142,9 +142,8 @@
   inset: var(--pad);
   border-radius: 12px;
   pointer-events: none;
-  /* 边缘线条补全 */
-  border: 2px solid var(--g-line);
-  box-sizing: border-box;
+  /* 边缘线条补全：用 inset shadow，不影响背景网格尺寸（避免交叉点/棋子偏移） */
+  box-shadow: inset 0 0 0 2px var(--g-line);
   background-image:
     linear-gradient(to right, var(--g-line) 2px, transparent 2px),
     linear-gradient(to bottom, var(--g-line) 2px, transparent 2px);
@@ -171,7 +170,8 @@
 
 .gPoints {
   position: absolute;
-  inset: 0;
+  /* 与网格画布使用同一套 inset，确保交叉点/棋子与线条完全同坐标系 */
+  inset: var(--pad);
 }
 
 .gPoint {
@@ -180,6 +180,7 @@
   background: transparent;
   width: var(--stone);
   height: var(--stone);
+  padding: 0;
   cursor: pointer;
   position: relative;
   user-select: none;
@@ -191,7 +192,8 @@
 }
 
 .gPoint:active {
-  transform: scale(0.99);
+  /* 保持交叉点居中，再做轻微按压缩放 */
+  transform: translate(-50%, -50%) scale(0.99);
 }
 
 .gPoint.sel {
@@ -204,6 +206,8 @@
   inset: 20%;
   border-radius: 999px;
   border: 2px solid rgba(245, 158, 11, 0.75);
+  box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.10), 0 10px 22px rgba(245, 158, 11, 0.10);
+  pointer-events: none;
 }
 .gPoint.lastTo::after {
   content: "";
@@ -212,6 +216,18 @@
   border-radius: 999px;
   border: 2px solid rgba(59, 130, 246, 0.70);
   background: rgba(59, 130, 246, 0.10);
+  box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.10), 0 12px 26px rgba(59, 130, 246, 0.12);
+  animation: gPulse 1.15s ease-in-out infinite;
+  pointer-events: none;
+}
+.gPoint.lastTo::before {
+  content: "";
+  position: absolute;
+  inset: 10%;
+  border-radius: 999px;
+  background: radial-gradient(circle at 50% 50%, rgba(59, 130, 246, 0.18), rgba(59, 130, 246, 0) 62%);
+  filter: blur(0.2px);
+  pointer-events: none;
 }
 .gPoint.hintFrom::after {
   content: "";
@@ -219,6 +235,23 @@
   inset: 24%;
   border-radius: 999px;
   background: rgba(245, 158, 11, 0.22);
+  box-shadow: 0 0 0 8px rgba(245, 158, 11, 0.08);
+  pointer-events: none;
+}
+
+@keyframes gPulse {
+  0% {
+    transform: scale(0.98);
+    opacity: 0.92;
+  }
+  50% {
+    transform: scale(1.04);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.98);
+    opacity: 0.92;
+  }
 }
 
 .gStone {
@@ -226,6 +259,11 @@
   height: calc(var(--stone) * 0.96);
   border-radius: 999px;
   box-shadow: 0 10px 22px rgba(2, 6, 23, 0.16);
+  /* 用绝对定位 + translate 居中，避免不同浏览器的 grid/subpixel 取整造成轻微偏移 */
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
 }
 .gStone.black {
   /* 按要求：纯黑，不要半透明/渐变 */

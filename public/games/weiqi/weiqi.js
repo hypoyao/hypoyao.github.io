@@ -172,8 +172,9 @@ function ensureBoard() {
     btn.className = "gPoint"
     btn.dataset.idx = String(i)
     // 关键：用“交叉点坐标”定位（避免不同屏幕下偏离线/点）
-    btn.style.left = `calc(var(--pad) + (100% - (var(--pad) * 2)) * ${c} / 8)`
-    btn.style.top = `calc(var(--pad) + (100% - (var(--pad) * 2)) * ${r} / 8)`
+    // 注意：gPoints 已 inset: var(--pad)，因此这里直接按百分比定位即可
+    btn.style.left = `calc(100% * ${c} / 8)`
+    btn.style.top = `calc(100% * ${r} / 8)`
     btn.addEventListener("click", onPointClick)
     points.appendChild(btn)
   }
@@ -656,11 +657,36 @@ function resetGame() {
   renderBoard()
 }
 
-function onPointClick(e) {
+function idxFromPointerEvent(e) {
+  if (!$board) return -1
+  const rect = $board.getBoundingClientRect()
+  const cs = window.getComputedStyle($board)
+  const pad = parseFloat(cs.getPropertyValue("--pad")) || 0
+  // 注意：gPoint 的 left/top 百分比是相对“padding box”（不含 border）的，
+  // 因此这里需要把 border 的偏移扣掉，否则会出现“可点范围不以交叉点为中心”的偏差。
+  const bl = parseFloat(cs.borderLeftWidth) || 0
+  const br = parseFloat(cs.borderRightWidth) || 0
+  const bt = parseFloat(cs.borderTopWidth) || 0
+  const bb = parseFloat(cs.borderBottomWidth) || 0
+
+  const x = e.clientX - rect.left - bl
+  const y = e.clientY - rect.top - bt
+  const innerW = rect.width - bl - br - pad * 2
+  const innerH = rect.height - bt - bb - pad * 2
+  if (innerW <= 0 || innerH <= 0) return -1
+  const cellW = innerW / 8
+  const cellH = innerH / 8
+  const c = Math.round((x - pad) / cellW)
+  const r = Math.round((y - pad) / cellH)
+  if (!Number.isFinite(r) || !Number.isFinite(c)) return -1
+  if (r < 0 || r >= SIZE || c < 0 || c >= SIZE) return -1
+  return idx(r, c)
+}
+
+function placeAt(i) {
   if (!G || thinking || G.winner) return
   if (G.turn !== "b") return
-  const i = Number(e.currentTarget?.dataset?.idx)
-  if (!Number.isFinite(i)) return
+  if (!Number.isFinite(i) || i < 0 || i >= SIZE * SIZE) return
 
   // place move on intersection
   if (!isLegalMove(G, "b", i)) {
@@ -678,6 +704,25 @@ function onPointClick(e) {
 
   renderBoard()
   if (G.turn === "w") aiTurn()
+}
+
+function onPointClick(e) {
+  const i = Number(e.currentTarget?.dataset?.idx)
+  return placeAt(i)
+}
+
+function onBoardPointerDown(e) {
+  // 允许用户点击“线/空白区域”也能自动吸附到最近交叉点，避免“要点好多次才成功”
+  if (!G || thinking || G.winner) return
+  if (G.turn !== "b") return
+  // 如果点到了交叉点按钮，让按钮自己的 click 处理即可
+  if (e.target?.closest?.(".gPoint")) return
+  const i = idxFromPointerEvent(e)
+  if (i < 0) return
+  try {
+    e.preventDefault()
+  } catch {}
+  placeAt(i)
 }
 
 function aiTurn() {
@@ -755,6 +800,7 @@ if ($undoBtn) $undoBtn.addEventListener("click", undoLastTurn)
 if ($passBtn) $passBtn.addEventListener("click", onPass)
 if ($resignBtn) $resignBtn.addEventListener("click", onResign)
 if ($resetBtn) $resetBtn.addEventListener("click", onResetClick)
+if ($board) $board.addEventListener("pointerdown", onBoardPointerDown, { passive: false })
 
 if ($gModal) {
   $gModal.addEventListener("click", (e) => {
