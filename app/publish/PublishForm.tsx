@@ -13,14 +13,17 @@ type Props = {
     coverUrl: string;
     path: string;
   }>;
+  meCreatorId?: string;
+  isAdmin?: boolean;
+  existsInDb?: boolean;
 };
 
-export default function PublishForm({ defaultCreatorId, initial }: Props) {
+export default function PublishForm({ defaultCreatorId, initial, meCreatorId, isAdmin, existsInDb }: Props) {
   const [id, setId] = useState(initial?.id || "");
   const [title, setTitle] = useState(initial?.title || "");
   const [shortDesc, setShortDesc] = useState(initial?.shortDesc || "");
   const [ruleText, setRuleText] = useState(initial?.ruleText || "");
-  const [creatorId, setCreatorId] = useState(initial?.creatorId || defaultCreatorId);
+  const [creatorId, setCreatorId] = useState(initial?.creatorId || meCreatorId || defaultCreatorId);
   const [coverUrl, setCoverUrl] = useState(initial?.coverUrl || "");
   const [path, setPath] = useState(initial?.path || "");
   const [msg, setMsg] = useState<string>("");
@@ -50,8 +53,10 @@ export default function PublishForm({ defaultCreatorId, initial }: Props) {
       setMsg(`发布失败：${data?.error || r.status}`);
       return;
     }
-    const p = typeof data?.path === "string" ? data.path.replace(/^\//, "") : "";
-    setMsg(`发布成功：/${p}`);
+    setMsg("发布成功，正在返回游戏…");
+    const p = typeof data?.path === "string" ? data.path : payload.path || `/games/${payload.id}/`;
+    const entry = p.endsWith("/") ? `${p}index.html` : p;
+    window.location.href = entry;
   }
 
   return (
@@ -90,7 +95,18 @@ export default function PublishForm({ defaultCreatorId, initial }: Props) {
 
         <label style={{ display: "grid", gap: 6 }}>
           <div style={{ fontWeight: 900 }}>创作者 creatorId</div>
-          <input className="restInput" value={creatorId} onChange={(e) => setCreatorId(e.target.value)} placeholder="tianqing / haibo" />
+          <input
+            className="restInput"
+            value={creatorId}
+            onChange={(e) => setCreatorId(e.target.value)}
+            placeholder="tianqing / haibo"
+            readOnly={!isAdmin}
+          />
+          {!isAdmin ? (
+            <div style={{ fontSize: 12, color: "rgba(100,116,139,0.95)", marginTop: 4 }}>
+              作者发布/更新仅允许使用自己的 creatorId（管理员可修改）。
+            </div>
+          ) : null}
         </label>
 
         <label style={{ display: "grid", gap: 6 }}>
@@ -110,10 +126,10 @@ export default function PublishForm({ defaultCreatorId, initial }: Props) {
 
         <div className="actions">
           <button className="btn" type="submit">
-            发布到首页
+            {existsInDb ? "更新" : "发布"}
           </button>
-          <a className="btn btnSecondary" href="/">
-            返回首页
+          <a className="btn btnGray" href="/">
+            取消
           </a>
         </div>
       </div>

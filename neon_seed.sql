@@ -89,28 +89,28 @@ values
   ),
   (
     'chess',
-    '国际象棋大师',
-    '标准国际象棋：您执白对战 AI',
-    '规则：标准国际象棋。您执白对战 AI 执黑。点您的棋子会提示走法并高亮可走范围。',
+    '国际象棋·新手友好版',
+    '标准国际象棋：您执白对战 AI（支持 AI 提示）',
+    '规则：标准国际象棋。您执白对战 AI 执黑。点您的棋子会提示走法并高亮可走范围。支持 AI 提示。',
     '/assets/screenshots/chess.png',
     '/games/chess/',
     'tianqing'
   ),
   (
     'xiangqi',
-    '中国象棋·人机对战',
-    '中国象棋：您（红）对战 AI（黑）',
-    '规则：您（红方）先手对战 AI（黑方）。胜利难度 +1，失败难度 -1。',
-    '/assets/screenshots/xiangqi.svg',
+    '中国象棋·新手友好版',
+    '中国象棋：您（红）对战 AI（黑）（支持 AI 提示）',
+    '规则：您（红方）先手对战 AI（黑方）。胜利难度 +1，失败难度 -1。支持 AI 提示。',
+    '/assets/screenshots/xiangqi.png',
     '/games/xiangqi/',
     'tianqing'
   ),
   (
     'weiqi',
-    '围棋对弈·人机',
-    '围棋 9×9：您（黑）对战 AI（白）',
-    '规则：您（黑）先手对战 AI（白）。双方连续 Pass 后数目判胜负；胜利难度 +1，失败难度 -1。',
-    '/assets/screenshots/weiqi.svg',
+    '围棋·新手友好版',
+    '围棋 9×9：您（黑）对战 AI（白）（支持 AI 提示）',
+    '规则：您（黑）先手对战 AI（白）。双方连续 Pass 后数目判胜负；胜利难度 +1，失败难度 -1。支持 AI 提示。',
+    '/assets/screenshots/weiqi.png',
     '/games/weiqi/',
     'tianqing'
   )

@@ -32,9 +32,9 @@
 
         <div class="goBoard" id="board" aria-label="gomoku board"></div>
 
-        <div class="actions">
+        <div class="gameActions">
           <button class="btn" id="resetBtn" type="button">重新开始</button>
-          <a class="btn btnSecondary" href="/">更多游戏</a>
+          
         </div>
       </section>
     </main>
@@ -60,7 +60,7 @@
           <div>手动选择难度等级（1-10）：</div>
           <div class="diffPicker" id="goDiffPicker" aria-label="difficulty picker"></div>
           <div style="margin-top: 10px; font-size: 13px; color: rgba(100, 116, 139, 0.95)">
-            当前难度等级：<strong id="goDiffCurrent">--</strong>
+            当前等级：<strong id="goDiffCurrent">--</strong>
           </div>
         </div>
         <div class="modalActions">
@@ -78,6 +78,7 @@
     </div>
 
     <script src="/rest.js"></script>
+    <script src="/publish-entry.js"></script>
     <script src="./gomoku.js"></script>
   </body>
 </html>

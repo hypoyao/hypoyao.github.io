@@ -2,7 +2,8 @@ import { cookies } from "next/headers";
 import crypto from "node:crypto";
 
 export type Session = {
-  openid: string;
+  openid?: string;
+  phone?: string;
 };
 
 const SESSION_COOKIE = "xq_session";
@@ -50,8 +51,10 @@ export function decodeSession(raw: string | undefined | null): Session | null {
   if (!crypto.timingSafeEqual(a, b)) return null;
   try {
     const obj = JSON.parse(payload);
-    if (!obj?.openid || typeof obj.openid !== "string") return null;
-    return { openid: obj.openid };
+    const openid = typeof obj?.openid === "string" ? obj.openid : undefined;
+    const phone = typeof obj?.phone === "string" ? obj.phone : undefined;
+    if (!openid && !phone) return null;
+    return { openid, phone };
   } catch {
     return null;
   }
@@ -64,4 +67,3 @@ export async function getSession(): Promise<Session | null> {
 }
 
 export const sessionCookieName = SESSION_COOKIE;
-

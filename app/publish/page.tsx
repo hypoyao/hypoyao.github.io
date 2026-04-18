@@ -1,9 +1,12 @@
 import { getSession } from "@/lib/auth/session";
 import PublishForm from "./PublishForm";
 import { db } from "@/lib/db";
-import { games as gamesTable } from "@/lib/db/schema";
+import { creators, games as gamesTable } from "@/lib/db/schema";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { eq } from "drizzle-orm";
+import { ensureCreatorsAuthFields } from "@/lib/db/ensureCreatorsAuthFields";
+import { isSuperAdminId } from "@/lib/auth/admin";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +28,7 @@ async function getGameDefaults(id: string) {
       title: title || id,
       shortDesc: desc ? desc.slice(0, 42) : "",
       ruleText: desc || "",
-      coverUrl: `/assets/screenshots/${id}.svg`,
+      coverUrl: `/assets/screenshots/${id}.png`,
       path: `/games/${id}/`,
     };
   } catch {
@@ -34,7 +37,7 @@ async function getGameDefaults(id: string) {
       title: id,
       shortDesc: "",
       ruleText: "",
-      coverUrl: `/assets/screenshots/${id}.svg`,
+      coverUrl: `/assets/screenshots/${id}.png`,
       path: `/games/${id}/`,
     };
   }
@@ -75,14 +78,51 @@ export default async function PublishPage({
   const localIds = await listLocalGameIds();
   const unpublished = localIds.filter((id) => !publishedIds.has(id));
 
-  const initial = pickedId ? await getGameDefaults(pickedId) : undefined;
+  // me 信息（用于作者权限：非管理员禁用 creatorId）
+  let meCreatorId: string | null = null;
+  let isAdmin = false;
+  try {
+    await ensureCreatorsAuthFields();
+    if (sess?.phone) {
+      const [row] = await db.select({ id: creators.id }).from(creators).where(eq(creators.phone, sess.phone)).limit(1);
+      meCreatorId = row?.id || null;
+    } else if (sess?.openid) {
+      const [row] = await db.select({ id: creators.id }).from(creators).where(eq(creators.openid, sess.openid)).limit(1);
+      meCreatorId = row?.id || null;
+    }
+    isAdmin = isSuperAdminId(meCreatorId);
+  } catch {}
+
+  // 如果数据库里已存在该 game，则用数据库数据预填（“更新”场景）
+  let initial: any = undefined;
+  let existsInDb = false;
+  if (pickedId) {
+    const [row] = await db.select().from(gamesTable).where(eq(gamesTable.id, pickedId)).limit(1);
+    if (row) {
+      existsInDb = true;
+      initial = {
+        id: row.id,
+        title: row.title,
+        shortDesc: row.shortDesc,
+        ruleText: row.ruleText,
+        creatorId: row.creatorId,
+        coverUrl: row.coverUrl,
+        path: row.path,
+      };
+    } else {
+      initial = await getGameDefaults(pickedId);
+      existsInDb = false;
+    }
+  }
 
   return (
     <main className="wrap">
       <section className="card homeCard">
         <header className="header">
-          <h1>发布游戏</h1>
-          <p className="desc">填写游戏信息并发布到首页列表（数据库）。也可以在下方“未发布”列表中一键填充。</p>
+          <h1>{existsInDb ? "更新游戏" : "发布游戏"}</h1>
+          <p className="desc">
+            {existsInDb ? "该游戏已在数据库中，修改后保存即更新首页展示。" : "填写游戏信息并发布到首页列表（数据库）。也可以从下方“未发布”一键填充。"}
+          </p>
           <p className="homeSub">已登录 openid：{sess.openid}</p>
         </header>
 
@@ -121,7 +161,13 @@ export default async function PublishPage({
           <div style={{ marginTop: 8, fontSize: 13, color: "rgba(100,116,139,0.95)" }}>暂无未发布的本地小游戏。</div>
         )}
 
-        <PublishForm defaultCreatorId="tianqing" initial={initial ? { ...initial, creatorId: "tianqing" } : undefined} />
+        <PublishForm
+          defaultCreatorId="tianqing"
+          initial={initial || undefined}
+          meCreatorId={meCreatorId || undefined}
+          isAdmin={isAdmin}
+          existsInDb={existsInDb}
+        />
       </section>
     </main>
   );

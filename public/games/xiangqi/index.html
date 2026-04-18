@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>中国象棋·人机对战</title>
+    <title>中国象棋·新手友好版</title>
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="./xiangqi.css" />
   </head>
@@ -11,12 +11,12 @@
     <main class="wrap">
       <section class="card">
         <header class="header">
-          <h1>中国象棋·人机对战</h1>
+          <h1>中国象棋·新手友好版</h1>
           <a class="creatorBadge" aria-label="创作者" href="/creators/tianqing">
             <img class="creatorBadgeAvatar" src="/assets/avatars/yaotianjing.svg" alt="天晴头像" />
             <span class="creatorBadgeName">创作者：天晴</span>
           </a>
-          <p class="desc">规则：您（红方）先手对战 AI（黑方）。胜利难度 +1，失败难度 -1。</p>
+          <p class="desc">规则：您（红方）先手对战 AI（黑方）。支持 AI 提示；胜利难度 +1，失败难度 -1。</p>
         </header>
 
         <section class="xqHud" aria-label="xiangqi hud">
@@ -31,18 +31,18 @@
             <div class="xqHint" id="hintText">点击红方棋子查看走法</div>
           </div>
           <div class="xqRight">
-            <div class="xqDiffLabel">当前难度</div>
-            <div class="xqDiffGrid" id="diffGrid" aria-label="当前难度"></div>
-            <span class="srOnly" id="diffText">当前难度 --</span>
+            <div class="xqDiffLabel">当前等级</div>
+            <div class="xqDiffGrid" id="diffGrid" aria-label="当前等级"></div>
+            <span class="srOnly" id="diffText">当前等级 --</span>
           </div>
         </section>
 
         <div class="xqBoard" id="board" aria-label="xiangqi board"></div>
 
-        <div class="actions">
+        <div class="gameActions">
           <button class="btn" id="hintBtn" type="button">提示一步</button>
           <button class="btn" id="resetBtn" type="button">重新开始</button>
-          <a class="btn btnSecondary" href="/">更多游戏</a>
+          
         </div>
       </section>
     </main>
@@ -65,10 +65,10 @@
       <div class="modalPanel" role="dialog" aria-modal="true" aria-label="difficulty dialog">
         <div class="modalTitle">难度调节</div>
         <div class="modalBody" style="font-size: 16px">
-          <div>手动选择当前难度（1-10）：</div>
+          <div>手动选择当前等级（1-10）：</div>
           <div class="diffPicker" id="diffModalPicker" aria-label="difficulty picker"></div>
           <div style="margin-top: 10px; font-size: 13px; color: rgba(100, 116, 139, 0.95)">
-            当前难度：<strong id="diffModalCurrent">--</strong>
+            当前等级：<strong id="diffModalCurrent">--</strong>
           </div>
         </div>
         <div class="modalActions">
@@ -77,20 +77,21 @@
       </div>
     </div>
 
-    <!-- 重新开始：两次确认 -->
+    <!-- 重新开始：一次确认 -->
     <div class="modal" id="resetModal" aria-hidden="true">
       <div class="modalBackdrop" data-close="1"></div>
       <div class="modalPanel" role="dialog" aria-modal="true" aria-label="reset confirm dialog">
         <div class="modalTitle">重新开始</div>
         <div class="modalBody" id="resetModalBody" style="font-size: 16px">确定要重新开始吗？</div>
         <div class="modalActions">
-          <button class="btn btnSecondary modalBtn" id="resetCancelBtn" type="button">取消</button>
-          <button class="btn modalBtn" id="resetConfirmBtn" type="button">继续</button>
+          <button class="btn modalBtn" id="resetCancelBtn" type="button">取消</button>
+          <button class="btn btnDanger modalBtn" id="resetConfirmBtn" type="button">确定</button>
         </div>
       </div>
     </div>
 
     <script src="/rest.js"></script>
+    <script src="/publish-entry.js"></script>
     <script src="./xiangqi.js"></script>
   </body>
 </html>

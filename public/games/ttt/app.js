@@ -684,7 +684,7 @@ function onEasterTap() {
 
 function init() {
   closeResultModal()
-  // 每局开始时按当前难度刷新 AI 参数
+  // 每局开始时按当前等级刷新 AI 参数
   AI_CFG = getAiCfgByDifficulty(difficulty)
   renderDifficultyBadge()
   // 清理仍在执行的淡出计时器

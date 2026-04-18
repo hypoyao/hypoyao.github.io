@@ -1,0 +1,83 @@
+.loginSection {
+  margin-top: 12px;
+}
+
+.loginMeta {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.loginMetaTitle {
+  font-weight: 1000;
+  color: rgba(15, 23, 42, 0.85);
+}
+
+.loginMetaSub {
+  margin-top: 6px;
+  font-size: 12px;
+  color: rgba(100, 116, 139, 0.95);
+}
+
+.loginForm {
+  display: grid;
+  gap: 12px;
+}
+
+.loginField {
+  display: grid;
+  gap: 6px;
+}
+
+.loginLabel {
+  font-weight: 900;
+  font-size: 13px;
+  color: rgba(15, 23, 42, 0.82);
+}
+
+.loginPhoneRow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.loginBtn {
+  width: auto;
+  min-width: 140px;
+  padding-left: 14px;
+  padding-right: 14px;
+}
+
+.loginFooterActions {
+  margin-top: 2px;
+}
+
+.loginNotice {
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  background: rgba(255, 255, 255, 0.55);
+  font-size: 13px;
+  line-height: 1.55;
+  color: rgba(15, 23, 42, 0.72);
+}
+
+.loginTestCode {
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 1000;
+  color: rgba(245, 158, 11, 0.95);
+}
+
+@media (max-width: 520px) {
+  .loginPhoneRow,
+  .loginCodeRow {
+    grid-template-columns: 1fr;
+  }
+  .loginBtn {
+    width: 100%;
+  }
+}

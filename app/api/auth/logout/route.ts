@@ -6,6 +6,6 @@ export async function POST(req: Request) {
   const url = new URL(req.url);
   const jar = await cookies();
   jar.delete(sessionCookieName);
-  return NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store" } });
+  // 表单提交退出后回首页
+  return NextResponse.redirect(new URL("/", url.origin), { headers: { "cache-control": "no-store" } });
 }
-

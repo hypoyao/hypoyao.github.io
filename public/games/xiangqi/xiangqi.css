@@ -79,6 +79,13 @@
 .xqHint {
   font-size: 12px;
   color: rgba(100, 116, 139, 0.95);
+  /* 避免走子/提示文案变长导致 HUD 高度变化 → 棋盘抖动 */
+  line-height: 1.45;
+  min-height: calc(1.45em * 2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .xqRight {
@@ -184,7 +191,9 @@
 .xqPoint.move::after,
 .xqPoint.capture::after,
 .xqPoint.hintFrom::after,
-.xqPoint.hintTo::after {
+.xqPoint.hintTo::after,
+.xqPoint.lastFrom::after,
+.xqPoint.lastTo::after {
   content: "";
   position: absolute;
   inset: 14%;
@@ -204,6 +213,17 @@
 .xqPoint.hintTo::after {
   inset: 10%;
   border: 2px solid rgba(245, 158, 11, 0.65);
+  background: transparent;
+}
+
+/* AI 最近一步：蓝色高亮（短暂） */
+.xqPoint.lastFrom::after,
+.xqPoint.lastTo::after {
+  background: rgba(59, 130, 246, 0.18);
+}
+.xqPoint.lastTo::after {
+  inset: 10%;
+  border: 2px solid rgba(59, 130, 246, 0.55);
   background: transparent;
 }
 

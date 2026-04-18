@@ -1,5 +1,5 @@
 import { listGames } from "@/lib/db/queries";
-import { getSession } from "@/lib/auth/session";
+import HomeAccount from "./HomeAccount";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +10,6 @@ function toGameEntryHref(path: string) {
 }
 
 export default async function HomePage() {
-  const sess = await getSession();
   const games = await listGames();
 
   return (
@@ -19,22 +18,7 @@ export default async function HomePage() {
         <header className="header">
           <div className="homeHeaderRow">
             <h1>AI创意小游戏</h1>
-            <div className="homeHeaderActions">
-              {sess ? (
-                <>
-                  <a className="homePublishBtn" href="/publish" aria-label="发布游戏">
-                    发布游戏
-                  </a>
-                  <a className="homeLoginBtn" href="/login" aria-label="账户">
-                    已登录
-                  </a>
-                </>
-              ) : (
-                <a className="homeLoginBtn" href="/login" aria-label="登录">
-                  登录
-                </a>
-              )}
-            </div>
+            <HomeAccount />
           </div>
           <p className="desc">用 AI，释放孩子的奇思妙想，体验创造的快乐。</p>
         </header>

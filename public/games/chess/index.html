@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>国际象棋大师</title>
+    <title>国际象棋·新手友好版</title>
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="./chess.css" />
   </head>
@@ -11,12 +11,12 @@
     <main class="wrap">
       <section class="card">
         <header class="header">
-          <h1>国际象棋大师</h1>
+          <h1>国际象棋·新手友好版</h1>
           <a class="creatorBadge" aria-label="创作者" href="/creators/tianqing">
             <img class="creatorBadgeAvatar" src="/assets/avatars/yaotianjing.svg" alt="天晴头像" />
             <span class="creatorBadgeName">创作者：天晴</span>
           </a>
-          <p class="desc">规则：标准国际象棋。您执白对战 AI 执黑。点您的棋子会提示走法并高亮可走范围。</p>
+          <p class="desc">规则：标准国际象棋。您执白对战 AI 执黑。支持 AI 提示；点您的棋子会提示走法并高亮可走范围。</p>
         </header>
 
         <section class="chHud" aria-label="chess hud">
@@ -31,19 +31,19 @@
             <div class="chHintText" id="hintText">点击您的棋子查看走法</div>
           </div>
           <div class="chRight">
-            <div class="chDiffLabel">当前难度</div>
-            <div class="chDiffGrid" id="diffGrid" role="button" tabindex="0" aria-label="当前难度"></div>
-            <span class="srOnly" id="diffText">当前难度 --</span>
+            <div class="chDiffLabel">当前等级</div>
+            <div class="chDiffGrid" id="diffGrid" role="button" tabindex="0" aria-label="当前等级"></div>
+            <span class="srOnly" id="diffText">当前等级 --</span>
           </div>
         </section>
 
         <div class="chBoard" id="board" aria-label="chess board"></div>
 
-        <div class="actions">
+        <div class="gameActions">
           <button class="btn" id="hintBtn" type="button">提示一步</button>
           <button class="btn" id="undoBtn" type="button">悔棋</button>
           <button class="btn" id="resetBtn" type="button">重新开始</button>
-          <a class="btn btnSecondary" href="/">更多游戏</a>
+          
         </div>
       </section>
     </main>
@@ -80,15 +80,15 @@
       </div>
     </div>
 
-    <!-- 重新开始：两次确认 -->
+    <!-- 重新开始：一次确认 -->
     <div class="modal" id="resetModal" aria-hidden="true">
       <div class="modalBackdrop" data-close="1"></div>
       <div class="modalPanel" role="dialog" aria-modal="true" aria-label="reset confirm dialog">
         <div class="modalTitle">重新开始</div>
         <div class="modalBody" id="resetModalBody" style="font-size: 16px">确定要重新开始吗？</div>
         <div class="modalActions">
-          <button class="btn btnSecondary modalBtn" id="resetCancelBtn" type="button">取消</button>
-          <button class="btn modalBtn" id="resetConfirmBtn" type="button">继续</button>
+          <button class="btn modalBtn" id="resetCancelBtn" type="button">取消</button>
+          <button class="btn btnDanger modalBtn" id="resetConfirmBtn" type="button">确定</button>
         </div>
       </div>
     </div>
@@ -99,10 +99,10 @@
       <div class="modalPanel" role="dialog" aria-modal="true" aria-label="difficulty dialog">
         <div class="modalTitle">难度调节</div>
         <div class="modalBody" style="font-size: 16px">
-          <div>手动选择当前难度（1-10）：</div>
+          <div>手动选择当前等级（1-10）：</div>
           <div class="diffPicker" id="diffModalPicker" aria-label="difficulty picker"></div>
           <div style="margin-top: 10px; font-size: 13px; color: rgba(100, 116, 139, 0.95)">
-            当前难度：<strong id="diffModalCurrent">--</strong>
+            当前等级：<strong id="diffModalCurrent">--</strong>
           </div>
         </div>
         <div class="modalActions">
@@ -112,6 +112,7 @@
     </div>
 
     <script src="/rest.js"></script>
+    <script src="/publish-entry.js"></script>
     <script src="./chess.js"></script>
   </body>
 </html>

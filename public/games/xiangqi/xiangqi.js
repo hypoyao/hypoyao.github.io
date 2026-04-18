@@ -79,10 +79,10 @@ let selected = -1
 let legalForSelected = []
 let thinking = false
 let hintMove = null // {from,to}
+let lastMove = null // {from,to} 用于高亮 AI 最近一步
 let $pointsLayer = null
 
-// 重新开始二次确认状态
-let resetConfirmStage = 0
+// 重新开始一次确认
 
 // 连续点击“轮到 您”3次打开彩蛋（用于手动调难度）
 const STATUS_EASTER_NEED = 3
@@ -159,7 +159,7 @@ function setWinProbStyle(pct) {
 }
 
 function renderDifficulty() {
-  if ($diffText) $diffText.textContent = `当前难度 ${difficulty} / 10`
+  if ($diffText) $diffText.textContent = `当前等级 ${difficulty} / 10`
   if (!$diffGrid) return
   if ($diffGrid.childElementCount !== 10) {
     $diffGrid.innerHTML = ""
@@ -191,7 +191,7 @@ function ensureBoard() {
   canvas.className = "xqCanvas"
   // 用 SVG 精确绘制象棋棋盘（含：楚河汉界 + 九宫斜线/将军府）
   canvas.innerHTML = `
-    <svg class="xqSvg" viewBox="0 0 8 9" preserveAspectRatio="none" aria-hidden="true">
+    <svg class="xqSvg" viewBox="-0.05 -0.05 8.1 9.1" preserveAspectRatio="none" aria-hidden="true">
       <g stroke="rgba(15,23,42,0.22)" stroke-width="0.05" stroke-linecap="square">
         <!-- horizontals (0..9) -->
         ${Array.from({ length: 10 }, (_, y) => `<line x1="0" y1="${y}" x2="8" y2="${y}" />`).join("")}
@@ -244,7 +244,7 @@ function renderBoard() {
     const p = G.board[i]
     cell.innerHTML = ""
     cell.disabled = thinking || !!G.winner
-    cell.classList.remove("sel", "move", "capture", "hintFrom", "hintTo")
+    cell.classList.remove("sel", "move", "capture", "hintFrom", "hintTo", "lastFrom", "lastTo")
     if (p !== ".") {
       const el = document.createElement("div")
       el.className = `xqPiece ${isRed(p) ? "red" : "black"}`
@@ -265,6 +265,10 @@ function renderBoard() {
   if (hintMove) {
     cells[hintMove.from]?.classList.add("hintFrom")
     cells[hintMove.to]?.classList.add("hintTo")
+  }
+  if (lastMove) {
+    if (Number.isFinite(lastMove.from)) cells[lastMove.from]?.classList.add("lastFrom")
+    if (Number.isFinite(lastMove.to)) cells[lastMove.to]?.classList.add("lastTo")
   }
 
   if (G.winner) {
@@ -298,7 +302,7 @@ function renderDiffModalPicker() {
       const dot = document.createElement("span")
       dot.className = "diffPickDot"
       dot.dataset.level = String(i)
-      dot.title = `当前难度 ${i}`
+      dot.title = `当前等级 ${i}`
       $diffModalPicker.appendChild(dot)
     }
   }
@@ -325,16 +329,13 @@ function closeDiffModal() {
 
 function openResetModal() {
   if (!$resetModal) return
-  resetConfirmStage = 0
   if ($resetModalBody) $resetModalBody.textContent = "确定要重新开始吗？"
-  if ($resetConfirmBtn) $resetConfirmBtn.textContent = "继续"
   $resetModal.classList.add("isOpen")
   $resetModal.setAttribute("aria-hidden", "false")
 }
 
 function closeResetModal() {
   if (!$resetModal) return
-  resetConfirmStage = 0
   $resetModal.classList.remove("isOpen")
   $resetModal.setAttribute("aria-hidden", "true")
 }
@@ -346,12 +347,6 @@ function onResetClick() {
 
 function onResetConfirm() {
   if (!G || thinking) return
-  if (resetConfirmStage === 0) {
-    resetConfirmStage = 1
-    if ($resetModalBody) $resetModalBody.textContent = "再点一次确认将清空当前对局。"
-    if ($resetConfirmBtn) $resetConfirmBtn.textContent = "确定重开"
-    return
-  }
   closeResetModal()
   resetGame()
 }
@@ -362,7 +357,7 @@ function setDifficultyManual(next) {
   saveDifficulty(difficulty)
   renderDifficulty()
   renderDiffModalPicker()
-  setHint(`已设置当前难度 ${difficulty} / 10`)
+  setHint(`已设置当前等级 ${difficulty} / 10`)
 }
 
 // ===== Core rules =====
@@ -833,6 +828,12 @@ function aiTurn() {
       return
     }
     makeMove(G, m)
+    // 高亮 AI 最近一步（短暂）
+    lastMove = { from: m.from, to: m.to }
+    window.setTimeout(() => {
+      lastMove = null
+      renderBoard()
+    }, 1200)
     const out = outcome(G)
     if (out) {
       G.winner = out.winner

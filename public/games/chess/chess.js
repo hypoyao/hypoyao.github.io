@@ -109,6 +109,7 @@ let G = null
 let selected = -1
 let legalForSelected = []
 let hintMove = null
+let lastMove = null // {from,to} 用于高亮 AI 最近一步
 
 let thinking = false
 let pendingPromotion = null // {from,to,piece,captured,flags}
@@ -116,8 +117,7 @@ let pendingPromotion = null // {from,to,piece,captured,flags}
 // 走子历史：保存 makeMove 返回的 undo 信息，用于悔棋
 const undoStack = []
 
-// 重新开始二次确认状态
-let resetConfirmStage = 0
+// 重新开始一次确认
 
 // 连续点击“轮到 您”3次打开彩蛋（用于手动调难度）
 const STATUS_EASTER_NEED = 3
@@ -197,7 +197,7 @@ function setHint(text) {
 }
 
 function renderDifficulty() {
-  if ($diffText) $diffText.textContent = `当前难度 ${difficulty} / 10`
+  if ($diffText) $diffText.textContent = `当前等级 ${difficulty} / 10`
   if (!$diffGrid) return
   if ($diffGrid.childElementCount !== 10) {
     $diffGrid.innerHTML = ""
@@ -249,7 +249,7 @@ function renderBoard() {
     const p = G.board[i]
     cell.textContent = p === "." ? "" : PIECE_UNICODE[p] || ""
     cell.disabled = thinking || !!G.winner
-    cell.classList.remove("sel", "move", "capture", "hintFrom", "hintTo")
+    cell.classList.remove("sel", "move", "capture", "hintFrom", "hintTo", "lastFrom", "lastTo")
   })
 
   // action buttons
@@ -269,6 +269,10 @@ function renderBoard() {
   if (hintMove) {
     cells[hintMove.from]?.classList.add("hintFrom")
     cells[hintMove.to]?.classList.add("hintTo")
+  }
+  if (lastMove) {
+    if (Number.isFinite(lastMove.from)) cells[lastMove.from]?.classList.add("lastFrom")
+    if (Number.isFinite(lastMove.to)) cells[lastMove.to]?.classList.add("lastTo")
   }
 
   if (G.winner) {
@@ -300,7 +304,7 @@ function closeModal() {
 
 function openTipModal() {
   if (!$chTipModal) return
-  if ($chTipText) $chTipText.textContent = "当前难度 1-10，输赢后会自动升降难度"
+    if ($chTipText) $chTipText.textContent = "当前等级 1-10，输赢后会自动升降等级"
   $chTipModal.classList.add("isOpen")
   $chTipModal.setAttribute("aria-hidden", "false")
 }
@@ -357,16 +361,13 @@ function closePromoModal() {
 
 function openResetModal() {
   if (!$resetModal) return
-  resetConfirmStage = 0
   if ($resetModalBody) $resetModalBody.textContent = "确定要重新开始吗？"
-  if ($resetConfirmBtn) $resetConfirmBtn.textContent = "继续"
   $resetModal.classList.add("isOpen")
   $resetModal.setAttribute("aria-hidden", "false")
 }
 
 function closeResetModal() {
   if (!$resetModal) return
-  resetConfirmStage = 0
   $resetModal.classList.remove("isOpen")
   $resetModal.setAttribute("aria-hidden", "true")
 }
@@ -377,7 +378,7 @@ function setDifficultyManual(next) {
   saveDifficulty(difficulty)
   renderDifficulty()
   renderDiffModalPicker()
-  setHint(`已设置当前难度 ${difficulty} / 10`)
+  setHint(`已设置当前等级 ${difficulty} / 10`)
 }
 
 function renderDiffModalPicker() {
@@ -389,7 +390,7 @@ function renderDiffModalPicker() {
       const dot = document.createElement("span")
       dot.className = "diffPickDot"
       dot.dataset.level = String(i)
-      dot.title = `当前难度 ${i}`
+      dot.title = `当前等级 ${i}`
       $diffModalPicker.appendChild(dot)
     }
   }
@@ -422,12 +423,6 @@ function onResetClick() {
 
 function onResetConfirm() {
   if (!G || thinking) return
-  if (resetConfirmStage === 0) {
-    resetConfirmStage = 1
-    if ($resetModalBody) $resetModalBody.textContent = "再点一次确认将清空当前对局。"
-    if ($resetConfirmBtn) $resetConfirmBtn.textContent = "确定重开"
-    return
-  }
   closeResetModal()
   resetGame()
 }
@@ -1155,6 +1150,12 @@ function aiTurn() {
     // AI 升变默认升后
     if (m.flags & FLAG_PROMO && !m.promo) m.promo = "q"
     applyGameMove(m)
+    // 高亮 AI 最近一步（短暂）
+    lastMove = { from: m.from, to: m.to }
+    window.setTimeout(() => {
+      lastMove = null
+      renderBoard()
+    }, 1200)
 
     // 兜底：吃王直接结束
     if (findKing(G.board, "b") < 0) {

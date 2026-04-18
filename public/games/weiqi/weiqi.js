@@ -61,6 +61,7 @@ let difficulty = loadDifficulty()
 let G = null
 let selected = -1
 let hintMove = null // {from,to} with from=-1 for "place"
+let lastMove = null // {to} 用于高亮 AI 最近一步
 let thinking = false
 let $pointsLayer = null
 
@@ -127,7 +128,7 @@ function setWinProbStyle(pct) {
 }
 
 function renderDifficulty() {
-  if ($diffText) $diffText.textContent = `当前难度 ${difficulty} / 10`
+  if ($diffText) $diffText.textContent = `当前等级 ${difficulty} / 10`
   if (!$diffGrid) return
   if ($diffGrid.childElementCount !== 10) {
     $diffGrid.innerHTML = ""
@@ -184,7 +185,7 @@ function renderBoard() {
   if (!$board) return
   const cells = ($pointsLayer || $board).querySelectorAll(".gPoint")
   cells.forEach((cell, i) => {
-    cell.classList.remove("sel", "hintFrom", "hintTo")
+    cell.classList.remove("sel", "hintFrom", "hintTo", "lastTo")
     cell.disabled = thinking || !!G.winner
     cell.innerHTML = ""
     const p = G.board[i]
@@ -199,6 +200,9 @@ function renderBoard() {
   if (hintMove) {
     if (hintMove.from >= 0) cells[hintMove.from]?.classList.add("hintFrom")
     if (hintMove.to >= 0) cells[hintMove.to]?.classList.add("hintTo")
+  }
+  if (lastMove && Number.isFinite(lastMove.to)) {
+    cells[lastMove.to]?.classList.add("lastTo")
   }
 
   if (G.winner) {
@@ -566,19 +570,15 @@ function closeModal() {
   $gModal.setAttribute("aria-hidden", "true")
 }
 
-// reset confirm
-let resetConfirmStage = 0
+// reset confirm（一键确认）
 function openResetModal() {
   if (!$resetModal) return
-  resetConfirmStage = 0
   if ($resetModalBody) $resetModalBody.textContent = "确定要重新开始吗？"
-  if ($resetConfirmBtn) $resetConfirmBtn.textContent = "继续"
   $resetModal.classList.add("isOpen")
   $resetModal.setAttribute("aria-hidden", "false")
 }
 function closeResetModal() {
   if (!$resetModal) return
-  resetConfirmStage = 0
   $resetModal.classList.remove("isOpen")
   $resetModal.setAttribute("aria-hidden", "true")
 }
@@ -588,12 +588,6 @@ function onResetClick() {
 }
 function onResetConfirm() {
   if (!G || thinking) return
-  if (resetConfirmStage === 0) {
-    resetConfirmStage = 1
-    if ($resetModalBody) $resetModalBody.textContent = "再点一次确认将清空当前对局。"
-    if ($resetConfirmBtn) $resetConfirmBtn.textContent = "确定重开"
-    return
-  }
   closeResetModal()
   resetGame()
 }
@@ -608,7 +602,7 @@ function renderDiffModalPicker() {
       const dot = document.createElement("span")
       dot.className = "diffPickDot"
       dot.dataset.level = String(i)
-      dot.title = `当前难度 ${i}`
+      dot.title = `当前等级 ${i}`
       $diffModalPicker.appendChild(dot)
     }
   }
@@ -636,7 +630,7 @@ function setDifficultyManual(next) {
   saveDifficulty(difficulty)
   renderDifficulty()
   renderDiffModalPicker()
-  setHint(`已设置当前难度 ${difficulty} / 10`)
+  setHint(`已设置当前等级 ${difficulty} / 10`)
 }
 
 // status easter tap
@@ -694,6 +688,12 @@ function aiTurn() {
     const m = pickBestMove(G, "w")
     pushHistory()
     applyMove(G, "w", m)
+    // 高亮 AI 最近一步（短暂）
+    lastMove = { to: m }
+    window.setTimeout(() => {
+      lastMove = null
+      renderBoard()
+    }, 1200)
     const out = maybeFinishByPass()
     thinking = false
     if (out) return finishGame(out)
@@ -726,11 +726,11 @@ function finishGame(out) {
   if (out.winner === "b") {
     difficulty = clamp(difficulty + 1, MIN_DIFF, MAX_DIFF)
     saveDifficulty(difficulty)
-    openModal("您赢了！", `恭喜晋级，难度 +1（${out.reason}）`)
+    openModal("您赢了！", `恭喜晋级，等级 +1（${out.reason}）`)
   } else if (out.winner === "w") {
     difficulty = clamp(difficulty - 1, MIN_DIFF, MAX_DIFF)
     saveDifficulty(difficulty)
-    openModal("AI 赢了", `再试一次，难度 -1（${out.reason}）`)
+    openModal("AI 赢了", `再试一次，等级 -1（${out.reason}）`)
   } else {
     openModal("平局", `本局平局（${out.reason}）`)
   }

@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { sql } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { ensureCreatorsAuthFields } from "@/lib/db/ensureCreatorsAuthFields";
 import { encodeSession, sessionCookieName } from "@/lib/auth/session";
 import { getMpAppId, getMpSecret } from "@/lib/auth/wechat";
+import { sha256Hex } from "@/lib/auth/phone";
 
 const STATE_COOKIE = "wx_oauth_state";
 
@@ -35,6 +39,26 @@ export async function GET(req: Request) {
     return NextResponse.redirect(new URL(`/login?err=wechat`, url.origin));
   }
 
+  // 让微信登录也能在首页展示头像/进入个人主页
+  try {
+    await ensureCreatorsAuthFields();
+    const uid = `u_wx_${sha256Hex(openid).slice(0, 16)}`;
+    const name = "微信用户";
+    const avatarUrl = "/assets/avatars/user.svg";
+    const profilePath = `/creators/${uid}`;
+    await db.execute(sql`
+      insert into creators (id, name, avatar_url, profile_path, openid)
+      values (${uid}, ${name}, ${avatarUrl}, ${profilePath}, ${openid})
+      on conflict (openid) do update set
+        name = excluded.name,
+        avatar_url = excluded.avatar_url,
+        profile_path = excluded.profile_path,
+        updated_at = now()
+    `);
+  } catch {
+    // ignore
+  }
+
   const session = encodeSession({ openid });
   jar.set(sessionCookieName, session, {
     httpOnly: true,
@@ -46,4 +70,3 @@ export async function GET(req: Request) {
 
   return NextResponse.redirect(new URL(next, url.origin));
 }
-
