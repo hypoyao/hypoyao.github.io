@@ -50,7 +50,8 @@ export default function PublishForm({ defaultCreatorId, initial }: Props) {
       setMsg(`发布失败：${data?.error || r.status}`);
       return;
     }
-    setMsg(`发布成功：/${data?.path?.replace(/^\\//, "") || ""}`);
+    const p = typeof data?.path === "string" ? data.path.replace(/^\//, "") : "";
+    setMsg(`发布成功：/${p}`);
   }
 
   return (
