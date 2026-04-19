@@ -46,7 +46,17 @@
 
     var isAdmin = !!me.isAdmin
     var isAuthor = !!me.creatorId && game && game.creatorId === me.creatorId
-    var can = isAdmin || isAuthor || (!game && !!me.creatorId)
+    // 未发布的本地游戏：只允许“作者（页面里标注的 creatorBadge）/管理员”看到发布入口
+    var localCreatorId = ""
+    try {
+      var badge = document.querySelector(".creatorBadge")
+      var href = badge && badge.getAttribute("href")
+      var m = href && href.match(/\/creators\/([^/?#]+)/)
+      localCreatorId = (m && m[1]) || ""
+    } catch {}
+    var isLocalAuthor = !!me.creatorId && !!localCreatorId && localCreatorId === me.creatorId
+
+    var can = isAdmin || isAuthor || (!game && isLocalAuthor)
     if (!can) return
 
     addStyle()
@@ -68,4 +78,3 @@
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", run)
   else run()
 })()
-

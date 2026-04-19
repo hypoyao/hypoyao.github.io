@@ -16,13 +16,28 @@ async function listLocalGameIds() {
   return ents.filter((e) => e.isDirectory()).map((e) => e.name).sort();
 }
 
+async function getLocalGameCreatorId(id: string) {
+  try {
+    const file = path.join(process.cwd(), "public", "games", id, "index.html");
+    const html = await fs.readFile(file, "utf8");
+    const m = html.match(/class="creatorBadge"[^>]*href="\/creators\/([^"?#/]+)"/i);
+    return (m?.[1] || "").trim();
+  } catch {
+    return "";
+  }
+}
+
 async function getGameDefaults(id: string) {
   // 从 public/games/<id>/index.html 解析默认标题/描述
   try {
     const file = path.join(process.cwd(), "public", "games", id, "index.html");
     const html = await fs.readFile(file, "utf8");
     const title = (html.match(/<title>([^<]+)<\/title>/i)?.[1] || "").trim();
-    const desc = (html.match(/<p class="desc">([\s\S]*?)<\/p>/i)?.[1] || "").replace(/\s+/g, " ").trim();
+    const descHtml = html.match(/<p\s+class="desc"[^>]*>([\s\S]*?)<\/p>/i)?.[1] || "";
+    const desc = descHtml
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
     return {
       id,
       title: title || id,
@@ -76,7 +91,7 @@ export default async function PublishPage({
   const published = await db.select({ id: gamesTable.id }).from(gamesTable);
   const publishedIds = new Set(published.map((x) => x.id));
   const localIds = await listLocalGameIds();
-  const unpublished = localIds.filter((id) => !publishedIds.has(id));
+  let unpublished = localIds.filter((id) => !publishedIds.has(id));
 
   // me 信息（用于作者权限：非管理员禁用 creatorId）
   let meCreatorId: string | null = null;
@@ -92,6 +107,16 @@ export default async function PublishPage({
     }
     isAdmin = isSuperAdminId(meCreatorId);
   } catch {}
+
+  // 未发布的本地小游戏：仅管理员或作者可见
+  if (!isAdmin) {
+    const out: string[] = [];
+    for (const gid of unpublished) {
+      const cid = await getLocalGameCreatorId(gid);
+      if (cid && meCreatorId && cid === meCreatorId) out.push(gid);
+    }
+    unpublished = out;
+  }
 
   // 如果数据库里已存在该 game，则用数据库数据预填（“更新”场景）
   let initial: any = undefined;
