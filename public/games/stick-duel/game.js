@@ -515,6 +515,26 @@ function hammerHit(attacker, target) {
   }
 }
 
+function stompKill(attacker, target) {
+  // 踩头杀：如果跳起来踩到对手头上，对手直接死亡
+  // 规则：攻击者在空中下落（vy>0），水平距离足够近，且攻击者脚落在对手头顶区域
+  if (gameOver) return
+  if (attacker.vy <= 0) return
+  const dx = Math.abs(attacker.x - target.x)
+  if (dx > 22) return
+  const attackerFeet = attacker.y
+  const targetHead = target.y - 56
+  // 脚在头附近
+  if (attackerFeet >= targetHead - 6 && attackerFeet <= targetHead + 16) {
+    // 直接秒杀
+    target.hp = 0
+    // 反弹一下更有手感
+    attacker.vy = -9.5
+    attacker.vx *= 0.85
+    end(attacker.side)
+  }
+}
+
 // ===== 钩子 =====
 function hookFire(p, aimX, aimY) {
   if (p.hook.active) {
@@ -826,6 +846,10 @@ function step() {
   // 锤子命中检测
   hammerHit(me, ai)
   hammerHit(ai, me)
+
+  // 踩头秒杀
+  stompKill(me, ai)
+  stompKill(ai, me)
 
   // AI 面向玩家
   ai.facing = me.x < ai.x ? -1 : 1

@@ -57,7 +57,8 @@ export default function CreateStudio() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [input, setInput] = useState("");
-  const [model, setModel] = useState<"deepseek-chat" | "deepseek-reasoner">("deepseek-chat");
+  // 默认用 reasoner（更会思考）
+  const [model, setModel] = useState<"deepseek-chat" | "deepseek-reasoner">("deepseek-reasoner");
   const listRef = useRef<HTMLDivElement | null>(null);
   const [projects, setProjects] = useState<Array<{ gameId: string; title?: string; entry: string; mtimeMs?: number }>>([]);
   const [loggedIn, setLoggedIn] = useState(false);
@@ -526,15 +527,15 @@ export default function CreateStudio() {
               aria-label="选择模型"
               style={{ padding: "8px 10px", fontSize: 13, fontWeight: 900 }}
             >
-              <option value="deepseek-chat">deepseek-chat（更快）</option>
-              <option value="deepseek-reasoner">deepseek-reasoner（更会思考）</option>
+              <option value="deepseek-chat">chat（更快）</option>
+              <option value="deepseek-reasoner">reasoner（更会思考）</option>
             </select>
           </label>
         </div>
       </div>
 
       <section className="createGrid">
-        <div className="createPanel" aria-label="chat">
+        <div className="createPanel isChat" aria-label="chat">
           <div className="createPanelHeader">
             <div>
               <div className="createPanelTitle">AI 聊天</div>
@@ -590,13 +591,15 @@ export default function CreateStudio() {
 
         <div className="createPanel previewPanel" aria-label="preview">
           <div className="createPanelHeader">
-            <div>
-              <div className="createPanelTitle">实时预览</div>
-              <div className="previewUrl">{previewUrl}</div>
+            <div className="previewHeadLeft">
+              <div className="createPanelTitle">预览</div>
+              <div className="previewUrl" title={previewUrl}>
+                {previewUrl}
+              </div>
             </div>
             <div className="previewToolbar">
               <button
-                className="btn btnGray miniBtn"
+                className="btn btnGray iconBtn"
                 type="button"
                 onClick={() => {
                   if (!gameId) return;
@@ -605,10 +608,10 @@ export default function CreateStudio() {
                 aria-label="刷新预览"
                 title="刷新预览"
               >
-                刷新
+                ⟳
               </button>
-              <a className="btn btnGray miniBtn" href={previewUrl} target="_blank" rel="noreferrer" aria-label="新窗口打开" title="新窗口打开">
-                打开
+              <a className="btn btnGray iconBtn" href={previewUrl} target="_blank" rel="noreferrer" aria-label="新窗口打开" title="新窗口打开">
+                ↗
               </a>
             </div>
           </div>
