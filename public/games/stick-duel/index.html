@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>火柴人对战（人机）</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <section class="card">
+        <header class="header">
+          <div class="topRow">
+            <h1>火柴人对战（人机）</h1>
+            <a class="homeCreateBtn" href="/">返回首页</a>
+          </div>
+          <p class="desc" id="ruleText">
+            打开武器库选择：钩子 / 枪 / 锤子。枪打中扣 0.5 血；锤子旋转近战；钩子可勾云朵或墙壁快速位移躲避攻击。
+            双方各 5 血，先打光对方获胜。难度和胜率在上方显示。
+          </p>
+        </header>
+
+        <section class="hud" aria-label="hud">
+          <div class="hudLeft">
+            <div class="hpRow">
+              <span class="hpLabel">我</span>
+              <div class="hpBar"><div class="hpFill" id="hpMe"></div></div>
+              <span class="hpVal" id="hpMeText">5.0</span>
+            </div>
+            <div class="hpRow">
+              <span class="hpLabel">AI</span>
+              <div class="hpBar"><div class="hpFill isAi" id="hpAi"></div></div>
+              <span class="hpVal" id="hpAiText">5.0</span>
+            </div>
+          </div>
+
+          <div class="hudRight">
+            <div class="stat">
+              <span class="statLabel">胜率</span>
+              <span class="statVal" id="winProbVal">--%</span>
+            </div>
+            <div class="stat">
+              <span class="statLabel">等级</span>
+              <span class="statVal">Lv <strong id="lvlNum">1</strong></span>
+            </div>
+            <div class="stat">
+              <span class="statLabel">难度</span>
+              <span class="statVal" id="diffVal" title="连续点击 3 次调整难度">Lv <strong id="diffNum">5</strong></span>
+            </div>
+          </div>
+        </section>
+
+        <div class="stage">
+          <canvas id="cv" width="960" height="560" aria-label="stick duel canvas"></canvas>
+        </div>
+
+        <section class="controls" aria-label="controls">
+          <button class="btn btnGray" id="armoryBtn" type="button">打开武器库</button>
+          <button class="btn" id="fireBtn" type="button">发射</button>
+          <button class="btn btnGray" id="hammerThrowBtn" type="button" style="display: none">丢锤（1次）</button>
+          <button class="btn btnGray" id="resetBtn" type="button">重新开始</button>
+        </section>
+
+        <div class="hint" id="hintText">提示：电脑可用 WASD/方向键移动，鼠标指向瞄准；空格发射；Q 打开武器库。</div>
+      </section>
+    </main>
+
+    <!-- 武器库 -->
+    <div class="modal" id="armoryModal" aria-hidden="true">
+      <div class="modalBackdrop" data-close="1"></div>
+      <div class="modalPanel" role="dialog" aria-modal="true" aria-label="armory dialog">
+        <div class="modalTitle">武器库（选择一个）</div>
+        <div class="modalBody">
+          <div class="armoryGrid">
+            <button class="armoryItem" data-weapon="hook" type="button">
+              <div class="armoryName">钩子</div>
+              <div class="armoryDesc">勾住云朵/墙壁，把你拉过去躲避攻击。</div>
+            </button>
+            <button class="armoryItem" data-weapon="gun" type="button">
+              <div class="armoryName">枪</div>
+              <div class="armoryDesc">发射子弹，命中扣 0.5 血。</div>
+            </button>
+            <button class="armoryItem" data-weapon="hammer" type="button">
+              <div class="armoryName">锤子</div>
+              <div class="armoryDesc">按钮变“旋转”，近身旋转攻击。</div>
+            </button>
+          </div>
+        </div>
+        <div class="modalActions">
+          <button class="btn modalBtn" id="armoryCloseBtn" type="button">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 难度 -->
+    <div class="modal" id="diffModal" aria-hidden="true">
+      <div class="modalBackdrop" data-close="1"></div>
+      <div class="modalPanel" role="dialog" aria-modal="true" aria-label="difficulty dialog">
+        <div class="modalTitle">难度（1~10）</div>
+        <div class="modalBody">
+          <input id="diffRange" type="range" min="1" max="10" step="1" />
+          <div style="margin-top: 8px; font-weight: 1000">当前：<span id="diffRangeVal">5</span></div>
+          <div style="margin-top: 8px; font-size: 13px; color: rgba(100,116,139,0.95)">
+            难度越高：AI 更准、更积极、反应更快。
+          </div>
+        </div>
+        <div class="modalActions">
+          <button class="btn modalBtn" id="diffCloseBtn" type="button">确定</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 结果 -->
+    <div class="modal" id="endModal" aria-hidden="true">
+      <div class="modalBackdrop" data-close="1"></div>
+      <div class="modalPanel" role="dialog" aria-modal="true" aria-label="end dialog">
+        <div class="modalTitle" id="endTitle">结束</div>
+        <div class="modalBody" id="endBody" style="font-size: 18px; line-height: 1.6">--</div>
+        <div class="modalActions">
+          <button class="btn modalBtn" id="endBtn" type="button">再来一局</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/rest.js"></script>
+    <script src="/publish-entry.js"></script>
+    <script src="./game.js"></script>
+  </body>
+</html>

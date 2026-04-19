@@ -65,6 +65,12 @@ export default function CreateStudio() {
   const [speechSupported, setSpeechSupported] = useState(false);
   const [listening, setListening] = useState(false);
   const speechRef = useRef<any>(null);
+  const speechBaseRef = useRef<string>("");
+  const inputRef = useRef<string>("");
+
+  useEffect(() => {
+    inputRef.current = input || "";
+  }, [input]);
 
   // 注意：messages 里不放 system；发送给后端时会自动拼接 systemPrompt
   const [messages, setMessages] = useState<ChatMsg[]>(() => [
@@ -192,11 +198,26 @@ export default function CreateStudio() {
       rec.continuous = false;
       rec.maxAlternatives = 1;
       rec.onresult = (ev: any) => {
-        let text = "";
-        for (let i = ev.resultIndex; i < ev.results.length; i++) {
-          text += ev.results[i][0]?.transcript || "";
+        // 注意：interimResults 会反复触发 onresult
+        // 如果我们用“追加”的方式更新输入框，就会出现“重复一大串”的 bug。
+        // 正确做法：每次都用“语音开始时的基准输入 + 当前识别结果”去覆盖显示。
+        let finalText = "";
+        let interimText = "";
+        for (let i = 0; i < ev.results.length; i++) {
+          const r = ev.results[i];
+          const t = r?.[0]?.transcript || "";
+          if (!t) continue;
+          if (r.isFinal) finalText += t;
+          else interimText += t;
         }
-        if (text) setInput((v) => (v ? v + text : text));
+        const base = speechBaseRef.current || "";
+        const merged = (base + finalText + interimText).trimStart();
+        setInput(merged);
+      };
+      rec.onstart = () => {
+        // 记录“开始说话时”输入框已有内容，避免中途重复叠加
+        speechBaseRef.current = inputRef.current || "";
+        setListening(true);
       };
       rec.onend = () => setListening(false);
       rec.onerror = () => setListening(false);
@@ -204,6 +225,7 @@ export default function CreateStudio() {
     } catch {
       setSpeechSupported(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function toggleSpeech() {
@@ -219,6 +241,7 @@ export default function CreateStudio() {
         setListening(false);
       } else {
         // 开始识别时不清空输入，直接续写
+        speechBaseRef.current = input || "";
         speechRef.current.start();
         setListening(true);
       }
@@ -389,155 +412,134 @@ export default function CreateStudio() {
     }
   }
 
+  // 顶部操作（新建/发布/删除）已移动到页面 header（TopActions 下拉菜单）
+  // studio 只负责：选择游戏、聊天、预览
+  useEffect(() => {
+    const emit = () => {
+      window.dispatchEvent(
+        new CustomEvent("creatorStudioState", {
+          detail: { gameId, published, loggedIn, busy },
+        })
+      );
+    };
+    emit();
+    const onPing = () => emit();
+    window.addEventListener("creatorStudioPing", onPing as any);
+    return () => window.removeEventListener("creatorStudioPing", onPing as any);
+  }, [gameId, published, loggedIn, busy]);
+
+  useEffect(() => {
+    const onAction = (e: any) => {
+      const type = e?.detail?.type;
+      if (type === "new") {
+        (async () => {
+          setMessages([{ role: "assistant", content: "好耶！我们从一个全新的小游戏开始吧～你想做什么？" }]);
+          setMsg("");
+          try {
+            const gid = await newGame();
+            await ensureSeed(gid);
+            setPreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`);
+            await refreshProjects();
+          } catch (err: any) {
+            setMsg(`新建游戏失败：${err?.message || "未知错误"}`);
+          }
+        })();
+      } else if (type === "publish") {
+        if (!gameId) return;
+        if (!loggedIn) {
+          if (window.confirm("发布/更新需要先登录。现在去登录吗？")) window.location.href = "/login";
+          return;
+        }
+        window.location.href = `/publish?id=${encodeURIComponent(gameId)}`;
+      } else if (type === "delete") {
+        if (!gameId) return;
+        if (!window.confirm(`确定删除这个游戏吗？\n\n${gameId}\n\n删除后无法恢复。`)) return;
+        (async () => {
+          try {
+            setMsg("");
+            const r = await fetch("/api/creator/delete", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ gameId }),
+            });
+            const j = await r.json().catch(() => ({}));
+            if (!r.ok || !j?.ok) throw new Error(j?.error || "DELETE_FAILED");
+
+            const arr = await refreshProjects();
+            if (arr.length && arr[0]?.gameId) {
+              setGameId(arr[0].gameId);
+              setPreviewUrl(`${entryOf(arr[0].gameId)}?t=${encodeURIComponent(nowId())}`);
+              setMessages([{ role: "assistant", content: "这个游戏已删除。我们继续修改其它游戏，或者新建一个吧～" }]);
+              return;
+            }
+
+            // 没有任何历史游戏了：自动新建一个
+            const gid = await newGame();
+            await ensureSeed(gid);
+            setPreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`);
+            await refreshProjects();
+            setMessages([{ role: "assistant", content: "这个游戏已删除。已为你新建一个空白小游戏～你想做什么？" }]);
+          } catch (err: any) {
+            setMsg(`删除失败：${err?.message || "未知错误"}`);
+          }
+        })();
+      }
+    };
+    window.addEventListener("creatorStudioAction", onAction as any);
+    return () => window.removeEventListener("creatorStudioAction", onAction as any);
+  }, [gameId, loggedIn]);
+
   return (
-    <section className="createGrid" aria-label="create studio">
-      <div className="createPanel" aria-label="chat">
-        <div className="createPanelHeader">
-          <div>
-            <div className="createPanelTitle">AI 聊天</div>
-          </div>
-          <div className="chatActions">
-            <label style={{ display: "grid", gap: 4, minWidth: 180 }}>
-              <span className="createPanelSub" style={{ margin: 0 }}>
-                我的游戏
-              </span>
-              <select
-                className="restInput"
-                value={gameId}
-                onChange={(e) => {
-                  const gid = e.target.value;
-                  setGameId(gid);
-                  if (gid) setPreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`);
-                }}
-                disabled={busy}
-                aria-label="选择历史游戏"
-                style={{ padding: "8px 10px", fontSize: 13, fontWeight: 900 }}
-              >
-                {projects.length ? null : <option value="">（暂无历史游戏）</option>}
-                {projects.map((p) => (
-                  <option key={p.gameId} value={p.gameId}>
-                    {(p.title && p.title.trim()) ? `${p.title}（${p.gameId}）` : p.gameId}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label style={{ display: "grid", gap: 4 }}>
-              <span className="createPanelSub" style={{ margin: 0 }}>
-                模型
-              </span>
-              <select
-                className="restInput"
-                value={model}
-                onChange={(e) => setModel(e.target.value as any)}
-                disabled={busy}
-                aria-label="选择模型"
-                style={{ padding: "8px 10px", fontSize: 13, fontWeight: 900 }}
-              >
-                <option value="deepseek-chat">deepseek-chat（更快）</option>
-                <option value="deepseek-reasoner">deepseek-reasoner（更会思考）</option>
-              </select>
-            </label>
-            <button
-              className="btn btnGray"
-              type="button"
-              onClick={() => {
-                // 新建一个新的小游戏目录（并切换预览）
-                (async () => {
-                  setMessages([{ role: "assistant", content: "好耶！我们从一个全新的小游戏开始吧～你想做什么？" }]);
-                  setMsg("");
-                  try {
-                    const gid = await newGame();
-                    await ensureSeed(gid);
-                    setPreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`);
-                    await refreshProjects();
-                  } catch (e: any) {
-                    setMsg(`新建游戏失败：${e?.message || "未知错误"}`);
-                  }
-                })();
+    <section aria-label="create studio">
+      <div className="createTopBar" aria-label="tools">
+        <div className="createTopLeft">
+          <label className="createTopInline">
+            <span className="createTopLabel">我的游戏</span>
+            <select
+              className="restInput"
+              value={gameId}
+              onChange={(e) => {
+                const gid = e.target.value;
+                setGameId(gid);
+                if (gid) setPreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`);
               }}
               disabled={busy}
+              aria-label="选择历史游戏"
+              style={{ padding: "8px 10px", fontSize: 13, fontWeight: 900 }}
             >
-              新建游戏
-            </button>
+              {projects.length ? null : <option value="">（暂无历史游戏）</option>}
+              {projects.map((p) => (
+                <option key={p.gameId} value={p.gameId}>
+                  {(p.title && p.title.trim()) ? `${p.title}（${p.gameId}）` : p.gameId}
+                </option>
+              ))}
+            </select>
+          </label>
 
-            <a
-              className="btn"
-              href={gameId ? `/publish?id=${encodeURIComponent(gameId)}` : "#"}
-              onClick={(e) => {
-                if (!gameId) {
-                  e.preventDefault();
-                  return;
-                }
-                if (!loggedIn) {
-                  e.preventDefault();
-                  if (window.confirm("发布/更新需要先登录。现在去登录吗？")) window.location.href = "/login";
-                }
-              }}
-              style={{
-                textDecoration: "none",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                opacity: gameId ? 1 : 0.6,
-              }}
-              aria-disabled={!gameId || !loggedIn}
-            >
-              {published ? "更新到首页" : "发布到首页"}
-            </a>
-            <button
-              className="btn btnGray"
-              type="button"
-              onClick={() => {
-                if (!gameId) return;
-                if (!window.confirm(`确定删除这个游戏吗？\n\n${gameId}\n\n删除后无法恢复。`)) return;
-                (async () => {
-                  try {
-                    setMsg("");
-                    const r = await fetch("/api/creator/delete", {
-                      method: "POST",
-                      headers: { "content-type": "application/json" },
-                      body: JSON.stringify({ gameId }),
-                    });
-                    const j = await r.json().catch(() => ({}));
-                    if (!r.ok || !j?.ok) throw new Error(j?.error || "DELETE_FAILED");
-
-                    const arr = await refreshProjects();
-                    if (arr.length && arr[0]?.gameId) {
-                      setGameId(arr[0].gameId);
-                      setPreviewUrl(`${entryOf(arr[0].gameId)}?t=${encodeURIComponent(nowId())}`);
-                      setMessages([{ role: "assistant", content: "这个游戏已删除。我们继续修改其它游戏，或者新建一个吧～" }]);
-                      return;
-                    }
-
-                    // 没有任何历史游戏了：自动新建一个
-                    const gid = await newGame();
-                    await ensureSeed(gid);
-                    setPreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`);
-                    await refreshProjects();
-                    setMessages([{ role: "assistant", content: "这个游戏已删除。已为你新建一个空白小游戏～你想做什么？" }]);
-                  } catch (e: any) {
-                    setMsg(`删除失败：${e?.message || "未知错误"}`);
-                  }
-                })();
-              }}
-              disabled={busy || !gameId}
-              style={{ borderColor: "rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "rgba(185,28,28,0.95)" }}
-            >
-              删除游戏
-            </button>
-            <button
-              className="btn btnGray"
-              type="button"
-              onClick={() => {
-                setMessages([{ role: "assistant", content: "继续吧～你想怎么改这个游戏？" }]);
-                setMsg("");
-              }}
+          <label className="createTopInline">
+            <span className="createTopLabel">模型</span>
+            <select
+              className="restInput"
+              value={model}
+              onChange={(e) => setModel(e.target.value as any)}
               disabled={busy}
+              aria-label="选择模型"
+              style={{ padding: "8px 10px", fontSize: 13, fontWeight: 900 }}
             >
-              清空对话
-            </button>
-          </div>
+              <option value="deepseek-chat">deepseek-chat（更快）</option>
+              <option value="deepseek-reasoner">deepseek-reasoner（更会思考）</option>
+            </select>
+          </label>
         </div>
+      </div>
+
+      <section className="createGrid">
+        <div className="createPanel" aria-label="chat">
+          <div className="createPanelHeader">
+            <div>
+              <div className="createPanelTitle">AI 聊天</div>
+            </div>
+          </div>
 
         <div className="chatList" ref={listRef}>
           {viewMessages.map((m, idx) => (
@@ -586,30 +588,33 @@ export default function CreateStudio() {
         </div>
       </div>
 
-      <div className="createPanel previewPanel" aria-label="preview">
-        <div className="createPanelHeader">
-          <div>
-            <div className="createPanelTitle">实时预览</div>
-            <div className="previewUrl">{previewUrl}</div>
+        <div className="createPanel previewPanel" aria-label="preview">
+          <div className="createPanelHeader">
+            <div>
+              <div className="createPanelTitle">实时预览</div>
+              <div className="previewUrl">{previewUrl}</div>
+            </div>
+            <div className="previewToolbar">
+              <button
+                className="btn btnGray miniBtn"
+                type="button"
+                onClick={() => {
+                  if (!gameId) return;
+                  setPreviewUrl(`${entryOf(gameId)}?t=${encodeURIComponent(nowId())}`);
+                }}
+                aria-label="刷新预览"
+                title="刷新预览"
+              >
+                刷新
+              </button>
+              <a className="btn btnGray miniBtn" href={previewUrl} target="_blank" rel="noreferrer" aria-label="新窗口打开" title="新窗口打开">
+                打开
+              </a>
+            </div>
           </div>
-          <div className="previewToolbar">
-            <button
-              className="btn btnGray"
-              type="button"
-              onClick={() => {
-                if (!gameId) return;
-                setPreviewUrl(`${entryOf(gameId)}?t=${encodeURIComponent(nowId())}`);
-              }}
-            >
-              刷新
-            </button>
-            <a className="btn btnGray" href={previewUrl} target="_blank" rel="noreferrer">
-              新窗口打开
-            </a>
-          </div>
+          <iframe className="previewFrame" src={previewUrl} title="preview" />
         </div>
-        <iframe className="previewFrame" src={previewUrl} title="preview" />
-      </div>
+      </section>
     </section>
   );
 }

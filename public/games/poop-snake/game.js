@@ -143,6 +143,15 @@ function spawnFood(pos) {
   foods.push(p)
 }
 
+function dropFoodAt(p) {
+  // “掉落食物”：必须落在指定格子上（用于死亡掉落、打掉尾巴掉落）
+  // 不走 spawnFood 的“避开占用随机换位置”逻辑，否则会出现“身体没变成屎”的错觉
+  if (!p) return
+  if (!inBounds(p)) return
+  if (foods.some((f) => eq(f, p))) return
+  foods.push({ x: p.x, y: p.y })
+}
+
 function spawnAiSnake() {
   if (ais.length >= 5) return
   // 在边缘随机出现，避免一上来贴脸
@@ -279,7 +288,7 @@ function splitAiToFood(i, hitIndex) {
   const tailPart = ai.body.slice(hitIndex)
   const remain = ai.body.slice(0, hitIndex)
   // 尾巴变食物：有多少节就变多少坨
-  tailPart.forEach((p) => spawnFood({ x: p.x, y: p.y }))
+  tailPart.forEach((p) => dropFoodAt(p))
   if (remain.length <= 0) {
     ais.splice(i, 1)
   } else {
@@ -325,7 +334,7 @@ function playerDie(reason) {
   player.alive = false
   // 死了以后身体变成食物：有多少节就变多少坨
   const n = player.body.length
-  player.body.forEach((p) => spawnFood({ x: p.x, y: p.y }))
+  player.body.forEach((p) => dropFoodAt(p))
   setText($status, "啊哦！你挂了～")
   loopStop()
   openModal("你变成了大便…", `你的身体变成了 ${n} 坨大便（好臭但是很有用）\n原因：${reason}`)
@@ -435,7 +444,7 @@ function stepAi() {
       // 实在走不动：说明它被“围住”了（四面都堵死）
       // 规则：被围住的 AI 蛇也会“变成大便”（整条蛇的每一节都变成食物）
       const n = ai.body.length
-      for (const p of ai.body) spawnFood({ x: p.x, y: p.y })
+      for (const p of ai.body) dropFoodAt(p)
       ai.alive = false
       ais.splice(i, 1)
       i -= 1
