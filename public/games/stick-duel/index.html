@@ -9,11 +9,10 @@
   </head>
   <body>
     <main class="wrap">
-      <section class="card">
+      <section class="card duelCard">
         <header class="header">
           <div class="topRow">
             <h1>火柴人对战（人机）</h1>
-            <a class="homeCreateBtn" href="/">返回首页</a>
           </div>
           <p class="desc" id="ruleText">
             打开武器库选择：钩子 / 枪 / 锤子。枪打中扣 0.5 血；锤子旋转近战；钩子可勾云朵或墙壁快速位移躲避攻击。
@@ -52,17 +51,27 @@
         </section>
 
         <div class="stage">
-          <canvas id="cv" width="960" height="560" aria-label="stick duel canvas"></canvas>
+          <canvas id="cv" width="1120" height="640" aria-label="stick duel canvas"></canvas>
+          <!-- 手机摇杆：按住屏幕左下角出现 -->
+          <div class="joy" id="joy" aria-hidden="true">
+            <div class="joyBase"></div>
+            <div class="joyKnob" id="joyKnob"></div>
+          </div>
         </div>
 
         <section class="controls" aria-label="controls">
           <button class="btn btnGray" id="armoryBtn" type="button">打开武器库</button>
+          <button class="btn" id="startBtn" type="button">开始</button>
           <button class="btn" id="fireBtn" type="button">发射</button>
           <button class="btn btnGray" id="hammerThrowBtn" type="button" style="display: none">丢锤（1次）</button>
           <button class="btn btnGray" id="resetBtn" type="button">重新开始</button>
         </section>
 
         <div class="hint" id="hintText">提示：电脑可用 WASD/方向键移动，鼠标指向瞄准；空格发射；Q 打开武器库。</div>
+
+        <div class="gameFooter">
+          <a class="btn btnGray" href="/">返回首页</a>
+        </div>
       </section>
     </main>
 

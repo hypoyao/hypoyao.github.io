@@ -3,6 +3,10 @@
   --border: rgba(15, 23, 42, 0.12);
 }
 
+.duelCard {
+  width: min(1320px, 100%);
+}
+
 .topRow {
   display: flex;
   align-items: center;
@@ -89,21 +93,66 @@
   background: rgba(255, 255, 255, 0.65);
   box-shadow: 0 10px 24px rgba(2, 6, 23, 0.06);
   overflow: hidden;
+  position: relative;
 }
 #cv {
   width: 100%;
   height: auto;
   display: block;
   image-rendering: pixelated;
+  touch-action: none; /* 手机上滑动不滚动页面，优先给游戏 */
   background: radial-gradient(circle at 15% 15%, rgba(59, 130, 246, 0.12), transparent 40%),
     radial-gradient(circle at 85% 25%, rgba(34, 197, 94, 0.12), transparent 45%),
     linear-gradient(180deg, rgba(219, 234, 254, 0.75), rgba(241, 245, 249, 0.75));
 }
 
+.joy {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 116px;
+  height: 116px;
+  display: none;
+  touch-action: none;
+  z-index: 5;
+}
+.joy.isOn {
+  display: block;
+}
+.joyBase {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  border: 2px solid rgba(15, 23, 42, 0.15);
+  background: rgba(255, 255, 255, 0.35);
+  box-shadow: 0 14px 30px rgba(2, 6, 23, 0.12);
+  backdrop-filter: blur(6px);
+}
+.joyKnob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 46px;
+  height: 46px;
+  margin-left: -23px;
+  margin-top: -23px;
+  border-radius: 999px;
+  border: 2px solid rgba(15, 23, 42, 0.18);
+  background: rgba(255, 255, 255, 0.75);
+  box-shadow: 0 10px 20px rgba(2, 6, 23, 0.14);
+}
+
+/* 桌面端隐藏摇杆（手机端固定左下角显示） */
+@media (hover: hover) and (pointer: fine) {
+  .joy {
+    display: none;
+  }
+}
+
 .controls {
   margin-top: 12px;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 10px;
 }
 .controls .btn {

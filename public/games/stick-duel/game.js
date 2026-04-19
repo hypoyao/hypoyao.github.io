@@ -10,8 +10,11 @@
 
 const $cv = document.getElementById("cv")
 const ctx = $cv && $cv.getContext ? $cv.getContext("2d") : null
+const $joy = document.getElementById("joy")
+const $joyKnob = document.getElementById("joyKnob")
 
 const $armoryBtn = document.getElementById("armoryBtn")
+const $startBtn = document.getElementById("startBtn")
 const $fireBtn = document.getElementById("fireBtn")
 const $resetBtn = document.getElementById("resetBtn")
 const $hint = document.getElementById("hintText")
@@ -62,24 +65,24 @@ function closeModal($m) {
 }
 
 // ===== 游戏配置 =====
-const W = 960
-const H = 560
+const W = 1120
+const H = 640
 const G = {
   gravity: 0.55,
   air: 0.985,
-  groundY: 480,
+  groundY: 540,
 }
 
 const WALLS = [
-  { x: 50, y: 240, w: 26, h: 240 },
-  { x: W - 76, y: 240, w: 26, h: 240 },
+  { x: 60, y: 270, w: 26, h: 270 },
+  { x: W - 86, y: 270, w: 26, h: 270 },
 ]
 
 // 云朵（可被钩子抓）
 const CLOUDS = [
-  { x: 180, y: 120, r: 24, vx: 0.45 },
-  { x: 470, y: 90, r: 28, vx: -0.35 },
-  { x: 760, y: 140, r: 22, vx: 0.30 },
+  { x: 210, y: 135, r: 24, vx: 0.45 },
+  { x: 548, y: 102, r: 28, vx: -0.35 },
+  { x: 887, y: 160, r: 22, vx: 0.30 },
 ]
 
 // ===== 状态 =====
@@ -87,6 +90,8 @@ let difficulty = 5
 let gameOver = false
 let level = 1
 let winStreak = 0
+let running = false
+let paused = false
 
 let input = {
   left: false,
@@ -96,6 +101,17 @@ let input = {
   aimX: W / 2,
   aimY: H / 2,
 }
+
+// 手机摇杆（按住屏幕左下角出现）
+let joy = {
+  on: false,
+  pid: null,
+  cx: 0, // joy 盒子里的中心点（像素）
+  cy: 0,
+  dx: 0,
+  dy: 0,
+}
+let joyLP = { pid: null, timer: 0, moved: false, startX: 0, startY: 0 }
 
 function loadDiff() {
   try {
@@ -153,7 +169,7 @@ function cfg(d) {
 function makeFighter(side) {
   return {
     side,
-    x: side === "me" ? 180 : 780,
+    x: side === "me" ? 210 : 910,
     y: G.groundY,
     vx: 0,
     vy: 0,
@@ -172,6 +188,8 @@ let ai = makeFighter("ai")
 
 let bullets = [] // {x,y,vx,vy,owner,life}
 let specials = { hammerThrowUsed: false }
+// AI 枪械每局次数限制（玩家不限制）
+let aiGunAmmo = 0
 
 function reset() {
   difficulty = loadDiff()
@@ -186,12 +204,16 @@ function reset() {
   me = makeFighter("me")
   ai = makeFighter("ai")
   ai.weapon = randWeapon()
+  aiGunAmmo = Math.round(6 + difficulty * 1.2) // Lv1≈7 发，Lv10≈18 发
   bullets = []
   specials = { hammerThrowUsed: false }
   gameOver = false
+  running = false
+  paused = false
   updateFireBtn()
   updateHammerThrowBtn()
-  setHint("提示：打开武器库选择武器，然后用下方按钮攻击！")
+  updateStartBtn()
+  setHint("提示：先点「开始」，再打开武器库选择武器！")
 }
 
 function setHint(t) {
@@ -206,6 +228,13 @@ function randWeapon() {
 function updateFireBtn() {
   if (!$fireBtn) return
   $fireBtn.textContent = me.weapon === "hammer" ? (me.hammer.spinning ? "停止" : "旋转") : "发射"
+}
+
+function updateStartBtn() {
+  if (!$startBtn) return
+  if (!running) $startBtn.textContent = "开始"
+  else $startBtn.textContent = paused ? "开始" : "暂停"
+  $startBtn.disabled = false
 }
 
 function updateHammerThrowBtn() {
@@ -235,6 +264,9 @@ function closeDiff() {
 
 function end(winner) {
   gameOver = true
+  running = false
+  paused = false
+  updateStartBtn()
   // 连胜升级：连续赢 AI 3 局，等级 +1（等级不是难度）
   if (winner === "me") {
     winStreak = clamp(winStreak + 1, 0, 99)
@@ -264,6 +296,79 @@ function aimFromPointer(ev) {
   input.aimY = clamp(y, 0, H)
 }
 
+function canvasXYFromPointer(ev) {
+  const rect = $cv.getBoundingClientRect()
+  const x = ((ev.clientX - rect.left) / rect.width) * W
+  const y = ((ev.clientY - rect.top) / rect.height) * H
+  return { x, y, rect }
+}
+
+function joyApply() {
+  // deadzone
+  const dead = 10
+  const dx = joy.dx
+  const dy = joy.dy
+  input.left = dx < -dead
+  input.right = dx > dead
+  // 上推跳（只要推上就触发；stepFighter 会在落地时再跳）
+  input.up = dy < -24
+}
+
+function joyReset() {
+  joy.on = false
+  joy.pid = null
+  joy.dx = 0
+  joy.dy = 0
+  input.left = false
+  input.right = false
+  input.up = false
+  if ($joyKnob) $joyKnob.style.transform = "translate(0px, 0px)"
+  if ($joy) {
+    $joy.classList.remove("isOn")
+    $joy.setAttribute("aria-hidden", "true")
+  }
+}
+
+function joyShowAtPointer(ev) {
+  if (!$joy || !$joyKnob) return
+  const rect = $cv.getBoundingClientRect()
+  const px = ev.clientX - rect.left
+  const py = ev.clientY - rect.top
+
+  const size = 116
+  const left = clamp(px - size / 2, 6, rect.width - size - 6)
+  const top = clamp(py - size / 2, 6, rect.height - size - 6)
+  $joy.style.left = `${left}px`
+  $joy.style.top = `${top}px`
+
+  joy.on = true
+  joy.pid = ev.pointerId
+  joy.cx = size / 2
+  joy.cy = size / 2
+  joy.dx = 0
+  joy.dy = 0
+  $joyKnob.style.transform = "translate(0px, 0px)"
+  $joy.classList.add("isOn")
+  $joy.setAttribute("aria-hidden", "false")
+  joyApply()
+}
+
+function joyMove(ev) {
+  if (!joy.on || ev.pointerId !== joy.pid || !$joyKnob) return
+  const rect = $joy.getBoundingClientRect()
+  const px = ev.clientX - rect.left
+  const py = ev.clientY - rect.top
+  const dx = px - joy.cx
+  const dy = py - joy.cy
+  const r = 38
+  const d = Math.hypot(dx, dy)
+  const k = d > r ? r / d : 1
+  joy.dx = dx * k
+  joy.dy = dy * k
+  $joyKnob.style.transform = `translate(${joy.dx}px, ${joy.dy}px)`
+  joyApply()
+}
+
 // ===== 物理与碰撞 =====
 function stepFighter(p) {
   // 移动（为了孩子容易上手：上/下变成跳/下蹲（轻微），也允许键盘 WASD）
@@ -280,7 +385,7 @@ function stepFighter(p) {
       p.facing = 1
     }
     if (input.up && p.y >= G.groundY - 1) {
-      p.vy = -10.8
+      p.vy = -13.8
     }
   }
 
@@ -295,9 +400,10 @@ function stepFighter(p) {
     p.vy += (dy / dist) * pull
     // 缩短绳子（把人拉近）
     p.hook.len = Math.max(40, p.hook.len - 2.6)
-    if (dist <= p.hook.len + 6) {
-      // 到位后停止拉（还可以飘一下）
+    // 到位后结束（避免“钩住了但不动/卡住”）
+    if (dist <= 52) {
       p.hook.pulling = false
+      p.hook.active = false
     }
   }
 
@@ -421,15 +527,16 @@ function hookFire(p, aimX, aimY) {
   // 为避免把自己拉进地下，y 做一点限制（仍然是自由勾点）
   const sx = p.x
   const sy = p.y - 30
-  const tx = clamp(aimX, 30, W - 30)
-  const ty = clamp(aimY, 30, G.groundY - 30)
+  const tx = clamp(aimX, 10, W - 10)
+  const ty = clamp(aimY, 10, G.groundY - 50)
   const dist = Math.max(1, Math.hypot(tx - sx, ty - sy))
-  if (dist < 26) return
+  if (dist < 10) return
 
   p.hook.active = true
   p.hook.ax = tx
   p.hook.ay = ty
-  p.hook.len = Math.max(60, dist)
+  // 关键：len 不能比当前距离更大，否则会“立刻判定到位”导致看起来没发射
+  p.hook.len = dist
   p.hook.pulling = true
 }
 
@@ -463,10 +570,30 @@ function aiThink() {
   }
   if (t >= ai.ai.nextSwap) {
     ai.weapon = randWeapon()
+    // AI 不能同时用两种武器：切换武器时，清掉其它武器状态
+    ai.hook.active = false
+    ai.hook.pulling = false
+    ai.hammer.spinning = false
     ai.ai.nextSwap = t + c.aiWeaponSwapMs * (0.8 + Math.random() * 0.6)
+  }
+
+  // 再保险：只要当前不是对应武器，就强制关闭其效果（避免“上一把武器残留”）
+  if (ai.weapon !== "hook") {
+    ai.hook.active = false
+    ai.hook.pulling = false
+  }
+  if (ai.weapon !== "hammer") {
+    ai.hammer.spinning = false
+  }
+  // 枪的射击不需要额外“持续状态”，但仍避免与其它状态并存
+  if (ai.weapon === "gun") {
+    ai.hook.active = false
+    ai.hook.pulling = false
+    ai.hammer.spinning = false
   }
   if (t < ai.ai.nextThink) return
   ai.ai.nextThink = t + c.aiThinkMs * (0.75 + Math.random() * 0.6)
+
 
   // 简单策略：
   // - 枪：保持距离射击
@@ -493,8 +620,9 @@ function aiThink() {
     const noise = c.aiAimNoise
     const ax = me.x + me.vx * 6 + (Math.random() * 2 - 1) * 120 * noise
     const ay = me.y - 36 + (Math.random() * 2 - 1) * 80 * noise
-    if (t >= (ai._nextFire || 0)) {
+    if (aiGunAmmo > 0 && t >= (ai._nextFire || 0)) {
       gunFire(ai, ax, ay, 0.14 + 0.22 * noise)
+      aiGunAmmo -= 1
       ai._nextFire = t + c.aiFireCd * (0.75 + Math.random() * 0.6)
     }
   } else if (ai.weapon === "hammer") {
@@ -668,6 +796,7 @@ function stepClouds() {
 }
 
 function step() {
+  if (!running || paused) return render()
   if (gameOver) return render()
 
   stepClouds()
@@ -712,15 +841,16 @@ function startLoop() {
 
 // ===== 武器操作（玩家）=====
 function playerFire() {
-  if (gameOver) return
+  if (gameOver || !running || paused) return
   if (me.weapon === "hook") {
     hookFire(me, input.aimX, input.aimY)
     setHint(me.hook.active ? "钩子：已勾住，正在拉你过去！" : "钩子：已取消。")
     return updateFireBtn()
   }
   if (me.weapon === "gun") {
-    gunFire(me, input.aimX, input.aimY, 0.06)
-    setHint("砰！发射子弹（命中扣 0.5 血）")
+    // 枪：自动对准 AI（玩家更爽；AI 有次数限制）
+    gunFire(me, ai.x, ai.y - 36, 0.03)
+    setHint("砰！自动瞄准 AI 发射子弹（命中扣 0.5 血）")
     return
   }
   if (me.weapon === "hammer") {
@@ -731,7 +861,7 @@ function playerFire() {
 }
 
 function playerThrowHammer() {
-  if (gameOver) return
+  if (gameOver || !running || paused) return
   if (me.weapon !== "hammer") return
   if (level < 3) return
   if (specials.hammerThrowUsed) return
@@ -742,6 +872,23 @@ function playerThrowHammer() {
   const sx = me.x + me.facing * 16
   const sy = me.y - 38
   bullets.push({ x: sx, y: sy, vx: me.facing * 10, vy: -2, owner: "me", life: 120, kind: "hammerThrow", spinA: 0 })
+}
+
+function toggleStart() {
+  if (gameOver) {
+    // 结束后点开始=新开一局
+    reset()
+  }
+  if (!running) {
+    running = true
+    paused = false
+    updateStartBtn()
+    setHint("开始！移动躲避，开打吧～")
+    return
+  }
+  paused = !paused
+  updateStartBtn()
+  setHint(paused ? "已暂停：再点「开始」继续" : "继续！")
 }
 
 // ===== 难度彩蛋：点 3 次 =====
@@ -762,6 +909,7 @@ function onDiffTap() {
 // ===== 事件绑定 =====
 function bind() {
   if ($armoryBtn) $armoryBtn.addEventListener("click", openArmory)
+  if ($startBtn) $startBtn.addEventListener("click", toggleStart)
   if ($armoryCloseBtn) $armoryCloseBtn.addEventListener("click", closeArmory)
   if ($fireBtn) $fireBtn.addEventListener("click", playerFire)
   if ($hammerThrowBtn) $hammerThrowBtn.addEventListener("click", playerThrowHammer)
@@ -814,7 +962,93 @@ function bind() {
     $cv.width = W
     $cv.height = H
     $cv.addEventListener("pointermove", aimFromPointer, { passive: true })
-    $cv.addEventListener("pointerdown", aimFromPointer, { passive: true })
+    $cv.addEventListener(
+      "pointerdown",
+      (ev) => {
+        // 规则：
+        // - 短按：正常点击（钩子=点哪钩哪）
+        // - 长按：在手指位置出现摇杆（左右移动/上推跳）
+        if (ev.pointerType !== "mouse") {
+          joyLP.pid = ev.pointerId
+          joyLP.moved = false
+          joyLP.startX = ev.clientX
+          joyLP.startY = ev.clientY
+          if (joyLP.timer) clearTimeout(joyLP.timer)
+          joyLP.timer = window.setTimeout(() => {
+            // 长按触发摇杆
+            joyShowAtPointer(ev)
+            try {
+              $cv.setPointerCapture(ev.pointerId)
+            } catch {}
+          }, 220)
+          ev.preventDefault?.()
+        }
+        aimFromPointer(ev)
+      },
+      { passive: false }
+    )
+
+    // 长按期间移动太多 -> 取消长按（避免想点钩子却弹摇杆）
+    $cv.addEventListener(
+      "pointermove",
+      (ev) => {
+        if (joy.on) {
+          joyMove(ev)
+          return
+        }
+        if (joyLP.pid !== ev.pointerId || !joyLP.timer) return
+        const dx = ev.clientX - joyLP.startX
+        const dy = ev.clientY - joyLP.startY
+        if (Math.hypot(dx, dy) > 12) {
+          joyLP.moved = true
+          clearTimeout(joyLP.timer)
+          joyLP.timer = 0
+        }
+      },
+      { passive: true }
+    )
+
+    $cv.addEventListener(
+      "pointerup",
+      (ev) => {
+        // 结束摇杆
+        if (joy.on && ev.pointerId === joy.pid) {
+          joyReset()
+        }
+        // 处理短按（没有进入摇杆）
+        const wasLongPress = joyLP.pid === ev.pointerId && joyLP.timer === 0 && !joyLP.moved && joy.on
+        if (joyLP.pid === ev.pointerId) {
+          if (joyLP.timer) clearTimeout(joyLP.timer)
+          const cancelled = joyLP.moved
+          joyLP.timer = 0
+          joyLP.pid = null
+          joyLP.moved = false
+          if (!cancelled && !joy.on && ev.pointerType !== "mouse") {
+            aimFromPointer(ev)
+            if (me.weapon === "hook" && !gameOver && running && !paused) {
+              hookFire(me, input.aimX, input.aimY)
+              setHint(me.hook.active ? "钩子：已勾住，正在拉你过去！" : "钩子：已取消。")
+              updateFireBtn()
+            }
+          }
+        }
+        void wasLongPress
+      },
+      { passive: true }
+    )
+    $cv.addEventListener(
+      "pointercancel",
+      (ev) => {
+        if (joyLP.pid === ev.pointerId && joyLP.timer) {
+          clearTimeout(joyLP.timer)
+          joyLP.timer = 0
+          joyLP.pid = null
+          joyLP.moved = false
+        }
+        if (joy.on && ev.pointerId === joy.pid) joyReset()
+      },
+      { passive: true }
+    )
   }
 
   // 键盘
@@ -825,6 +1059,7 @@ function bind() {
     if (e.key === "ArrowDown" || e.key.toLowerCase() === "s") input.down = true
     if (e.key === " " || e.code === "Space") playerFire()
     if (e.key.toLowerCase() === "q") openArmory()
+    if (e.key === "Enter") toggleStart()
   })
   window.addEventListener("keyup", (e) => {
     if (e.key === "ArrowLeft" || e.key.toLowerCase() === "a") input.left = false

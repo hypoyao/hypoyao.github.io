@@ -280,3 +280,45 @@
     min-height: 520px;
   }
 }
+
+@media (max-width: 520px) {
+  .createCard {
+    width: 100%;
+  }
+  .createTopBar {
+    gap: 10px;
+  }
+  .createTopActions {
+    gap: 8px;
+  }
+  .createMenuBtn {
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+
+  .createPanelHeader {
+    padding: 10px 10px;
+  }
+
+  .createPanel {
+    /* 手机上高度更紧凑一点，避免被浏览器地址栏挤压 */
+    height: min(680px, 74vh);
+    min-height: 480px;
+  }
+
+  .chatRow {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+  .sendCol {
+    grid-template-columns: 1fr 1fr;
+    grid-auto-flow: column;
+  }
+
+  .previewToolbar {
+    gap: 8px;
+  }
+  .previewUrl {
+    max-width: 44vw;
+  }
+}
