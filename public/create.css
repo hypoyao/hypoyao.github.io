@@ -1,0 +1,177 @@
+:root {
+  --panel-border: rgba(15, 23, 42, 0.10);
+}
+
+.createCard {
+  width: min(1320px, 100%);
+}
+
+.createGrid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: minmax(320px, 420px) 1fr;
+  gap: 14px;
+  align-items: stretch;
+}
+
+.createPanel {
+  border-radius: 18px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.65);
+  box-shadow: 0 10px 24px rgba(2, 6, 23, 0.06);
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  /* 关键：给 grid 一个确定高度，1fr 才会变成“可滚动的中间区” */
+  height: min(780px, 82vh);
+  min-height: 620px;
+}
+
+.createPanelHeader {
+  padding: 12px 12px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.createPanelTitle {
+  font-weight: 1000;
+  font-size: 14px;
+  color: rgba(15, 23, 42, 0.86);
+}
+
+.createPanelSub {
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(100, 116, 139, 0.92);
+}
+
+.chatList {
+  padding: 12px;
+  overflow: auto;
+  display: grid;
+  gap: 10px;
+  /* 关键：允许在 grid 中收缩，否则会被内容撑高 */
+  min-height: 0;
+}
+
+.chatMsg {
+  display: grid;
+  gap: 6px;
+  padding: 10px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.60);
+}
+.chatMsg.isUser {
+  background: rgba(37, 99, 235, 0.08);
+  border-color: rgba(37, 99, 235, 0.18);
+}
+.chatRole {
+  font-size: 12px;
+  font-weight: 1000;
+  color: rgba(15, 23, 42, 0.72);
+}
+.chatText {
+  white-space: pre-wrap;
+  line-height: 1.55;
+  font-size: 14px;
+  font-weight: 850;
+  color: rgba(15, 23, 42, 0.86);
+}
+
+.sendCol {
+  display: grid;
+  gap: 10px;
+}
+.sendCol .btn {
+  width: 100%;
+  padding: 12px 14px;
+  font-size: 15px;
+  font-weight: 1100;
+}
+
+.thinkBox {
+  border-radius: 12px;
+  border: 1px dashed rgba(15, 23, 42, 0.18);
+  background: rgba(255, 255, 255, 0.55);
+  padding: 8px 10px;
+}
+.thinkSummary {
+  cursor: pointer;
+  font-weight: 1000;
+  font-size: 13px;
+  color: rgba(15, 23, 42, 0.86);
+  user-select: none;
+}
+.thinkBody {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  color: rgba(15, 23, 42, 0.82);
+  max-height: 240px;
+  overflow: auto;
+}
+
+.chatComposer {
+  padding: 12px;
+  border-top: 1px solid rgba(15, 23, 42, 0.06);
+  display: grid;
+  gap: 10px;
+}
+.chatRow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: end;
+}
+.chatActions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.previewPanel {
+  min-height: 620px;
+}
+
+.previewFrame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: white;
+}
+
+.previewToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.previewUrl {
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(100, 116, 139, 0.95);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 980px) {
+  .createGrid {
+    grid-template-columns: 1fr;
+  }
+  .createPanel {
+    height: min(720px, 72vh);
+    min-height: 520px;
+  }
+  .previewPanel {
+    min-height: 520px;
+  }
+}

@@ -18,7 +18,12 @@ export default async function HomePage() {
         <header className="header">
           <div className="homeHeaderRow">
             <h1>AI创意小游戏</h1>
-            <HomeAccount />
+            <div className="homeHeaderActions">
+              <a className="homeCreateBtn" href="/create">
+                创作我的游戏
+              </a>
+              <HomeAccount />
+            </div>
           </div>
           <p className="desc">用 AI，释放孩子的奇思妙想，体验创造的快乐。</p>
         </header>

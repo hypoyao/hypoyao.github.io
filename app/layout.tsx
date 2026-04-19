@@ -16,6 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="stylesheet" href="/styles.css" />
         <link rel="stylesheet" href="/home.css" />
         <link rel="stylesheet" href="/creators.css" />
+        <link rel="stylesheet" href="/create.css" />
       </head>
       <body>
         {children}
@@ -25,4 +26,3 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     </html>
   );
 }
-

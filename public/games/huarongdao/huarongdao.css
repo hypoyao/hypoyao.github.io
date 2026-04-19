@@ -3,6 +3,14 @@
   --hrd-bg-2: rgba(255, 255, 255, 0);
 }
 
+/* 防止手机浏览器“三连点选中文字”导致按钮点击失灵 */
+.header h1,
+#ruleText,
+.hrdStatus {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 .hrdHud {
   margin: 10px 0 12px;
   border-radius: 16px;

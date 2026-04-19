@@ -226,6 +226,18 @@ function renderBoard() {
   if ($resignBtn) $resignBtn.disabled = thinking || !!G.winner
 }
 
+function maybeAiResignByWinProb() {
+  // 胜率是“黑（玩家）获胜概率”。当玩家胜率极高时，AI 直接认输。
+  if (!G || thinking || G.winner) return false
+  const p = calcWinProb(G)
+  // 99%：基本稳赢 -> AI 认输（避免一直“装死不认输”）
+  if (p >= 99) {
+    finishGame({ winner: "b", reason: `AI 认输（黑胜率 ${p}%）` })
+    return true
+  }
+  return false
+}
+
 // ===== Go rules =====
 function groupAndLiberties(board, startIdx) {
   const color = board[startIdx]
@@ -702,6 +714,9 @@ function placeAt(i) {
   const out = maybeFinishByPass()
   if (out) return finishGame(out)
 
+  // 玩家优势过大：AI 直接认输
+  if (maybeAiResignByWinProb()) return
+
   renderBoard()
   if (G.turn === "w") aiTurn()
 }
@@ -727,6 +742,8 @@ function onBoardPointerDown(e) {
 
 function aiTurn() {
   if (thinking || G.winner) return
+  // 如果已经几乎稳赢，就别再“装作思考”
+  if (maybeAiResignByWinProb()) return
   thinking = true
   setHint("AI 思考中…")
   renderBoard()
@@ -743,6 +760,8 @@ function aiTurn() {
     const out = maybeFinishByPass()
     thinking = false
     if (out) return finishGame(out)
+    // AI 下完后也检查一次（极少数情况下 AI 的走法会让自己更差）
+    if (maybeAiResignByWinProb()) return
     setHint("轮到您：点击交叉点落子")
     renderBoard()
   }, 380)
@@ -755,6 +774,7 @@ function onPass() {
   applyMove(G, "b", -1)
   const out = maybeFinishByPass()
   if (out) return finishGame(out)
+  if (maybeAiResignByWinProb()) return
   renderBoard()
   aiTurn()
 }
