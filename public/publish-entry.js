@@ -25,6 +25,31 @@
     var gid = getGameId()
     if (!gid) return
 
+    var game = null
+    try {
+      var r = await fetch("/api/games/" + encodeURIComponent(gid), { cache: "no-store" })
+      if (r.ok) {
+        var j = await r.json()
+        game = j && j.game
+      }
+    } catch {}
+
+    // 同步“标题/规则”到最新数据库（所有用户都可见，不依赖登录）
+    try {
+      if (game) {
+        if (game.title) {
+          document.title = game.title
+          var h1 = document.querySelector("h1")
+          if (h1) h1.textContent = game.title
+        }
+        if (game.ruleText) {
+          var el = document.getElementById("ruleText")
+          if (el) el.textContent = game.ruleText
+        }
+      }
+    } catch {}
+
+    // 以下仅用于展示“发布/更新”入口，需要登录
     var me
     try {
       me = await fetch("/api/me", { cache: "no-store" }).then(function (r) {
@@ -34,15 +59,6 @@
       return
     }
     if (!me || !me.loggedIn) return
-
-    var game = null
-    try {
-      var r = await fetch("/api/games/" + encodeURIComponent(gid), { cache: "no-store" })
-      if (r.ok) {
-        var j = await r.json()
-        game = j && j.game
-      }
-    } catch {}
 
     var isAdmin = !!me.isAdmin
     var isAuthor = !!me.creatorId && game && game.creatorId === me.creatorId

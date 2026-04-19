@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { creators, games } from "@/lib/db/schema";
 import { getSession } from "@/lib/auth/session";
 import { ensureCreatorsAuthFields } from "@/lib/db/ensureCreatorsAuthFields";
+import { ensureGamesCoverFields } from "@/lib/db/ensureGamesCoverFields";
 import { isSuperAdminId } from "@/lib/auth/admin";
 
 type CreateGameBody = {
@@ -12,7 +13,8 @@ type CreateGameBody = {
   shortDesc: string;
   ruleText: string;
   creatorId: string; // 如 'tianqing'
-  coverUrl?: string; // 默认 /assets/screenshots/<id>.svg
+  coverUrl?: string; // 相对路径（如 /assets/screenshots/<id>.png 或 /assets/covers/<id>）
+  coverDataUrl?: string; // data:image/...;base64,...（仅用于上传时）
   path?: string; // 默认 /games/<id>/
 };
 
@@ -27,9 +29,15 @@ function normalizeId(id: string) {
 function isAllowedCoverUrl(s: string) {
   if (!s) return true;
   if (s.startsWith("/")) return true;
-  // 允许 dataURL（前端上传/裁剪后作为封面存储）
-  if (/^data:image\/(png|jpeg|webp|svg\+xml);base64,/i.test(s)) return true;
   return false;
+}
+
+function parseImageDataUrl(s: string) {
+  const m = /^data:(image\/(?:png|jpeg|webp|svg\+xml));base64,([a-z0-9+/=]+)$/i.exec((s || "").trim());
+  if (!m) return null;
+  const mime = m[1].toLowerCase();
+  const b64 = m[2];
+  return { mime, b64 };
 }
 
 async function isAuthorized(req: Request) {
@@ -99,11 +107,26 @@ export async function POST(req: Request) {
   const effPath =
     existing?.path || (typeof body.path === "string" && body.path.trim() ? body.path.trim() : `/games/${id}/`);
 
+  // 封面：
+  // - coverUrl 存相对路径
+  // - 如带 coverDataUrl，则把 coverUrl 固定为 /assets/covers/<id> 并把数据存到 DB
   const rawCover = typeof body.coverUrl === "string" ? body.coverUrl.trim() : "";
   let coverUrl = rawCover || existing?.coverUrl || `/assets/screenshots/${id}.png`;
-  // 限制长度（避免异常大 payload）
-  coverUrl = coverUrl.slice(0, 260_000);
+  coverUrl = coverUrl.slice(0, 1024);
   if (!isAllowedCoverUrl(coverUrl)) return json(400, { ok: false, error: "INVALID_COVER_URL" });
+
+  let coverMime: string | null = null;
+  let coverData: string | null = null;
+  const coverDataUrl = typeof body.coverDataUrl === "string" ? body.coverDataUrl.trim() : "";
+  if (coverDataUrl) {
+    const parsed = parseImageDataUrl(coverDataUrl);
+    if (!parsed) return json(400, { ok: false, error: "INVALID_COVER_DATA" });
+    // 限制大小（base64 文本长度）
+    if (parsed.b64.length > 260_000) return json(400, { ok: false, error: "COVER_TOO_LARGE" });
+    coverMime = parsed.mime;
+    coverData = parsed.b64;
+    coverUrl = `/assets/covers/${id}`;
+  }
 
   // 校验 creator 是否存在
   const [creator] = await db.select({ id: creators.id }).from(creators).where(eq(creators.id, effCreatorId)).limit(1);
@@ -126,6 +149,12 @@ export async function POST(req: Request) {
   }
 
   // upsert：已存在则更新（便于重复生成/覆盖）
+  try {
+    await ensureGamesCoverFields();
+  } catch {
+    return json(500, { ok: false, error: "DB_MIGRATION_FAILED" });
+  }
+
   await db
     .insert(games)
     .values({
@@ -134,6 +163,8 @@ export async function POST(req: Request) {
       shortDesc,
       ruleText,
       coverUrl,
+      coverMime,
+      coverData,
       path: effPath,
       creatorId: effCreatorId,
     })
@@ -145,6 +176,7 @@ export async function POST(req: Request) {
         shortDesc,
         ruleText,
         coverUrl,
+        ...(coverData ? { coverMime, coverData } : {}),
         updatedAt: new Date(),
       },
     });

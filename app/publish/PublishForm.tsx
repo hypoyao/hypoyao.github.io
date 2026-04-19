@@ -35,13 +35,16 @@ export default function PublishForm({ defaultCreatorId, initial, meCreatorId, is
     const effId = immutable ? initial?.id || id : id;
     const effCreatorId = immutable ? initial?.creatorId || creatorId : creatorId;
     const effPath = immutable ? initial?.path || path : path;
+    const isData = typeof coverUrl === "string" && coverUrl.startsWith("data:image/");
+    const effCoverUrl = isData ? `/assets/covers/${effId}` : coverUrl;
     return {
       id: effId,
       title,
       shortDesc,
       ruleText,
       creatorId: effCreatorId,
-      coverUrl: coverUrl || undefined,
+      coverUrl: effCoverUrl || undefined,
+      coverDataUrl: isData ? coverUrl : undefined,
       path: effPath ? effPath : undefined,
     };
   }, [immutable, initial?.id, initial?.creatorId, initial?.path, id, title, shortDesc, ruleText, creatorId, coverUrl, path]);
@@ -190,7 +193,7 @@ export default function PublishForm({ defaultCreatorId, initial, meCreatorId, is
             className="restInput"
             value={coverUrl}
             onChange={(e) => setCoverUrl(e.target.value)}
-            placeholder="也可手动填写 URL（/xxx 或 data:image/...）"
+            placeholder="也可手动填写相对路径（例如 /assets/screenshots/xxx.png）"
           />
         </label>
 
