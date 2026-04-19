@@ -22,15 +22,15 @@
         <section class="bbHud" aria-label="hud">
           <div class="bbStatus" id="status">点击开始 / 点击任意方向键开始</div>
           <div class="bbMeta">
-            <span>关卡：<strong id="levelText">1</strong></span>
+            <span id="levelTap">关卡：<strong id="levelText">1</strong></span>
             <span class="bbSep">·</span>
             <span>得分：<strong id="scoreText">0</strong></span>
             <span class="bbSep">·</span>
-            <span>生命：<strong id="lifeText">3</strong></span>
+            <span id="lifeTap">生命：<strong id="lifeText">3</strong></span>
           </div>
         </section>
 
-        <div class="bbStage" id="stage" aria-label="game stage">
+        <div class="bbStage" id="stage" aria-label="game stage" tabindex="0">
           <canvas class="bbCanvas" id="canvas" width="540" height="720"></canvas>
         </div>
 
@@ -38,6 +38,9 @@
           <button class="bbBtn" id="leftBtn" type="button" aria-label="向左">◀</button>
           <button class="bbBtn bbBtnMid" id="restartBtn" type="button" aria-label="重新开始">重新开始</button>
           <button class="bbBtn" id="rightBtn" type="button" aria-label="向右">▶</button>
+        </div>
+        <div class="bbControls2" aria-label="multi-ball controls">
+          <button class="bbBtn bbBtnMid" id="fireBtn" type="button" aria-label="继续发射">继续发射</button>
         </div>
 
         <div class="gameFooter">

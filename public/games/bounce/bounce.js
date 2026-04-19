@@ -11,10 +11,14 @@ const $status = document.getElementById("status")
 const $levelText = document.getElementById("levelText")
 const $scoreText = document.getElementById("scoreText")
 const $lifeText = document.getElementById("lifeText")
+const $levelTap = document.getElementById("levelTap")
+const $lifeTap = document.getElementById("lifeTap")
 
 const $leftBtn = document.getElementById("leftBtn")
 const $rightBtn = document.getElementById("rightBtn")
 const $restartBtn = document.getElementById("restartBtn")
+const $fireBtn = document.getElementById("fireBtn")
+const $controls2 = $fireBtn ? $fireBtn.parentElement : null
 
 const W = 540
 const H = 720
@@ -45,6 +49,61 @@ let balls = []
 let bricks = []
 let stars = []
 let popups = [] // {x,y,t0,text}
+let bursts = [] // {x,y,t0,dirY,parts:[{x,y,vx,vy,r,life,color}]}
+let tapLevelCount = 0
+let tapLifeCount = 0
+let tapTimer = 0
+let $cheatModal = null
+let cheatType = "" // "level" | "life"
+
+// audio
+let audioCtx = null
+function playBoom() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+    const ctx = audioCtx
+    if (ctx.state === "suspended") ctx.resume().catch(() => {})
+
+    const t0 = ctx.currentTime
+    const out = ctx.createGain()
+    out.gain.setValueAtTime(0.0001, t0)
+    out.gain.exponentialRampToValueAtTime(0.55, t0 + 0.01)
+    out.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.18)
+    out.connect(ctx.destination)
+
+    // low thump
+    const osc = ctx.createOscillator()
+    osc.type = "triangle"
+    osc.frequency.setValueAtTime(120, t0)
+    osc.frequency.exponentialRampToValueAtTime(55, t0 + 0.16)
+    osc.connect(out)
+    osc.start(t0)
+    osc.stop(t0 + 0.2)
+
+    // short noise burst
+    const bufLen = Math.floor(ctx.sampleRate * 0.12)
+    const buf = ctx.createBuffer(1, bufLen, ctx.sampleRate)
+    const data = buf.getChannelData(0)
+    for (let i = 0; i < bufLen; i++) {
+      const k = 1 - i / bufLen
+      data[i] = (Math.random() * 2 - 1) * k
+    }
+    const noise = ctx.createBufferSource()
+    noise.buffer = buf
+    const ng = ctx.createGain()
+    ng.gain.setValueAtTime(0.0001, t0)
+    ng.gain.exponentialRampToValueAtTime(0.35, t0 + 0.01)
+    ng.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12)
+    const hp = ctx.createBiquadFilter()
+    hp.type = "highpass"
+    hp.frequency.setValueAtTime(320, t0)
+    noise.connect(hp)
+    hp.connect(ng)
+    ng.connect(out)
+    noise.start(t0)
+    noise.stop(t0 + 0.13)
+  } catch {}
+}
 
 function levelCfg(lv) {
   // 题目要求的 5 个难度档位
@@ -118,12 +177,41 @@ function resetRound() {
       vy: 0,
       speed: cfg.speed,
       stuck: true,
+      // 穿透：每次“发射/接到球”后可最多穿透 2 块板
+      pierceLeft: 2,
+      slot: k,
     })
   }
   dir = 0
   started = false
-  setText($status, `点击开始（第 ${level} 难度：${cfg.balls} 球）`)
+  setText($status, `点击开始（第 ${level} 难度：${cfg.balls} 球，轮流发射）`)
   updateHud()
+  updateFireUi()
+}
+
+function resetRoundKeepBalls() {
+  // 不补充球：用于“没接到球但还有剩余球”的情况
+  const cfg = levelCfg(level)
+  paddle = {
+    w: 120,
+    h: 14,
+    x: (W - 120) / 2,
+    y: H - 56,
+    speed: 420,
+  }
+  // 全部重新贴回挡板上（轮流发射）
+  balls.forEach((b, idx) => {
+    b.vx = 0
+    b.vy = 0
+    b.speed = cfg.speed
+    b.stuck = true
+    b.pierceLeft = 2
+    b.slot = idx
+  })
+  dir = 0
+  started = false
+  updateHud()
+  updateFireUi()
 }
 
 function resetGame() {
@@ -132,6 +220,7 @@ function resetGame() {
   life = 3
   initStars()
   popups = []
+  bursts = []
   bricks = makeLevel(level)
   resetRound()
   render()
@@ -143,28 +232,59 @@ function updateHud() {
   setText($lifeText, String(life))
 }
 
+function updateFireUi() {
+  const cfg = levelCfg(level)
+  const multi = cfg.balls > 1
+  const hasStuck = balls.some((b) => b.stuck)
+  if ($controls2) $controls2.classList.toggle("isOn", multi)
+  if ($fireBtn) $fireBtn.disabled = !multi || !hasStuck
+}
+
 function addPopup(x, y, text) {
   popups.push({ x, y, t0: nowMs || performance.now(), text: text || "+1" })
   // 控制数量避免堆积
   if (popups.length > 16) popups = popups.slice(popups.length - 16)
 }
 
-function startBallIfNeeded() {
-  if (!balls.length || !paddle) return
-  if (!balls.some((b) => b.stuck)) return
-  // 初速度：向上，多个球用不同角度散开
-  const stuck = balls.filter((b) => b.stuck)
-  const spread = stuck.length <= 1 ? 0 : 0.55
-  stuck.forEach((b, idx) => {
-    const t = stuck.length <= 1 ? 0 : idx / (stuck.length - 1) // 0..1
-    const jitter = Math.random() * 0.14 - 0.07
-    const angle = (-Math.PI / 2) + (t - 0.5) * spread + jitter
-    b.vx = Math.cos(angle) * b.speed
-    b.vy = Math.sin(angle) * b.speed
-    b.stuck = false
-  })
+function addBurst(x, y, dirY) {
+  const t0 = nowMs || performance.now()
+  const parts = []
+  const n = 14
+  for (let i = 0; i < n; i++) {
+    const a = (Math.PI * 2 * i) / n + Math.random() * 0.35
+    const sp = 220 + Math.random() * 220
+    parts.push({
+      x,
+      y,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp + (dirY > 0 ? 40 : -40),
+      r: 2 + Math.random() * 3,
+      life: 220 + Math.random() * 160,
+      color: Math.random() < 0.5 ? "rgba(255,80,60,1)" : "rgba(255,210,120,1)",
+    })
+  }
+  bursts.push({ x, y, t0, dirY: dirY || 1, parts })
+  if (bursts.length > 10) bursts = bursts.slice(bursts.length - 10)
+}
+
+function fireNextBall() {
+  if (!balls.length || !paddle) return false
+  const b = balls.find((x) => x.stuck)
+  if (!b) return false
+  const angle = (-Math.PI / 2) + (Math.random() * 0.55 - 0.275)
+  b.vx = Math.cos(angle) * b.speed
+  b.vy = Math.sin(angle) * b.speed
+  b.stuck = false
+  b.pierceLeft = 2
   started = true
   setText($status, "进行中：左右移动挡板")
+  updateFireUi()
+  return true
+}
+
+function startBallIfNeeded() {
+  // 开始/继续发射：发射下一颗“贴在挡板上”的球（允许与已在飞行的球并存）
+  return fireNextBall()
 }
 
 function loseLife() {
@@ -233,7 +353,9 @@ function step(dt) {
   for (const ball of balls) {
     // follow paddle before start
     if (ball.stuck) {
-      ball.x = clamp(paddle.x + paddle.w / 2, 12 + ball.r, W - 12 - ball.r)
+      const cfg = levelCfg(level)
+      const off = (ball.slot - (cfg.balls - 1) / 2) * 18
+      ball.x = clamp(paddle.x + paddle.w / 2 + off, 12 + ball.r, W - 12 - ball.r)
       ball.y = paddle.y - ball.r - 2
       continue
     }
@@ -266,6 +388,13 @@ function step(dt) {
       ball.vx = Math.cos(angle) * ball.speed
       ball.vy = Math.sin(angle) * ball.speed
       ball.y = paddle.y - ball.r - 1
+
+      // “砰”一下：声音 + 爆炸感粒子（不会真的爆炸）
+      playBoom()
+      addBurst(ball.x, ball.y + 10, 1)
+
+      // 每次接到球后，重置穿透次数
+      ball.pierceLeft = 2
     }
 
     // bricks
@@ -277,28 +406,71 @@ function step(dt) {
       updateHud()
       addPopup(W / 2, H * 0.34, "+1")
 
-      // reflect: choose axis by penetration
-      const cx = clamp(ball.x, b.x, b.x + b.w)
-      const cy = clamp(ball.y, b.y, b.y + b.h)
-      const dx = ball.x - cx
-      const dy = ball.y - cy
-      if (Math.abs(dx) > Math.abs(dy)) ball.vx *= -1
-      else ball.vy *= -1
-      // 轻微随机，避免轨迹太“机械”
-      jitterBounce(ball, 0.12)
-      break
+      // 穿透：最多连穿 2 块板（不改变方向）
+      if (ball.pierceLeft > 0) {
+        ball.pierceLeft -= 1
+        // 连穿时也给一点微扰动，避免轨迹过于重复
+        jitterBounce(ball, 0.06)
+        // 继续扫描，可能同一帧穿到下一块（但总次数由 pierceLeft 限制）
+        continue
+      } else {
+        // 非穿透：正常反弹
+        const cx = clamp(ball.x, b.x, b.x + b.w)
+        const cy = clamp(ball.y, b.y, b.y + b.h)
+        const dx = ball.x - cx
+        const dy = ball.y - cy
+        if (Math.abs(dx) > Math.abs(dy)) ball.vx *= -1
+        else ball.vy *= -1
+        // 轻微随机，避免轨迹太“机械”
+        jitterBounce(ball, 0.12)
+        break
+      }
     }
   }
 
-  // remove fallen balls
-  balls = balls.filter((b) => !(b.y - b.r > H + 10))
-  if (balls.length === 0) {
-    loseLife()
-    return
+  // 掉落：多球模式下“掉一个不算失败”，全部掉光才算失败（扣生命）
+  const fallen = balls.filter((b) => !b.stuck && b.y - b.r > H + 10)
+  if (fallen.length) {
+    balls = balls.filter((b) => !( !b.stuck && b.y - b.r > H + 10))
+    // 只要没接到球：板复原（按需求）
+    bricks = makeLevel(level)
+    popups = []
+    bursts = []
+    updateFireUi()
+
+    if (balls.length === 0) {
+      // 所有球都掉下去才算失败
+      loseLife()
+      return
+    }
+
+    // 如果当前没有在飞行的球（剩下的都贴在挡板上），提示继续发射
+    if (balls.every((b) => b.stuck)) {
+      started = false
+      setText($status, `没接到球：板已复原。还剩 ${balls.length} 球，可继续发射`)
+    } else {
+      setText($status, `没接到球：板已复原。剩余球继续进行中`)
+    }
   }
 
   // win check
   if (bricks.every((b) => b.hp <= 0)) nextLevel()
+
+  // update bursts
+  if (bursts.length) {
+    const ms = dt * 1000
+    for (const bu of bursts) {
+      for (const p of bu.parts) {
+        p.x += p.vx * dt
+        p.y += p.vy * dt
+        p.vx *= 0.985
+        p.vy = p.vy * 0.985 + 260 * dt
+        p.life -= ms
+      }
+      bu.parts = bu.parts.filter((p) => p.life > 0)
+    }
+    bursts = bursts.filter((b) => b.parts.length > 0 && (nowMs - b.t0) < 650)
+  }
 }
 
 function render() {
@@ -375,6 +547,39 @@ function render() {
     ctx.stroke()
   }
 
+  // burst effects (explosion feel)
+  if (bursts.length) {
+    for (const b of bursts) {
+      const age = nowMs - b.t0
+      const t = clamp(age / 260, 0, 1)
+      // expanding ring
+      ctx.save()
+      ctx.globalAlpha = 0.38 * (1 - t)
+      ctx.strokeStyle = "rgba(239,68,68,1)"
+      ctx.lineWidth = 3
+      ctx.shadowBlur = 18
+      ctx.shadowColor = "rgba(239,68,68,0.35)"
+      ctx.beginPath()
+      ctx.arc(b.x, b.y, 10 + 34 * t, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.restore()
+
+      // particles
+      for (const p of b.parts) {
+        const a = clamp(p.life / 380, 0, 1)
+        ctx.save()
+        ctx.globalAlpha = a
+        ctx.fillStyle = p.color
+        ctx.shadowBlur = 10
+        ctx.shadowColor = "rgba(255,120,60,0.28)"
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.restore()
+      }
+    }
+  }
+
   // big "+1" popup
   if (popups.length) {
     const dur = 520
@@ -438,16 +643,28 @@ function ensureCanvasSize() {
 }
 
 function setDir(v) {
+  const prev = dir
   dir = v
-  if (!started) startBallIfNeeded()
+  // 多球模式：发射第一个球后，“再移动一下挡板”就发射下一球（每次从 0→非0 触发一次）
+  if (v !== 0 && prev === 0 && levelCfg(level).balls > 1) {
+    fireNextBall()
+  } else {
+    // 单球模式：移动即可开始
+    if (levelCfg(level).balls === 1) startBallIfNeeded()
+  }
 }
 
 function bindHold(btn, v) {
   if (!btn) return
+  let flashTimer = 0
   const down = (e) => {
     try {
       e.preventDefault()
     } catch {}
+    // 点哪个键哪个键闪一下
+    btn.classList.add("isFlash")
+    if (flashTimer) window.clearTimeout(flashTimer)
+    flashTimer = window.setTimeout(() => btn.classList.remove("isFlash"), 140)
     setDir(v)
   }
   const up = () => {
@@ -473,27 +690,132 @@ function stopLoop() {
 }
 
 function onKey(e, on) {
-  if (e.key === "ArrowLeft") {
+  const k = e.key
+  const code = e.keyCode || e.which
+  const isLeft = k === "ArrowLeft" || k === "Left" || k === "a" || k === "A" || code === 37
+  const isRight = k === "ArrowRight" || k === "Right" || k === "d" || k === "D" || code === 39
+
+  // 避免方向键滚动页面，导致用户感觉“按了没反应”
+  if (isLeft || isRight) {
+    try {
+      e.preventDefault()
+    } catch {}
+  }
+
+  if (isLeft) {
     if (on) setDir(-1)
     else if (dir === -1) dir = 0
   }
-  if (e.key === "ArrowRight") {
+  if (isRight) {
     if (on) setDir(1)
     else if (dir === 1) dir = 0
   }
-  if (e.key === " " || e.key === "Enter") {
-    if (on && !started) startBallIfNeeded()
+  if (k === " " || k === "Enter") {
+    if (on) startBallIfNeeded()
   }
 }
 
 // click stage to start
 function onStagePointerDown() {
-  if (!started) startBallIfNeeded()
+  try {
+    $stage && $stage.focus && $stage.focus()
+  } catch {}
+  startBallIfNeeded()
+}
+
+function tap3(handler) {
+  // 简单 3 连点识别（共享计时器）
+  if (tapTimer) window.clearTimeout(tapTimer)
+  tapTimer = window.setTimeout(() => {
+    tapLevelCount = 0
+    tapLifeCount = 0
+  }, 650)
+  handler()
+}
+
+function ensureCheatModal() {
+  if ($cheatModal) return
+  $cheatModal = document.createElement("div")
+  $cheatModal.className = "modal"
+  $cheatModal.id = "bbCheatModal"
+  $cheatModal.setAttribute("aria-hidden", "true")
+  $cheatModal.innerHTML = `
+    <div class="modalBackdrop" data-close="1"></div>
+    <div class="modalPanel" role="dialog" aria-modal="true" aria-label="cheat dialog">
+      <div class="modalTitle" id="bbCheatTitle">设置</div>
+      <div class="modalBody" id="bbCheatBody" style="font-size:18px">--</div>
+      <div class="bbCheatGrid" id="bbCheatGrid"></div>
+      <div class="bbCheatTip" id="bbCheatTip"></div>
+      <div class="modalActions">
+        <button class="btn modalBtn btnGray" id="bbCheatCloseBtn" type="button">关闭</button>
+      </div>
+    </div>
+  `
+  document.body.appendChild($cheatModal)
+  $cheatModal.addEventListener("click", (e) => {
+    if (e.target?.dataset?.close) closeCheatModal()
+  })
+  const closeBtn = $cheatModal.querySelector("#bbCheatCloseBtn")
+  if (closeBtn) closeBtn.addEventListener("click", closeCheatModal)
+}
+
+function openCheatModal(type) {
+  ensureCheatModal()
+  cheatType = type
+  const $title = $cheatModal.querySelector("#bbCheatTitle")
+  const $body = $cheatModal.querySelector("#bbCheatBody")
+  const $grid = $cheatModal.querySelector("#bbCheatGrid")
+  const $tip = $cheatModal.querySelector("#bbCheatTip")
+  if (!$grid) return
+  $grid.innerHTML = ""
+  for (let i = 1; i <= 5; i++) {
+    const btn = document.createElement("button")
+    btn.type = "button"
+    btn.className = "btn btnSecondary"
+    btn.textContent = String(i)
+    btn.dataset.val = String(i)
+    if ((type === "level" && i === level) || (type === "life" && i === life)) {
+      btn.className = "btn"
+    }
+    btn.addEventListener("click", () => {
+      const v = Number(btn.dataset.val || 0)
+      if (!Number.isFinite(v) || v < 1 || v > 5) return
+      if (type === "level") {
+        level = v
+        balls = []
+        bricks = makeLevel(level)
+        resetRound()
+        render()
+        setText($status, `已切换到第 ${level} 难度（点击开始发射）`)
+      } else {
+        life = v
+        updateHud()
+        render()
+        setText($status, `已设置生命为 ${life}`)
+      }
+      closeCheatModal()
+    })
+    $grid.appendChild(btn)
+  }
+  if ($title) $title.textContent = type === "level" ? "手动升级关卡" : "手动设置生命"
+  if ($body) $body.textContent = type === "level" ? `当前难度：${level}` : `当前生命：${life}`
+  if ($tip) $tip.textContent = type === "level" ? "选择 1-5 难度。切换后会重置本关。" : "选择 1-5 生命值（最高 5）。"
+
+  $cheatModal.classList.add("isOpen")
+  $cheatModal.setAttribute("aria-hidden", "false")
+}
+
+function closeCheatModal() {
+  if (!$cheatModal) return
+  $cheatModal.classList.remove("isOpen")
+  $cheatModal.setAttribute("aria-hidden", "true")
+  cheatType = ""
 }
 
 // events
 bindHold($leftBtn, -1)
 bindHold($rightBtn, 1)
+if ($fireBtn) $fireBtn.addEventListener("click", () => startBallIfNeeded())
 if ($restartBtn) {
   $restartBtn.addEventListener("click", () => {
     resetGame()
@@ -502,10 +824,54 @@ if ($restartBtn) {
 }
 if ($stage) $stage.addEventListener("pointerdown", onStagePointerDown)
 
-window.addEventListener("keydown", (e) => onKey(e, true))
-window.addEventListener("keyup", (e) => onKey(e, false))
+if ($levelTap) {
+  const hit = (e) => {
+    try {
+      e.preventDefault()
+    } catch {}
+    tap3(() => {
+      tapLevelCount += 1
+      if (tapLevelCount >= 3) {
+        tapLevelCount = 0
+        tapLifeCount = 0
+        openCheatModal("level")
+      }
+    })
+  }
+  // 用 pointerdown 更可靠（click 在某些设备/双击缩放情况下不稳定）
+  $levelTap.addEventListener("pointerdown", hit, { passive: false })
+  $levelTap.addEventListener("click", hit)
+}
+if ($lifeTap) {
+  const hit = (e) => {
+    try {
+      e.preventDefault()
+    } catch {}
+    tap3(() => {
+      tapLifeCount += 1
+      if (tapLifeCount >= 3) {
+        tapLifeCount = 0
+        tapLevelCount = 0
+        openCheatModal("life")
+      }
+    })
+  }
+  $lifeTap.addEventListener("pointerdown", hit, { passive: false })
+  $lifeTap.addEventListener("click", hit)
+}
+
+// 监听键盘：同时监听 document+window，并用 capture 提高命中率
+document.addEventListener("keydown", (e) => onKey(e, true), { passive: false, capture: true })
+document.addEventListener("keyup", (e) => onKey(e, false), { passive: false, capture: true })
+window.addEventListener("keydown", (e) => onKey(e, true), { passive: false, capture: true })
+window.addEventListener("keyup", (e) => onKey(e, false), { passive: false, capture: true })
 window.addEventListener("resize", ensureCanvasSize)
 
 ensureCanvasSize()
 resetGame()
 startLoop()
+
+// 尝试主动获取焦点，确保方向键可用
+try {
+  if ($stage && $stage.focus) $stage.focus()
+} catch {}

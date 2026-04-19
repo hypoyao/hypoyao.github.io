@@ -32,6 +32,16 @@
   gap: 8px;
   user-select: none;
 }
+.bbMeta #levelTap,
+.bbMeta #lifeTap {
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+.bbMeta #levelTap:active,
+.bbMeta #lifeTap:active {
+  background: rgba(255, 255, 255, 0.16);
+}
 .bbSep {
   opacity: 0.7;
 }
@@ -61,6 +71,18 @@
   gap: 10px;
 }
 
+.bbControls2 {
+  margin-top: 10px;
+  display: none;
+  justify-content: center;
+}
+.bbControls2.isOn {
+  display: flex;
+}
+.bbControls2 .bbBtn {
+  width: min(360px, 100%);
+}
+
 .bbBtn {
   appearance: none;
   border: 1px solid rgba(15, 23, 42, 0.12);
@@ -86,6 +108,34 @@
 .bbBtn:active {
   transform: scale(0.99);
 }
+.bbBtn.isFlash {
+  filter: brightness(1.08);
+  box-shadow: 0 14px 28px rgba(59, 130, 246, 0.18), 0 10px 22px rgba(2, 6, 23, 0.06);
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+.bbStage:focus {
+  outline: none;
+}
+
+/* cheat modal */
+.bbCheatGrid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+.bbCheatGrid .btn {
+  width: 100%;
+  padding: 10px 0;
+  font-size: 14px;
+}
+.bbCheatTip {
+  margin-top: 6px;
+  font-size: 13px;
+  color: rgba(100, 116, 139, 0.95);
+  line-height: 1.5;
+}
 
 @media (max-width: 420px) {
   .bbControls {
@@ -94,5 +144,10 @@
   .bbBtn {
     width: 100%;
   }
+  .bbControls2 {
+    display: none;
+  }
+  .bbControls2.isOn {
+    display: grid;
+  }
 }
-
