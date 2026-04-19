@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { games } from "@/lib/db/schema";
+import { ensureGamesCoverFields } from "@/lib/db/ensureGamesCoverFields";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +10,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const { id } = await params;
   const gid = (id || "").trim().toLowerCase();
   if (!gid) return NextResponse.json({ ok: false, error: "MISSING_ID" }, { status: 400 });
+
+  try {
+    await ensureGamesCoverFields();
+  } catch {
+    // ignore
+  }
 
   const [row] = await db.select().from(games).where(eq(games.id, gid)).limit(1);
   if (!row) return NextResponse.json({ ok: false, error: "NOT_FOUND" }, { status: 404 });
@@ -29,4 +36,3 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     { headers: { "cache-control": "no-store" } },
   );
 }
-

@@ -105,6 +105,29 @@ function playBoom() {
   } catch {}
 }
 
+function playDing() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+    const ctx = audioCtx
+    if (ctx.state === "suspended") ctx.resume().catch(() => {})
+
+    const t0 = ctx.currentTime
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0.0001, t0)
+    g.gain.exponentialRampToValueAtTime(0.22, t0 + 0.005)
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12)
+    g.connect(ctx.destination)
+
+    const osc = ctx.createOscillator()
+    osc.type = "sine"
+    osc.frequency.setValueAtTime(1560, t0)
+    osc.frequency.exponentialRampToValueAtTime(980, t0 + 0.11)
+    osc.connect(g)
+    osc.start(t0)
+    osc.stop(t0 + 0.13)
+  } catch {}
+}
+
 function levelCfg(lv) {
   // 题目要求的 5 个难度档位
   // 1：1球 慢
@@ -180,6 +203,8 @@ function resetRound() {
       // 穿透：每次“发射/接到球”后可最多穿透 2 块板
       pierceLeft: 2,
       slot: k,
+      // 记录飞行距离：飞得越短“爆破更强”，飞得越长“爆破更弱”
+      flightDist: 0,
     })
   }
   dir = 0
@@ -276,6 +301,7 @@ function fireNextBall() {
   b.vy = Math.sin(angle) * b.speed
   b.stuck = false
   b.pierceLeft = 2
+  b.flightDist = 0
   started = true
   setText($status, "进行中：左右移动挡板")
   updateFireUi()
@@ -361,8 +387,12 @@ function step(dt) {
     }
 
     // move
+    const ox = ball.x
+    const oy = ball.y
     ball.x += ball.vx * dt
     ball.y += ball.vy * dt
+    // 累计飞行距离
+    ball.flightDist += Math.hypot(ball.x - ox, ball.y - oy)
 
     // walls
     if (ball.x - ball.r < 8) {
@@ -395,16 +425,46 @@ function step(dt) {
 
       // 每次接到球后，重置穿透次数
       ball.pierceLeft = 2
+      ball.flightDist = 0
     }
 
     // bricks
     for (const b of bricks) {
       if (b.hp <= 0) continue
       if (!rectHitCircle(b.x, b.y, b.w, b.h, ball.x, ball.y, ball.r)) continue
+      // 计算“爆破数量”：飞得越短越多；飞得越长越少
+      // 说明：distance 基于从上次接到球/发射到现在的累计飞行距离（像素）
+      const d = ball.flightDist || 0
+      let smash = 1
+      if (d < 260) smash = 3
+      else if (d < 520) smash = 2
+      else smash = 1
+
+      // 命中这块
       b.hp -= 1
       score += 1
       updateHud()
       addPopup(W / 2, H * 0.34, "+1")
+      playDing()
+
+      // 额外爆破附近方块（同一帧最多 smash-1 块）
+      if (smash > 1) {
+        const cx = b.x + b.w / 2
+        const cy = b.y + b.h / 2
+        const cand = bricks
+          .filter((x) => x !== b && x.hp > 0)
+          .map((x) => ({ x, d: Math.hypot(x.x + x.w / 2 - cx, x.y + x.h / 2 - cy) }))
+          .sort((a, b) => a.d - b.d)
+          .slice(0, smash - 1)
+        for (const it of cand) {
+          it.x.hp -= 1
+          score += 1
+        }
+        if (cand.length) {
+          updateHud()
+          addPopup(W / 2, H * 0.34, `+${cand.length}`)
+        }
+      }
 
       // 穿透：最多连穿 2 块板（不改变方向）
       if (ball.pierceLeft > 0) {

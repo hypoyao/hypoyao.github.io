@@ -6,6 +6,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { eq } from "drizzle-orm";
 import { ensureCreatorsAuthFields } from "@/lib/db/ensureCreatorsAuthFields";
+import { ensureGamesCoverFields } from "@/lib/db/ensureGamesCoverFields";
 import { isSuperAdminId } from "@/lib/auth/admin";
 
 export const dynamic = "force-dynamic";
@@ -98,6 +99,7 @@ export default async function PublishPage({
   let isAdmin = false;
   try {
     await ensureCreatorsAuthFields();
+    await ensureGamesCoverFields();
     if (sess?.phone) {
       const [row] = await db.select({ id: creators.id }).from(creators).where(eq(creators.phone, sess.phone)).limit(1);
       meCreatorId = row?.id || null;
@@ -122,6 +124,9 @@ export default async function PublishPage({
   let initial: any = undefined;
   let existsInDb = false;
   if (pickedId) {
+    try {
+      await ensureGamesCoverFields();
+    } catch {}
     const [row] = await db.select().from(gamesTable).where(eq(gamesTable.id, pickedId)).limit(1);
     if (row) {
       existsInDb = true;
