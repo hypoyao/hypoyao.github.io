@@ -51,12 +51,12 @@ function parseSseChunk(state: { buf: string }, chunk: string) {
   return events;
 }
 
-export default function CreateStudio() {
+export default function CreateStudio({ initialPrompt = "" }: { initialPrompt?: string }) {
   const [gameId, setGameId] = useState<string>("");
   const [previewUrl, setPreviewUrl] = useState<string>("/games/creator-playground/index.html");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(initialPrompt || "");
   // 默认用 reasoner（更会思考）
   const [model, setModel] = useState<"deepseek-chat" | "deepseek-reasoner">("deepseek-reasoner");
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -72,6 +72,14 @@ export default function CreateStudio() {
   useEffect(() => {
     inputRef.current = input || "";
   }, [input]);
+
+  // 首屏从首页带过来的 prompt：只做预填充，不自动发送，避免误触发生成
+  useEffect(() => {
+    if (initialPrompt && !inputRef.current) {
+      setInput(initialPrompt);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 注意：messages 里不放 system；发送给后端时会自动拼接 systemPrompt
   const [messages, setMessages] = useState<ChatMsg[]>(() => [

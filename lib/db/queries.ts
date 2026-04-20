@@ -9,12 +9,14 @@ export type GameWithCreator = {
   title: string;
   shortDesc: string;
   ruleText: string;
+  prompt?: string | null;
   coverUrl: string;
   path: string;
   creator: {
     id: string;
     name: string;
     avatarUrl: string;
+    profilePath: string;
   };
 };
 
@@ -39,6 +41,25 @@ async function hasLocalPngCover(gameId: string) {
   }
 }
 
+async function tryGetLocalPrompt(gameId: string) {
+  const base = path.join(process.cwd(), "public", "games", gameId);
+  const tryFiles = ["prompt.md", "prompt.txt", "prompt.mdx"];
+  for (const f of tryFiles) {
+    try {
+      const p = path.join(base, f);
+      const raw = await fs.readFile(p, "utf-8");
+      const s = raw.replace(/\r/g, "").trim();
+      if (!s) continue;
+      // 首页卡片需要“可展开全文”，这里做轻度长度限制避免极端文件过大
+      const normalized = s.replace(/\n{3,}/g, "\n\n").trim();
+      return normalized.slice(0, 2400);
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
+
 export async function listGames(): Promise<GameWithCreator[]> {
   const rows = await db
     .select({
@@ -51,6 +72,7 @@ export async function listGames(): Promise<GameWithCreator[]> {
       creatorId: creators.id,
       creatorName: creators.name,
       creatorAvatarUrl: creators.avatarUrl,
+      creatorProfilePath: creators.profilePath,
     })
     .from(games)
     .innerJoin(creators, eq(games.creatorId, creators.id));
@@ -62,18 +84,21 @@ export async function listGames(): Promise<GameWithCreator[]> {
 
       let useCover = r.coverUrl;
       if (await hasLocalPngCover(r.gameId)) useCover = `/assets/screenshots/${r.gameId}.png`;
+      const prompt = await tryGetLocalPrompt(r.gameId);
 
       return {
         id: r.gameId,
         title: useTitle,
         shortDesc: r.shortDesc,
         ruleText: r.ruleText,
+        prompt,
         coverUrl: useCover,
         path: r.path,
         creator: {
           id: r.creatorId,
           name: r.creatorName,
           avatarUrl: r.creatorAvatarUrl,
+          profilePath: r.creatorProfilePath,
         },
       } satisfies GameWithCreator;
     }),
@@ -104,6 +129,7 @@ export async function listGamesByCreator(creatorId: string): Promise<GameWithCre
       creatorId: creators.id,
       creatorName: creators.name,
       creatorAvatarUrl: creators.avatarUrl,
+      creatorProfilePath: creators.profilePath,
     })
     .from(games)
     .innerJoin(creators, eq(games.creatorId, creators.id))
@@ -116,18 +142,21 @@ export async function listGamesByCreator(creatorId: string): Promise<GameWithCre
 
       let useCover = r.coverUrl;
       if (await hasLocalPngCover(r.gameId)) useCover = `/assets/screenshots/${r.gameId}.png`;
+      const prompt = await tryGetLocalPrompt(r.gameId);
 
       return {
         id: r.gameId,
         title: useTitle,
         shortDesc: r.shortDesc,
         ruleText: r.ruleText,
+        prompt,
         coverUrl: useCover,
         path: r.path,
         creator: {
           id: r.creatorId,
           name: r.creatorName,
           avatarUrl: r.creatorAvatarUrl,
+          profilePath: r.creatorProfilePath,
         },
       } satisfies GameWithCreator;
     }),

@@ -3,7 +3,9 @@ import TopActions from "./TopActions";
 
 export const dynamic = "force-dynamic";
 
-export default function CreatePage() {
+export default async function CreatePage({ searchParams }: { searchParams?: Promise<{ prompt?: string }> }) {
+  const sp = searchParams ? await searchParams : ({} as any);
+  const initialPrompt = typeof sp?.prompt === "string" ? sp.prompt.slice(0, 800) : "";
   return (
     <main className="wrap">
       <section className="card createCard createBento">
@@ -16,7 +18,7 @@ export default function CreatePage() {
           </div>
         </header>
 
-        <CreateStudio />
+        <CreateStudio initialPrompt={initialPrompt} />
       </section>
     </main>
   );

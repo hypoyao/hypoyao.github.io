@@ -13,8 +13,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         {/* favicon：浏览器会强缓存，这里加版本号方便立即生效 */}
-        <link rel="icon" href="/favicon.svg?v=6" type="image/svg+xml" sizes="any" />
-        <link rel="shortcut icon" href="/favicon.svg?v=6" type="image/svg+xml" />
+        <link rel="icon" href="/favicon.svg?v=7" type="image/svg+xml" sizes="any" />
+        <link rel="icon" href="/favicon-32.png?v=7" type="image/png" sizes="32x32" />
+        <link rel="icon" href="/favicon-16.png?v=7" type="image/png" sizes="16x16" />
+        <link rel="shortcut icon" href="/favicon.ico?v=7" />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=7" />
         {/* 复用原有静态样式（位于 public/） */}
         <link rel="stylesheet" href="/styles.css" />
         <link rel="stylesheet" href="/home.css" />
