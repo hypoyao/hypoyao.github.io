@@ -36,18 +36,28 @@
   let hintIdx = -1
   let hintTimer = 0
 
+  // 以“统一格子大小”为基准：初级/中级/高级都保持同样的格子大小
+  // 重点：优先保证“左右放得下”（不出现横向滚动）；如果高度不够就往下滚动（往下延伸）
+  let baseCell = 0
+
   function fitBoard() {
     if (!boardEl) return
-    // 让棋盘格子大小自动适配屏幕（尽量填满可用区域）
+    // 统一用“最大列数”来算格子大小，保证中级/高级也不会因为列数多而横向放不下。
     const header = document.querySelector(".msCard .header")
     const bottom = document.querySelector(".msBottom")
     const framePad = 24 // msFrame padding + 视觉留白
     const availW = Math.max(200, window.innerWidth - 28) // msCard padding
     const usedH = (header?.offsetHeight || 0) + (bottom?.offsetHeight || 0) + 36
     const availH = Math.max(220, window.innerHeight - usedH - framePad)
-    const cell = Math.floor(Math.min(availW / cols, availH / rows))
-    const clamped = Math.max(14, Math.min(40, cell))
-    boardEl.style.setProperty("--cell", `${clamped}px`)
+
+    const maxCols = Math.max(DIFFS.begin.cols, DIFFS.inter.cols, DIFFS.expert.cols) // 现在最大为 16
+    // 横向必须放得下：按 maxCols 计算
+    const byWidth = Math.floor(availW / maxCols)
+    // 初级也别太小：按 9 行高度给一个“上限参考”，但不强制（高度不够就滚动）
+    const byHeightHint = Math.floor(availH / 9)
+    const cell = Math.max(14, Math.min(44, Math.min(byWidth, byHeightHint)))
+    baseCell = cell
+    boardEl.style.setProperty("--cell", `${baseCell}px`)
   }
 
   // ===== util =====

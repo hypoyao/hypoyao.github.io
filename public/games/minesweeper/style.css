@@ -29,6 +29,7 @@ body {
   flex-direction: column;
   box-shadow: none;
   border: none;
+  overflow: hidden;
 }
 
 .msCard {
@@ -87,6 +88,9 @@ body {
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
+  /* 中级/高级如果棋盘太大：只允许向下滚动（往下延伸），不做横向滚动 */
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .msTopBar {
@@ -146,9 +150,9 @@ body {
   box-shadow:
     inset 2px 2px 0 var(--ms-light),
     inset -2px -2px 0 var(--ms-dark);
-  flex: 1 1 auto;
-  display: grid;
-  place-items: center;
+  width: fit-content;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .msBoard {
