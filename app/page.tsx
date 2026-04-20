@@ -40,19 +40,20 @@ export default async function HomePage() {
                 placeholder="输入一句话，比如：我想做一个打地鼠游戏，主角是一只偷吃的小猫"
                 autoComplete="off"
               />
+              <input type="hidden" name="auto" value="1" />
               <button className="heroCtaBtn" type="submit">
                 开始创造
               </button>
             </form>
 
             <div className="heroChips" aria-label="prompt templates">
-              <a className="heroChip" href="/create?prompt=%E6%88%91%E6%83%B3%E5%81%9A%E4%B8%80%E4%B8%AA%E6%89%93%E5%9C%B0%E9%BC%A0%E6%B8%B8%E6%88%8F%EF%BC%8C%E4%B8%BB%E8%A7%92%E6%98%AF%E4%B8%80%E5%8F%AA%E5%81%B7%E5%90%83%E7%9A%84%E5%B0%8F%E7%8C%AB%EF%BC%8C%E8%A6%81%E6%9C%89%E5%A3%B0%E9%9F%B3%E6%95%88%E6%9E%9C%E5%92%8C%E9%9A%BE%E5%BA%A6%E7%AD%89%E7%BA%A7%E3%80%82">
+              <a className="heroChip" href="/create?auto=1&prompt=%E6%88%91%E6%83%B3%E5%81%9A%E4%B8%80%E4%B8%AA%E6%89%93%E5%9C%B0%E9%BC%A0%E6%B8%B8%E6%88%8F%EF%BC%8C%E4%B8%BB%E8%A7%92%E6%98%AF%E4%B8%80%E5%8F%AA%E5%81%B7%E5%90%83%E7%9A%84%E5%B0%8F%E7%8C%AB%EF%BC%8C%E8%A6%81%E6%9C%89%E5%A3%B0%E9%9F%B3%E6%95%88%E6%9E%9C%E5%92%8C%E9%9A%BE%E5%BA%A6%E7%AD%89%E7%BA%A7%E3%80%82">
                 快速模板：打地鼠小猫
               </a>
-              <a className="heroChip" href="/create?prompt=%E6%88%91%E6%83%B3%E5%81%9A%E4%B8%80%E4%B8%AA%E8%8B%B1%E8%AF%AD%E5%8D%95%E8%AF%8D%E8%AE%B0%E5%BF%86%E6%B8%B8%E6%88%8F%EF%BC%8C%E6%AF%8F%E6%AC%A1%E9%97%AE%E4%B8%80%E9%81%93%E9%A2%98%EF%BC%8C%E7%AD%94%E5%AF%B9%E5%8A%A0%E5%88%86%EF%BC%8C%E7%AD%94%E9%94%99%E6%8F%90%E7%A4%BA%E3%80%82">
+              <a className="heroChip" href="/create?auto=1&prompt=%E6%88%91%E6%83%B3%E5%81%9A%E4%B8%80%E4%B8%AA%E8%8B%B1%E8%AF%AD%E5%8D%95%E8%AF%8D%E8%AE%B0%E5%BF%86%E6%B8%B8%E6%88%8F%EF%BC%8C%E6%AF%8F%E6%AC%A1%E9%97%AE%E4%B8%80%E9%81%93%E9%A2%98%EF%BC%8C%E7%AD%94%E5%AF%B9%E5%8A%A0%E5%88%86%EF%BC%8C%E7%AD%94%E9%94%99%E6%8F%90%E7%A4%BA%E3%80%82">
                 快速模板：英语单词记忆
               </a>
-              <a className="heroChip" href="/create?prompt=%E6%88%91%E6%83%B3%E5%81%9A%E4%B8%80%E4%B8%AA%E5%8F%AF%E7%88%B1%E7%9A%84%E8%B7%B3%E8%B7%B3%E7%90%83%E6%B8%B8%E6%88%8F%EF%BC%8C%E8%83%8C%E6%99%AF%E6%B8%90%E5%8F%98%EF%BC%8C%E8%A6%81%E6%9C%89%E6%8E%92%E8%A1%8C%E6%A6%9C%E5%92%8C%E6%88%90%E5%B0%B1%E3%80%82">
+              <a className="heroChip" href="/create?auto=1&prompt=%E6%88%91%E6%83%B3%E5%81%9A%E4%B8%80%E4%B8%AA%E5%8F%AF%E7%88%B1%E7%9A%84%E8%B7%B3%E8%B7%B3%E7%90%83%E6%B8%B8%E6%88%8F%EF%BC%8C%E8%83%8C%E6%99%AF%E6%B8%90%E5%8F%98%EF%BC%8C%E8%A6%81%E6%9C%89%E6%8E%92%E8%A1%8C%E6%A6%9C%E5%92%8C%E6%88%90%E5%B0%B1%E3%80%82">
                 快速模板：跳跳球成就
               </a>
             </div>

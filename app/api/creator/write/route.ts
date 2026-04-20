@@ -18,8 +18,8 @@ function safeRel(p: string) {
   const s = (p || "").trim().replace(/^\/+/, "");
   if (!s) return "";
   if (s.includes("..") || s.includes("\\") || s.includes(":")) return "";
-  // 只允许三种文件
-  if (!["index.html", "game.js", "style.css"].includes(s)) return "";
+  // 允许写入的文件（避免任意文件写入）
+  if (!["index.html", "game.js", "style.css", "prompt.md"].includes(s)) return "";
   return s;
 }
 

@@ -51,14 +51,14 @@ function parseSseChunk(state: { buf: string }, chunk: string) {
   return events;
 }
 
-export default function CreateStudio({ initialPrompt = "" }: { initialPrompt?: string }) {
+export default function CreateStudio({ initialPrompt = "", autoStart = false }: { initialPrompt?: string; autoStart?: boolean }) {
   const [gameId, setGameId] = useState<string>("");
   const [previewUrl, setPreviewUrl] = useState<string>("/games/creator-playground/index.html");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [input, setInput] = useState(initialPrompt || "");
-  // 默认用 reasoner（更会思考）
-  const [model, setModel] = useState<"deepseek-chat" | "deepseek-reasoner">("deepseek-reasoner");
+  // 固定使用 reasoner
+  const model: "deepseek-reasoner" = "deepseek-reasoner";
   const listRef = useRef<HTMLDivElement | null>(null);
   const [projects, setProjects] = useState<Array<{ gameId: string; title?: string; entry: string; mtimeMs?: number }>>([]);
   const [loggedIn, setLoggedIn] = useState(false);
@@ -68,18 +68,53 @@ export default function CreateStudio({ initialPrompt = "" }: { initialPrompt?: s
   const speechRef = useRef<any>(null);
   const speechBaseRef = useRef<string>("");
   const inputRef = useRef<string>("");
+  const bootRef = useRef(false);
+  const [lastFailedText, setLastFailedText] = useState<string>("");
+  const abortRef = useRef<AbortController | null>(null);
+  const opMenuRef = useRef<HTMLDetailsElement | null>(null);
+
+  const publishText = useMemo(() => (published ? "更新" : "发布"), [published]);
+
+  function act(type: "new" | "publish" | "delete") {
+    const ok =
+      type === "new"
+        ? window.confirm("确定新建一个游戏吗？\n\n当前游戏不会丢失，你可以在“我的游戏”里再切回来。")
+        : type === "publish"
+          ? window.confirm(`确定${publishText}到首页吗？`)
+          : window.confirm("确定删除当前游戏吗？\n\n删除后无法恢复。");
+    if (!ok) return;
+    if (opMenuRef.current) opMenuRef.current.open = false;
+    window.dispatchEvent(new CustomEvent("creatorStudioAction", { detail: { type } }));
+  }
 
   useEffect(() => {
     inputRef.current = input || "";
   }, [input]);
 
-  // 首屏从首页带过来的 prompt：只做预填充，不自动发送，避免误触发生成
+  // 组件卸载时中止正在进行的请求，避免悬挂
   useEffect(() => {
-    if (initialPrompt && !inputRef.current) {
-      setInput(initialPrompt);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      try {
+        abortRef.current?.abort();
+      } catch {}
+    };
   }, []);
+
+  // 点击其它地方自动关闭“操作”下拉框
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      const el = opMenuRef.current;
+      if (!el?.open) return;
+      const t = e.target as any;
+      if (t && el.contains(t)) return;
+      el.open = false;
+    };
+    document.addEventListener("mousedown", onDoc, true);
+    return () => document.removeEventListener("mousedown", onDoc, true);
+  }, []);
+
+  // 首屏从首页带过来的 prompt：会自动“新建一个游戏并切换过去”
+  // 为避免开发模式下 useEffect 触发两次导致重复新建，这里加一个 bootRef 防抖。
 
   // 注意：messages 里不放 system；发送给后端时会自动拼接 systemPrompt
   const [messages, setMessages] = useState<ChatMsg[]>(() => [
@@ -139,19 +174,71 @@ export default function CreateStudio({ initialPrompt = "" }: { initialPrompt?: s
               "(()=>{const el=document.getElementById('app');" +
               "if(!el) return; el.innerHTML=\"<div style='font-weight:900'>准备就绪 ✅</div>\";})();",
           },
+          {
+            path: "prompt.md",
+            content: "我想做一个什么小游戏呢？\n\n（你可以在左边对 AI 说：我想做一个……）\n",
+          },
         ],
       }),
     });
   }
 
+  async function writePrompt(gid: string, promptText: string) {
+    const content = (promptText || "").trim();
+    if (!content) return;
+    await fetch("/api/creator/write", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        gameId: gid,
+        files: [{ path: "prompt.md", content }],
+      }),
+    });
+  }
+
   useEffect(() => {
-    // 进入页面：先拉取历史项目；有就默认选最新一个，没有就新建
+    if (bootRef.current) return;
+    bootRef.current = true;
+    const isFromHome = !!(autoStart && initialPrompt && initialPrompt.trim());
+
+    const baseAssistant: ChatMsg[] = [
+      {
+        role: "assistant",
+        content: "好耶！我们从一个全新的小游戏开始吧～你想做什么？",
+      },
+    ];
+
+    // 进入页面：如果带 prompt（从首页/模板进来）→ 强制新建并切换；
+    // 否则：先拉取历史项目；有就默认选最新一个，没有就新建
     (async () => {
       try {
         const me = await fetch("/api/me", { cache: "no-store" })
           .then((x) => x.json())
           .catch(() => null);
         setLoggedIn(!!me?.loggedIn);
+
+        if (isFromHome) {
+          // 只在“从其它页面跳转过来且明确带 auto=1”时自动启动；
+          // 启动后立刻把 URL 里的 auto=1 去掉，避免用户刷新页面时重复启动。
+          try {
+            const u = new URL(window.location.href);
+            if (u.searchParams.get("auto") === "1") {
+              u.searchParams.delete("auto");
+              window.history.replaceState({}, "", u.pathname + (u.searchParams.toString() ? `?${u.searchParams.toString()}` : ""));
+            }
+          } catch {}
+
+          setMessages(baseAssistant);
+          setMsg("");
+          const gid = await newGame();
+          await ensureSeed(gid);
+          setPreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`);
+          await refreshProjects();
+          await writePrompt(gid, initialPrompt);
+          // 自动把首页的 prompt 作为第一句话发给 AI（用户点击“开始创造/模板”即表示要开始）
+          await sendText(initialPrompt, gid, baseAssistant);
+          return;
+        }
 
         const r = await fetch("/api/creator/list", { cache: "no-store" });
         const j = await r.json().catch(() => ({}));
@@ -259,19 +346,6 @@ export default function CreateStudio({ initialPrompt = "" }: { initialPrompt?: s
     }
   }
 
-  useEffect(() => {
-    try {
-      const m = window.localStorage.getItem("creator.model");
-      if (m === "deepseek-chat" || m === "deepseek-reasoner") setModel(m);
-    } catch {}
-  }, []);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem("creator.model", model);
-    } catch {}
-  }, [model]);
-
   async function refreshProjects() {
     const r = await fetch("/api/creator/list", { cache: "no-store" });
     const j = await r.json().catch(() => ({}));
@@ -280,27 +354,52 @@ export default function CreateStudio({ initialPrompt = "" }: { initialPrompt?: s
     return arr as Array<{ gameId: string; title?: string; entry: string; mtimeMs?: number }>;
   }
 
-  async function writeFiles(files: ModelFile[]) {
-    if (!gameId) throw new Error("NO_GAME_ID");
+  async function writeFiles(files: ModelFile[], gid?: string) {
+    const useId = gid || gameId;
+    if (!useId) throw new Error("NO_GAME_ID");
     const r = await fetch("/api/creator/write", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ gameId, files }),
+      body: JSON.stringify({ gameId: useId, files }),
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok || !j?.ok) throw new Error(j?.error || "WRITE_FAILED");
   }
 
-  async function send() {
-    const text = input.trim();
+  async function sendText(textRaw: string, gid?: string, baseMsgs?: ChatMsg[]) {
+    const text = (textRaw || "").trim();
+    const useId = gid || gameId;
+    const useBase = baseMsgs || messages;
     if (!text || busy) return;
+    if (!useId) throw new Error("NO_GAME_ID");
+
+    // 第一句用户输入：把它写到 prompt.md（用于“我的游戏”下拉框显示关键词）
+    // 只在当前对话还没有 user 消息时写入，避免后续不断覆盖
+    const hasUser = useBase.some((m) => m.role === "user");
+    if (!hasUser) {
+      try {
+        await writePrompt(useId, text);
+        // 让下拉框尽快显示关键词
+        await refreshProjects();
+      } catch {
+        // ignore
+      }
+    }
+    setLastFailedText("");
     setBusy(true);
     setMsg("");
     setInput("");
     const startAt = Date.now();
 
+    // 新的一次请求：先取消上一次（理论上不会同时存在，但以防万一）
+    try {
+      abortRef.current?.abort();
+    } catch {}
+    const ac = new AbortController();
+    abortRef.current = ac;
+
     const myMsg: ChatMsg = { role: "user", content: text };
-    const snap: ChatMsg[] = [...messages, myMsg, { role: "assistant", content: "AI 开始写代码…" }];
+    const snap: ChatMsg[] = [...useBase, myMsg, { role: "assistant", content: "AI 开始写代码…" }];
     setMessages(snap);
 
     try {
@@ -308,7 +407,8 @@ export default function CreateStudio({ initialPrompt = "" }: { initialPrompt?: s
         method: "POST",
         headers: { "content-type": "application/json" },
         // 只传 user/assistant；system 由服务端统一注入
-        body: JSON.stringify({ messages: [...messages, myMsg], model }),
+        body: JSON.stringify({ messages: [...useBase, myMsg], model }),
+        signal: ac.signal,
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
@@ -404,10 +504,27 @@ export default function CreateStudio({ initialPrompt = "" }: { initialPrompt?: s
 
       const files = (Array.isArray(parsed.files) ? parsed.files : []) as ModelFile[];
       if (files.length) {
-        await writeFiles(files);
-        setPreviewUrl(`${entryOf(gameId)}?t=${encodeURIComponent(nowId())}`);
+        await writeFiles(files, useId);
+        setPreviewUrl(`${entryOf(useId)}?t=${encodeURIComponent(nowId())}`);
       }
     } catch (e: any) {
+      // 用户主动停止
+      if (e?.name === "AbortError") {
+        setMsg("已停止。你可以修改一下，再点发送～");
+        setInput(text); // 把刚才的输入还给用户，方便继续编辑
+        setLastFailedText(text); // 允许一键重试
+        setMessages((mm0) => {
+          const mm = mm0.slice();
+          for (let i = mm.length - 1; i >= 0; i--) {
+            if (mm[i].role === "assistant") {
+              mm[i] = { role: "assistant", content: "我先停下来啦～如果你还想继续，就再点一次发送或重试！" };
+              break;
+            }
+          }
+          return mm;
+        });
+        return;
+      }
       const m = String(e?.message || "未知错误");
       const hint =
         m.toLowerCase().includes("missing_deepseek_api_key")
@@ -416,9 +533,32 @@ export default function CreateStudio({ initialPrompt = "" }: { initialPrompt?: s
             ? "（连接被中断：可能是网络/模型超时/Key 无效/服务端被重启，建议重试）"
             : "（建议重试；如持续失败再检查 DEEPSEEK_API_KEY）";
       setMsg(`出错：${m}${hint}`);
+      setLastFailedText(text);
+      // 把最后的“AI 开始写代码…”替换成更友好的提示
+      setMessages((mm0) => {
+        const mm = mm0.slice();
+        for (let i = mm.length - 1; i >= 0; i--) {
+          if (mm[i].role === "assistant") {
+            mm[i] = { role: "assistant", content: "哎呀，AI 刚刚卡住了～你可以点下面的“重试”再来一次！" };
+            break;
+          }
+        }
+        return mm;
+      });
     } finally {
       setBusy(false);
+      abortRef.current = null;
     }
+  }
+
+  async function send() {
+    return sendText(input);
+  }
+
+  function stopAi() {
+    try {
+      abortRef.current?.abort();
+    } catch {}
   }
 
   // 顶部操作（新建/发布/删除）已移动到页面 header（TopActions 下拉菜单）
@@ -462,7 +602,6 @@ export default function CreateStudio({ initialPrompt = "" }: { initialPrompt?: s
         window.location.href = `/publish?id=${encodeURIComponent(gameId)}`;
       } else if (type === "delete") {
         if (!gameId) return;
-        if (!window.confirm(`确定删除这个游戏吗？\n\n${gameId}\n\n删除后无法恢复。`)) return;
         (async () => {
           try {
             setMsg("");
@@ -519,26 +658,28 @@ export default function CreateStudio({ initialPrompt = "" }: { initialPrompt?: s
               {projects.length ? null : <option value="">（暂无历史游戏）</option>}
               {projects.map((p) => (
                 <option key={p.gameId} value={p.gameId}>
-                  {(p.title && p.title.trim()) ? `${p.title}（${p.gameId}）` : p.gameId}
+                  {(p.title && p.title.trim()) ? p.title.trim() : p.gameId}
                 </option>
               ))}
             </select>
           </label>
 
-          <label className="createTopInline">
-            <span className="createTopLabel">模型</span>
-            <select
-              className="restInput"
-              value={model}
-              onChange={(e) => setModel(e.target.value as any)}
-              disabled={busy}
-              aria-label="选择模型"
-              style={{ padding: "8px 10px", fontSize: 13, fontWeight: 900 }}
-            >
-              <option value="deepseek-chat">chat（更快）</option>
-              <option value="deepseek-reasoner">reasoner（更会思考）</option>
-            </select>
-          </label>
+          <details className="createMenu" ref={opMenuRef}>
+            <summary className="createMenuBtn" aria-label="更多操作">
+              操作 ▾
+            </summary>
+            <div className="createMenuPanel" role="menu" aria-label="创作操作菜单">
+              <button className="createMenuItem" type="button" onClick={() => act("new")} disabled={busy}>
+                新建游戏
+              </button>
+              <button className="createMenuItem" type="button" onClick={() => act("publish")} disabled={busy || !gameId}>
+                {publishText}到首页
+              </button>
+              <button className="createMenuItem danger" type="button" onClick={() => act("delete")} disabled={busy || !gameId}>
+                删除游戏
+              </button>
+            </div>
+          </details>
         </div>
       </div>
 
@@ -574,8 +715,27 @@ export default function CreateStudio({ initialPrompt = "" }: { initialPrompt?: s
           ))}
         </div>
 
+        {busy ? (
+          <div className="chatStopRow">
+            <button className="btn btnGray" type="button" onClick={stopAi} aria-label="停止AI任务">
+              停止任务
+            </button>
+          </div>
+        ) : null}
+
         <div className="chatComposer">
-          {msg ? <div className="desc" style={{ color: "rgba(220,38,38,0.95)", margin: 0 }}>{msg}</div> : null}
+          {msg ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div className="desc" style={{ color: "rgba(220,38,38,0.95)", margin: 0 }}>
+                {msg}
+              </div>
+              {lastFailedText && !busy ? (
+                <button className="btn btnGray" type="button" onClick={() => sendText(lastFailedText)}>
+                  重试
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           <div className="chatRow">
             <textarea
               className="restTextarea"

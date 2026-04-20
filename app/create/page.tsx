@@ -3,9 +3,10 @@ import TopActions from "./TopActions";
 
 export const dynamic = "force-dynamic";
 
-export default async function CreatePage({ searchParams }: { searchParams?: Promise<{ prompt?: string }> }) {
+export default async function CreatePage({ searchParams }: { searchParams?: Promise<{ prompt?: string; auto?: string }> }) {
   const sp = searchParams ? await searchParams : ({} as any);
   const initialPrompt = typeof sp?.prompt === "string" ? sp.prompt.slice(0, 800) : "";
+  const autoStart = typeof sp?.auto === "string" && sp.auto === "1";
   return (
     <main className="wrap">
       <section className="card createCard createBento">
@@ -18,7 +19,7 @@ export default async function CreatePage({ searchParams }: { searchParams?: Prom
           </div>
         </header>
 
-        <CreateStudio initialPrompt={initialPrompt} />
+        <CreateStudio initialPrompt={initialPrompt} autoStart={autoStart} />
       </section>
     </main>
   );
