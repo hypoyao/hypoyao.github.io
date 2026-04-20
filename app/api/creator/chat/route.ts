@@ -16,6 +16,8 @@ function sseHeaders() {
     "cache-control": "no-store",
     "content-type": "text/event-stream; charset=utf-8",
     connection: "keep-alive",
+    // Nginx 等反向代理默认会缓冲 SSE，导致长时间无输出时连接更容易被断开
+    "x-accel-buffering": "no",
   };
 }
 
@@ -56,7 +58,23 @@ export async function POST(req: Request) {
   }
 
   // 忽略客户端传来的 system message：服务端统一加（保证所有用户都带上）
-  const messages = (Array.isArray(body?.messages) ? body.messages : []).filter((m) => m?.role === "user" || m?.role === "assistant");
+  // 同时裁剪历史消息，避免 Reasoner 过长输出导致更高的断流概率
+  let messages = (Array.isArray(body?.messages) ? body.messages : []).filter((m) => m?.role === "user" || m?.role === "assistant");
+  // 只保留最近 N 条（越长越容易超时/断开）
+  const MAX_MSG = 12;
+  if (messages.length > MAX_MSG) messages = messages.slice(-MAX_MSG);
+  // 再按字符长度做一次裁剪（粗略控制）
+  const MAX_CHARS = 12000;
+  let total = 0;
+  const trimmed: any[] = [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    const c = typeof m?.content === "string" ? m.content : "";
+    total += c.length;
+    trimmed.push(m);
+    if (total >= MAX_CHARS) break;
+  }
+  messages = trimmed.reverse();
   if (!messages.length) return json(400, { ok: false, error: "MISSING_MESSAGES" });
 
   const baseUrl = (process.env.DEEPSEEK_API_BASE || "https://api.deepseek.com").replace(/\/+$/, "");
@@ -69,7 +87,11 @@ export async function POST(req: Request) {
   const addon = typeof body.promptAddon === "string" ? body.promptAddon.trim() : "";
   // 限制一下长度，避免被塞超长 prompt
   const safeAddon = addon.length > 6000 ? addon.slice(0, 6000) : addon;
-  const systemPrompt = `${serverBasePrompt}${CREATOR_OUTPUT_FORMAT_ADDON}${safeAddon ? `\n\n【用户补充要求】\n${safeAddon}\n` : ""}`;
+  const antiCoT =
+    `\n\n【连接稳定性要求】\n` +
+    `- 请不要输出冗长的“思考过程/分析/推理”，直接输出最终 JSON。\n` +
+    `- 先做最小可运行版本，再逐步迭代，避免一次性输出过长代码。\n`;
+  const systemPrompt = `${serverBasePrompt}${CREATOR_OUTPUT_FORMAT_ADDON}${antiCoT}${safeAddon ? `\n\n【用户补充要求】\n${safeAddon}\n` : ""}`;
 
   // ===== Streaming SSE =====
   const payloadBase: any = {
@@ -93,24 +115,35 @@ export async function POST(req: Request) {
   }
 
   async function callDeepSeekOnce(payload: any) {
-    const p = { ...payload, stream: false };
-    delete p.response_format; // 兜底时去掉，避免不兼容
-    const r = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify(p),
-    });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      const msg = j?.error?.message || j?.message || r.status;
-      throw new Error(`DEEPSEEK_ERROR:${msg}`);
+    // 尽量也用 json_object，减少模型“解释/思考”导致的超长输出；
+    // 如果不兼容，再自动退回普通模式。
+    const p0 = { ...payload, stream: false };
+    const doReq = async (p: any) => {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${key}`,
+        },
+        body: JSON.stringify(p),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const msg = j?.error?.message || j?.message || r.status;
+        throw new Error(`DEEPSEEK_ERROR:${msg}`);
+      }
+      const content = j?.choices?.[0]?.message?.content;
+      if (!content) throw new Error("EMPTY_MODEL_RESPONSE");
+      return String(content);
+    };
+    try {
+      return await doReq(p0);
+    } catch (e) {
+      // retry without response_format
+      const p1 = { ...p0 };
+      delete p1.response_format;
+      return await doReq(p1);
     }
-    const content = j?.choices?.[0]?.message?.content;
-    if (!content) throw new Error("EMPTY_MODEL_RESPONSE");
-    return String(content);
   }
 
   const stream = new ReadableStream<Uint8Array>({
@@ -123,6 +156,12 @@ export async function POST(req: Request) {
 
       let full = "";
       const sendStatus = (text: string) => send("status", { text });
+      // SSE 心跳：避免部分网关/代理在“长时间无数据”时主动断开
+      const heartbeat = setInterval(() => {
+        try {
+          send("ping", { t: Date.now() });
+        } catch {}
+      }, 12000);
 
       let resp: Response | null = null;
       try {
@@ -191,6 +230,7 @@ export async function POST(req: Request) {
           sendStatus("AI 正在检查输出格式…");
           parseCreatorJson(full);
           send("final", { ok: true, content: full, repaired: false });
+          clearInterval(heartbeat);
           controller.close();
           return;
         } catch (e: any) {
@@ -210,11 +250,13 @@ export async function POST(req: Request) {
           });
           parseCreatorJson(repaired);
           send("final", { ok: true, content: repaired, repaired: true });
+          clearInterval(heartbeat);
           controller.close();
           return;
         }
       } catch (e: any) {
         send("error", { ok: false, error: String(e?.message || e) });
+        clearInterval(heartbeat);
         controller.close();
       }
     },

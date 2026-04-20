@@ -44,3 +44,14 @@ export const inviteCodes = pgTable("invite_codes", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// create 页“用户发给 AI 的内容”记录（仅保存用户消息）
+export const creatorUserMessages = pgTable("creator_user_messages", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  gameId: text("game_id").notNull(),
+  creatorId: text("creator_id")
+    .notNull()
+    .references(() => creators.id, { onUpdate: "cascade", onDelete: "cascade" }),
+  content: text("content").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});

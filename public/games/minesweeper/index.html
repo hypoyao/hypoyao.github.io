@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>经典扫雷</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body class="msPage">
+    <main class="wrap">
+      <section class="card msCard">
+        <header class="header">
+          <div class="msHeadRow">
+            <h1>经典扫雷</h1>
+            <a class="btn btnGray" href="/">返回首页</a>
+          </div>
+          <p class="desc">左键翻开，右键插旗。数字表示周围 8 格雷的数量。</p>
+        </header>
+
+        <section class="msFrame" aria-label="minesweeper frame">
+          <div class="msTopBar" aria-label="top bar">
+            <div class="msCounter" id="mineCounter" aria-label="mines left">010</div>
+            <button class="msFace" id="faceBtn" type="button" aria-label="restart">🙂</button>
+            <div class="msCounter" id="timeCounter" aria-label="time">000</div>
+          </div>
+
+          <div class="msBoardWrap">
+            <div class="msBoard" id="board" aria-label="board" role="grid"></div>
+          </div>
+        </section>
+
+        <section class="msBottom" aria-label="controls">
+          <div class="msDiff">
+            <span class="msDiffLabel">难度：</span>
+            <button class="btn btnGray msDiffBtn isOn" id="diffBegin" type="button">初级</button>
+            <button class="btn btnGray msDiffBtn" id="diffInter" type="button">中级</button>
+            <button class="btn btnGray msDiffBtn" id="diffExpert" type="button">高级</button>
+          </div>
+          <div class="msOps">
+            <button class="btn btnGray" id="hintBtn" type="button">提示一步</button>
+            <div class="msHint">手机：长按插旗；点一下翻开。</div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="/rest.js"></script>
+    <script src="/publish-entry.js"></script>
+    <script src="./game.js"></script>
+  </body>
+</html>

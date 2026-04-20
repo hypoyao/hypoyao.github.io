@@ -145,6 +145,49 @@
       },
       { capture: true }
     )
+
+    // ===== 彩蛋：点标题 6 下，切换“提示一步”按钮显示/隐藏 =====
+    ;(() => {
+      // 只在存在提示按钮的小游戏里启用
+      const hintBtns = Array.from(document.querySelectorAll("button#hintBtn"))
+      if (!hintBtns.length) return
+
+      const titleEl = document.querySelector(".header h1") || document.querySelector("h1")
+      if (!titleEl) return
+
+      let tap = 0
+      let hintOff = false
+      let lastAt = 0
+
+      const apply = () => {
+        for (const b of hintBtns) {
+          b.disabled = hintOff
+          b.style.display = hintOff ? "none" : ""
+          b.setAttribute("aria-hidden", hintOff ? "true" : "false")
+        }
+      }
+      apply()
+
+      titleEl.addEventListener(
+        "pointerdown",
+        (e) => {
+          // 避免影响页面其它交互
+          try {
+            e.preventDefault()
+          } catch {}
+          const now = Date.now()
+          if (now - lastAt > 1500) tap = 0 // 超过 1.5s 视为重新开始连点
+          lastAt = now
+          tap++
+          if (tap >= 6) {
+            tap = 0
+            hintOff = !hintOff
+            apply()
+          }
+        },
+        { passive: false }
+      )
+    })()
   }
 
   if (document.readyState === "loading") {

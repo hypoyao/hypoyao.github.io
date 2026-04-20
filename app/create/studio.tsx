@@ -10,6 +10,50 @@ function nowId() {
   return String(Date.now()) + "-" + Math.random().toString(16).slice(2);
 }
 
+const CREATOR_STORE_VER = 1;
+const CREATOR_LAST_KEY = "creatorStudio:last";
+function chatKey(gid: string) {
+  return `creatorStudio:chat:${gid || "draft"}`;
+}
+
+function safeLoadChat(gid: string): { messages: ChatMsg[] } | null {
+  try {
+    if (typeof window === "undefined") return null;
+    const raw = window.localStorage.getItem(chatKey(gid));
+    if (!raw) return null;
+    const j = JSON.parse(raw);
+    if (j?.v !== CREATOR_STORE_VER) return null;
+    const arr = Array.isArray(j?.messages) ? j.messages : null;
+    if (!arr) return null;
+    const messages: ChatMsg[] = arr
+      .filter((m: any) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+      .map((m: any) => ({ role: m.role, content: String(m.content) }));
+    if (!messages.length) return null;
+    return { messages };
+  } catch {
+    return null;
+  }
+}
+
+function safeSaveChat(gid: string, messages: ChatMsg[]) {
+  try {
+    if (typeof window === "undefined") return;
+    const MAX_MSG = 40;
+    const MAX_LEN = 4000;
+    const trimmed = (messages || [])
+      .filter((m) => m?.role === "user" || m?.role === "assistant")
+      .slice(-MAX_MSG)
+      .map((m) => ({ role: m.role, content: String(m.content || "").slice(0, MAX_LEN) }));
+    window.localStorage.setItem(
+      chatKey(gid),
+      JSON.stringify({ v: CREATOR_STORE_VER, updatedAt: Date.now(), gameId: gid, messages: trimmed }),
+    );
+    window.localStorage.setItem(CREATOR_LAST_KEY, JSON.stringify({ v: CREATOR_STORE_VER, gameId: gid, updatedAt: Date.now() }));
+  } catch {
+    // ignore
+  }
+}
+
 function safeJsonParse(s: string): any | null {
   try {
     return JSON.parse(s);
@@ -122,6 +166,45 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
   ]);
 
   const viewMessages = useMemo(() => messages, [messages]);
+
+  // === 聊天记录持久化（刷新不丢） ===
+  // 1) gameId 变化时：尝试从 localStorage 恢复该项目的聊天记录
+  useEffect(() => {
+    if (!gameId) return;
+    // 从首页模板进来属于“强制新建并自动开始”，不要用旧记录覆盖
+    if ((initialPrompt || "").trim() && autoStart) return;
+    const saved = safeLoadChat(gameId);
+    if (saved?.messages?.length) {
+      setMessages(saved.messages);
+      return;
+    }
+    // 本地没有，再从服务器恢复（只包含用户发送内容）
+    (async () => {
+      try {
+        const r = await fetch(`/api/creator/chatlog?gameId=${encodeURIComponent(gameId)}`, { cache: "no-store" });
+        const j = await r.json().catch(() => ({}));
+        const arr = Array.isArray(j?.messages) ? j.messages : [];
+        const userMsgs: ChatMsg[] = arr
+          .map((x: any) => ({ role: "user", content: String(x?.content || "").trim() }))
+          .filter((m: any) => m.content);
+        if (userMsgs.length) {
+          setMessages([
+            { role: "assistant", content: "（已从服务器恢复你之前发送的内容。AI 的历史回复未保存。）" },
+            ...userMsgs,
+          ]);
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameId]);
+
+  // 2) messages 变化时：保存到 localStorage
+  useEffect(() => {
+    if (!gameId) return;
+    safeSaveChat(gameId, messages);
+  }, [gameId, messages]);
 
   useEffect(() => {
     const el = listRef.current;
@@ -259,9 +342,20 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
         const j = await r.json().catch(() => ({}));
         const arr = Array.isArray(j?.games) ? j.games : [];
         setProjects(arr);
-        if (arr.length && arr[0]?.gameId) {
-          setGameId(arr[0].gameId);
-          setPreviewUrl(`${entryOf(arr[0].gameId)}?t=${encodeURIComponent(nowId())}`);
+        if (arr.length) {
+          let pick = arr[0]?.gameId || "";
+          // 优先恢复上次打开的项目
+          try {
+            const raw = window.localStorage.getItem(CREATOR_LAST_KEY);
+            const last = raw ? JSON.parse(raw) : null;
+            const lastId = typeof last?.gameId === "string" ? last.gameId : "";
+            if (lastId && arr.some((x: any) => x?.gameId === lastId)) pick = lastId;
+          } catch {}
+          if (pick) {
+            setGameId(pick);
+            setPreviewUrl(`${entryOf(pick)}?t=${encodeURIComponent(nowId())}`);
+            return;
+          }
           return;
         }
       } catch {}
@@ -416,6 +510,16 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
     const myMsg: ChatMsg = { role: "user", content: text };
     const snap: ChatMsg[] = [...useBase, myMsg, { role: "assistant", content: "AI 开始写代码…" }];
     setMessages(snap);
+    // 只把“用户发给 AI 的内容”存到数据库（失败不影响创作）
+    try {
+      fetch("/api/creator/chatlog", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ gameId: useId, content: text }),
+      }).catch(() => null);
+    } catch {
+      // ignore
+    }
 
     try {
       const r = await fetch("/api/creator/chat", {
