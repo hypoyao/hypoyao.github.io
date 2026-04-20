@@ -25,12 +25,19 @@
     var gid = getGameId()
     if (!gid) return
 
+    // 创作模式的新游戏（g-YYYYMMDD-xxxxxx）通常还没发布到数据库；
+    // 这时去请求 /api/games/<id> 会返回 404，并在控制台出现 “Failed to load resource”。
+    // 直接跳过这一步即可（后面仍可显示“发布”入口）。
+    var isDraftCreatorGame = /^g-\d{8}-[0-9a-f]{6}$/i.test(gid)
+
     var game = null
     try {
-      var r = await fetch("/api/games/" + encodeURIComponent(gid), { cache: "no-store" })
-      if (r.ok) {
-        var j = await r.json()
-        game = j && j.game
+      if (!isDraftCreatorGame) {
+        var r = await fetch("/api/games/" + encodeURIComponent(gid), { cache: "no-store" })
+        if (r.ok) {
+          var j = await r.json()
+          game = j && j.game
+        }
       }
     } catch {}
 

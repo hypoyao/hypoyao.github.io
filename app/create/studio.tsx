@@ -135,8 +135,23 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
 
   async function newGame() {
     const r = await fetch("/api/creator/new", { method: "POST" });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok || !j?.ok || !j?.gameId) throw new Error(j?.error || "NEW_GAME_FAILED");
+    let j: any = null;
+    try {
+      j = await r.json();
+    } catch {
+      j = null;
+    }
+    if (!r.ok || !j?.ok || !j?.gameId) {
+      const err = String(j?.error || "").trim();
+      if (r.status === 401 || err === "UNAUTHORIZED") {
+        if (window.confirm("新建游戏需要先登录。现在去登录吗？")) {
+          window.location.href = `/login?next=${encodeURIComponent("/create")}`;
+        }
+        throw new Error("UNAUTHORIZED");
+      }
+      // 兜底：把状态码带上，避免只看到 NEW_GAME_FAILED
+      throw new Error(err || `NEW_GAME_FAILED(${r.status})`);
+    }
     setGameId(j.gameId);
     return j.gameId as string;
   }
@@ -741,7 +756,6 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
               className="restTextarea"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="例如：做一个打地鼠小游戏，3 个洞，30 秒计时，分数统计，结束弹窗"
               rows={4}
               disabled={busy}
             />

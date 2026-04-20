@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>经典俄罗斯方块</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <section class="card tCard">
+        <header class="header">
+          <h1>经典俄罗斯方块</h1>
+          <p class="desc" id="ruleText">
+            经典规则：7 种方块（7-bag）、旋转踢墙、软降/硬降、Hold 暂存、消行计分、等级加速。
+          </p>
+        </header>
+
+        <section class="tShell" aria-label="tetris layout">
+          <div class="tStageCol" aria-label="stage">
+            <div class="tStageWrap" aria-label="playfield">
+              <canvas id="cv" width="320" height="640" aria-label="tetris canvas"></canvas>
+              <div class="tOverlay" id="overlay" aria-hidden="true">
+                <div class="tOverlayTitle" id="overlayTitle">暂停</div>
+                <div class="tOverlaySub" id="overlaySub">按 P 继续</div>
+                <div class="tOverlayBtns">
+                  <button class="btn" id="resumeBtn" type="button">继续</button>
+                  <button class="btn btnGray" id="restartBtn" type="button">重新开始</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <aside class="tSide" aria-label="sidebar">
+            <div class="tMiniRow" aria-label="next & hold">
+              <div class="tPanel">
+                <div class="tPanelTitle">下一块</div>
+                <canvas id="nextCv" width="160" height="160" aria-label="next piece"></canvas>
+              </div>
+              <div class="tPanel">
+                <div class="tPanelTitle">Hold</div>
+                <canvas id="holdCv" width="160" height="160" aria-label="hold piece"></canvas>
+                <div class="tHint">键盘 C 暂存</div>
+              </div>
+            </div>
+
+            <div class="tStats" aria-label="stats">
+              <div class="tStat">
+                <div class="tStatLabel">分数</div>
+                <div class="tStatVal" id="scoreText">0</div>
+              </div>
+              <div class="tStat">
+                <div class="tStatLabel">消行</div>
+                <div class="tStatVal" id="linesText">0</div>
+              </div>
+              <div class="tStat">
+                <div class="tStatLabel">等级</div>
+                <div class="tStatVal" id="levelText">1</div>
+              </div>
+            </div>
+
+            <div class="tHelp">
+              <div class="tHelpTitle">键盘操作</div>
+              <div class="tHelpRow"><span>← / →</span><span>移动</span></div>
+              <div class="tHelpRow"><span>↑</span><span>旋转</span></div>
+              <div class="tHelpRow"><span>Z</span><span>反向旋转</span></div>
+              <div class="tHelpRow"><span>↓</span><span>软降</span></div>
+              <div class="tHelpRow"><span>空格</span><span>硬降</span></div>
+              <div class="tHelpRow"><span>C</span><span>Hold</span></div>
+              <div class="tHelpRow"><span>P</span><span>暂停</span></div>
+            </div>
+          </aside>
+        </section>
+
+        <section class="tMobilePad" aria-label="mobile controls">
+          <div class="padCross" aria-label="移动与旋转">
+            <div class="padLeft">
+              <button class="btn btnGray padBtn" id="leftBtn" type="button" aria-label="左">←</button>
+            </div>
+            <div class="padMid">
+              <button class="btn btnGray padBtn" id="downBtn" type="button" aria-label="下">↓</button>
+              <button class="btn btnGray padBtn" id="rotBtn" type="button" aria-label="旋转">⟳</button>
+            </div>
+            <div class="padRight">
+              <button class="btn btnGray padBtn" id="rightBtn" type="button" aria-label="右">→</button>
+            </div>
+          </div>
+
+          <div class="padRow" aria-label="辅助操作">
+            <button class="btn padBtn" id="dropBtn" type="button" aria-label="硬降">硬降</button>
+            <button class="btn btnGray padBtn" id="holdBtn" type="button" aria-label="暂存">Hold</button>
+            <button class="btn btnGray padBtn" id="pauseBtn" type="button" aria-label="暂停">暂停</button>
+            <button class="btn btnGray padBtn" id="mRestartBtn" type="button" aria-label="重开">重开</button>
+          </div>
+        </section>
+
+        <div class="gameFooter">
+          <a class="btn btnGray" href="/">返回首页</a>
+        </div>
+      </section>
+    </main>
+
+    <script src="/rest.js"></script>
+    <script src="/publish-entry.js"></script>
+    <script src="./game.js"></script>
+  </body>
+</html>

@@ -4,6 +4,7 @@
   const scoreEl = $("scoreText")
   const comboEl = $("comboText")
   const hintTextEl = $("hintText")
+  const startBtn = $("startBtn")
   const hintBtn = $("hintBtn")
   const shuffleBtn = $("shuffleBtn")
   const restartBtn = $("restartBtn")
@@ -48,8 +49,10 @@
   let groupBoxEl = null
   const isTouch = typeof window !== "undefined" && ("ontouchstart" in window || navigator.maxTouchPoints > 0)
   let startAt = 0
+  let remainingMs = 0
   let clearCount = 0
   let gameOver = false
+  let playing = false
   const LIMIT_MS = 3 * 60 * 1000
   const WIN_CLEAR = 15
 
@@ -111,6 +114,7 @@
 
   function setEnd(win) {
     gameOver = true
+    playing = false
     busy = false
     selected = -1
     hint = null
@@ -129,17 +133,38 @@
       endSubEl.textContent = `3 分钟内消除 ${clearCount} 次（目标 ≥ ${WIN_CLEAR} 次）`
     }
     hintTextEl.textContent = "游戏结束～点“再来一局”"
+    if (startBtn) startBtn.textContent = "开始"
   }
 
   function tick() {
-    if (!startAt || gameOver) return
-    const left = LIMIT_MS - (Date.now() - startAt)
+    if (gameOver) return
+    const left = playing ? remainingMs - (Date.now() - startAt) : remainingMs
     if (timeEl) timeEl.textContent = fmtTime(left)
     if (clearEl) clearEl.textContent = String(clearCount)
-    if (left <= 0) {
+    if (playing && left <= 0) {
       const win = clearCount >= WIN_CLEAR
       setEnd(win)
     }
+  }
+
+  function setPlaying(on) {
+    if (gameOver) return
+    if (on) {
+      if (remainingMs <= 0) remainingMs = LIMIT_MS
+      playing = true
+      startAt = Date.now()
+      if (startBtn) startBtn.textContent = "暂停"
+      hintTextEl.textContent = "开始啦～继续交换～"
+      toastMsg("开始！加油～")
+    } else {
+      if (playing) remainingMs = Math.max(0, remainingMs - (Date.now() - startAt))
+      playing = false
+      startAt = 0
+      if (startBtn) startBtn.textContent = "开始"
+      hintTextEl.textContent = "已暂停～点“开始”继续"
+      toastMsg("暂停")
+    }
+    tick()
   }
 
   function restart() {
@@ -150,8 +175,10 @@
     hint = null
     quiz = null
     clearCount = 0
-    startAt = Date.now()
     gameOver = false
+    playing = false
+    remainingMs = LIMIT_MS
+    startAt = 0
     if (endModal) {
       endModal.classList.remove("isOn")
       endModal.setAttribute("aria-hidden", "true")
@@ -168,10 +195,11 @@
     render()
     scoreEl.textContent = String(score)
     comboEl.textContent = `x${combo}`
-    hintTextEl.textContent = "点一个方块，再点旁边的方块"
-    toastMsg("开始啦～凑 3 个一样的！答对加法题才会消掉～")
+    hintTextEl.textContent = "点“开始”再玩～"
+    toastMsg("准备好啦～点“开始”开始计时！")
     if (clearEl) clearEl.textContent = String(clearCount)
-    if (timeEl) timeEl.textContent = fmtTime(LIMIT_MS)
+    if (timeEl) timeEl.textContent = fmtTime(remainingMs)
+    if (startBtn) startBtn.textContent = "开始"
     // 如果没有可走步：洗牌
     if (!findAnyMove()) shuffle()
   }
@@ -448,6 +476,7 @@
   async function submitAnswer(valRaw) {
     if (!quiz || busy) return
     if (gameOver) return
+    if (!playing) return
     const v = String(valRaw || "").trim()
     const n = Number(v)
     if (!Number.isFinite(n)) return
@@ -559,18 +588,48 @@
     return new Promise((r) => setTimeout(r, ms))
   }
 
-  function trySwap(a, b) {
+  async function animateSwap(a, b) {
+    if (!boardEl) return
+    const nodes = boardEl.querySelectorAll(".m3Cell")
+    const elA = nodes[a]
+    const elB = nodes[b]
+    if (!elA || !elB) return
+    const ra = elA.getBoundingClientRect()
+    const rb = elB.getBoundingClientRect()
+    const dx = rb.left - ra.left
+    const dy = rb.top - ra.top
+    // 提高层级，避免被其它格子盖住
+    elA.style.zIndex = "10"
+    elB.style.zIndex = "10"
+    elA.style.transition = "transform 160ms cubic-bezier(.2,.8,.2,1)"
+    elB.style.transition = "transform 160ms cubic-bezier(.2,.8,.2,1)"
+    elA.style.transform = `translate(${dx}px, ${dy}px)`
+    elB.style.transform = `translate(${-dx}px, ${-dy}px)`
+    await wait(180)
+    elA.style.transition = ""
+    elB.style.transition = ""
+    elA.style.transform = ""
+    elB.style.transform = ""
+    elA.style.zIndex = ""
+    elB.style.zIndex = ""
+  }
+
+  async function trySwap(a, b) {
     if (busy) return
     if (quiz) return
     if (gameOver) return
+    if (!playing) {
+      toastMsg("先点“开始”再玩～")
+      return
+    }
     if (!neighbors(a, b)) return
     busy = true
     clearHint()
+    // 先判断这一步是否有效（避免无效也动画）
     swap(a, b)
     const groups = findMatchGroups()
+    swap(a, b)
     if (!groups.length) {
-      // revert
-      swap(a, b)
       toastMsg("这一步不行哦～要凑到 3 个一样的！")
       beep(200, 0.06, "sawtooth", 0.025)
       selected = -1
@@ -578,6 +637,9 @@
       busy = false
       return
     }
+    // 动画：两个格子滑过去（规则不变，只有动画像“挪动”）
+    await animateSwap(a, b)
+    swap(a, b)
     selected = -1
     render()
     const g = pickGroup(groups, a, b)
@@ -613,6 +675,10 @@
     if (busy) return
     if (quiz) return
     if (gameOver) return
+    if (!playing) {
+      toastMsg("先点“开始”再玩～")
+      return
+    }
     const mv = findAnyMove()
     if (!mv) {
       toastMsg("我也找不到啦…洗牌试试！")
@@ -643,6 +709,10 @@
     if (busy) return
     if (quiz) return
     if (gameOver) return
+    if (!playing) {
+      toastMsg("先点“开始”再玩～")
+      return
+    }
     busy = true
     clearHint()
     selected = -1
@@ -687,6 +757,10 @@
     if (busy) return
     if (quiz) return
     if (gameOver) return
+    if (!playing) {
+      toastMsg("先点“开始”再玩～")
+      return
+    }
     beep(520, 0.03, "sine", 0.02)
     if (selected < 0) {
       selected = i
@@ -709,62 +783,72 @@
     trySwap(selected, i)
   })
 
-  // swipe on board (mobile)
-  let touchStart = null // {i, x, y}
+  // swipe/drag on board (mobile): 允许“慢慢滑动”也能触发挪动
+  let touchStart = null // {i, x, y, triggered}
   boardEl?.addEventListener(
     "touchstart",
     (e) => {
       if (busy) return
       if (quiz) return
       if (gameOver) return
+      if (!playing) return
       const t = e.touches && e.touches[0]
       if (!t) return
       const el = document.elementFromPoint(t.clientX, t.clientY)
       const cell = el && el.closest ? el.closest(".m3Cell") : null
       if (!cell) return
       const i = Number(cell.dataset.i || -1)
-      touchStart = { i, x: t.clientX, y: t.clientY }
+      if (i < 0) return
+      e.preventDefault()
+      touchStart = { i, x: t.clientX, y: t.clientY, triggered: false }
       selected = i
       render()
     },
-    { passive: true }
+    { passive: false }
   )
+
   boardEl?.addEventListener(
-    "touchend",
+    "touchmove",
     (e) => {
       if (!touchStart || busy) return
       if (quiz) return
       if (gameOver) return
-      const t = e.changedTouches && e.changedTouches[0]
+      if (!playing) return
+      if (touchStart.triggered) return
+      const t = e.touches && e.touches[0]
       if (!t) return
       const dx = t.clientX - touchStart.x
       const dy = t.clientY - touchStart.y
       const adx = Math.abs(dx)
       const ady = Math.abs(dy)
-      if (Math.max(adx, ady) < 18) {
-        // treat as tap
-        touchStart = null
-        return
-      }
+      if (Math.max(adx, ady) < 10) return
+      e.preventDefault()
       const { x, y } = xy(touchStart.i)
       let nx = x
       let ny = y
       if (adx > ady) nx = x + (dx > 0 ? 1 : -1)
       else ny = y + (dy > 0 ? 1 : -1)
-      if (nx < 0 || nx >= W || ny < 0 || ny >= H) {
-        touchStart = null
-        selected = -1
-        render()
-        return
-      }
+      if (nx < 0 || nx >= W || ny < 0 || ny >= H) return
       const j = idx(nx, ny)
+      touchStart.triggered = true
       trySwap(touchStart.i, j)
+      touchStart = null
+    },
+    { passive: false }
+  )
+
+  boardEl?.addEventListener(
+    "touchend",
+    (e) => {
+      if (!touchStart) return
+      // 轻触：沿用“点一个再点旁边一个”的逻辑（由 click 处理），这里只做清理
       touchStart = null
     },
     { passive: true }
   )
 
   // controls
+  startBtn?.addEventListener("click", () => setPlaying(!playing))
   hintBtn?.addEventListener("click", () => showHint())
   shuffleBtn?.addEventListener("click", () => shuffle())
   function confirmRestart() {

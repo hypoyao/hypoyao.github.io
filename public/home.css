@@ -355,7 +355,6 @@
   border: 1px solid var(--tile-border);
   background: rgba(255, 255, 255, 0.65);
   box-shadow: 0 10px 24px rgba(2, 6, 23, 0.06);
-  text-decoration: none;
   color: inherit;
   transition: transform 120ms ease, filter 120ms ease;
 }
@@ -366,6 +365,19 @@
 
 .gameItem:active {
   transform: scale(0.992);
+}
+
+.gameLink {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 8px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.gameActions {
+  display: flex;
+  justify-content: flex-start;
 }
 
 .gameThumb {

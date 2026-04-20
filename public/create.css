@@ -192,6 +192,10 @@
   border-radius: 14px;
   border: 1px solid rgba(15, 23, 42, 0.08);
   background: rgba(255, 255, 255, 0.60);
+  /* 气泡高度跟随内容，但限制最小/最大高度 */
+  min-height: 56px;
+  max-height: 320px;
+  overflow: auto;
 }
 .chatMsg.isUser {
   background: rgba(37, 99, 235, 0.08);

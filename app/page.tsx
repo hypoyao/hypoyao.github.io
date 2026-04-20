@@ -67,18 +67,22 @@ export default async function HomePage() {
           </div>
           <section className="gameGrid" aria-label="game list">
             {games.map((g) => (
-              <a key={g.id} className="gameItem" href={toGameEntryHref(g.path)} aria-label={g.title}>
-                <img className="gameThumb" src={g.coverUrl} alt={`${g.title}截图`} />
-                <div>
-                  <div className="gameName">{g.title}</div>
-                  <div className="gameDesc">{g.shortDesc}</div>
-                  <div className="gameMetaRow">
-                    <img className="gameMetaAvatar" src={g.creator.avatarUrl} alt={`${g.creator.name}头像`} />
-                    <span className="gameMeta">创作者：{g.creator.name}</span>
+              <div key={g.id} className="gameItem" aria-label={g.title}>
+                <a className="gameLink" href={toGameEntryHref(g.path)} aria-label={`打开游戏：${g.title}`}>
+                  <img className="gameThumb" src={g.coverUrl} alt={`${g.title}截图`} />
+                  <div>
+                    <div className="gameName">{g.title}</div>
+                    <div className="gameDesc">{g.shortDesc}</div>
+                    <div className="gameMetaRow">
+                      <img className="gameMetaAvatar" src={g.creator.avatarUrl} alt={`${g.creator.name}头像`} />
+                      <span className="gameMeta">创作者：{g.creator.name}</span>
+                    </div>
                   </div>
+                </a>
+                <div className="gameActions">
                   <GamePromptModal title={g.title} prompt={g.prompt || "（还没有记录～你也可以先随便说一句话开始做！）"} />
                 </div>
-              </a>
+              </div>
             ))}
           </section>
         </section>

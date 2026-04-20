@@ -20,10 +20,20 @@ function genId() {
 }
 
 export async function POST() {
-  const sess = await getSession();
+  let sess: any = null;
+  try {
+    sess = await getSession();
+  } catch (e: any) {
+    return json(500, { ok: false, error: `AUTH_FAILED:${String(e?.message || e)}` });
+  }
   if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED" });
-  const id = genId();
-  const base = path.join(process.cwd(), "public", "games", id);
-  await fs.mkdir(base, { recursive: true });
-  return json(200, { ok: true, gameId: id, entry: `/games/${id}/index.html` });
+
+  try {
+    const id = genId();
+    const base = path.join(process.cwd(), "public", "games", id);
+    await fs.mkdir(base, { recursive: true });
+    return json(200, { ok: true, gameId: id, entry: `/games/${id}/index.html` });
+  } catch (e: any) {
+    return json(500, { ok: false, error: `NEW_GAME_FAILED:${String(e?.message || e)}` });
+  }
 }

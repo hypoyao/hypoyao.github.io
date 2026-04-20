@@ -1,10 +1,25 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 export default function GamePromptModal({ title, prompt }: { title: string; prompt: string }) {
   const [open, setOpen] = useState(false);
   const text = useMemo(() => (prompt || "").trim(), [prompt]);
+
+  // 移动端更稳：打开时禁止背景滚动 + 支持 ESC 关闭
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
 
   async function copyAll() {
     try {
@@ -34,7 +49,7 @@ export default function GamePromptModal({ title, prompt }: { title: string; prom
           role="dialog"
           aria-modal="true"
           aria-label="与AI的对话"
-          onClick={(e) => {
+          onPointerDown={(e) => {
             // 点击遮罩：只关闭弹窗，不把点击“传递”给底下的卡片链接
             e.preventDefault();
             e.stopPropagation();
@@ -43,7 +58,7 @@ export default function GamePromptModal({ title, prompt }: { title: string; prom
         >
           <div
             className="promptModalPanel"
-            onClick={(e) => {
+            onPointerDown={(e) => {
               e.preventDefault();
               e.stopPropagation();
             }}
