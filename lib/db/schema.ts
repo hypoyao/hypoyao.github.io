@@ -1,4 +1,4 @@
-import { integer, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, integer, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
 export const creators = pgTable("creators", {
   id: text("id").primaryKey(), // slug，例如 'haibo'
@@ -29,6 +29,18 @@ export const games = pgTable("games", {
   creatorId: text("creator_id")
     .notNull()
     .references(() => creators.id, { onUpdate: "cascade", onDelete: "restrict" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const inviteCodes = pgTable("invite_codes", {
+  code: text("code").primaryKey(),
+  enabled: boolean("enabled").notNull().default(true),
+  maxUses: integer("max_uses").notNull().default(1),
+  usedCount: integer("used_count").notNull().default(0),
+  note: text("note"),
+  lastUsedPhone: text("last_used_phone"),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

@@ -6,10 +6,12 @@ import "./login.css";
 
 export const dynamic = "force-dynamic";
 
-export default async function LoginPage() {
+export default async function LoginPage({ searchParams }: { searchParams?: Promise<{ next?: string }> }) {
   const sess = await getSession();
   // 仅手机号登录：不再区分微信环境
   await headers(); // 保留 headers() 调用，避免 Next.js 动态渲染行为变化
+  const sp = searchParams ? await searchParams : ({} as any);
+  const next = typeof sp?.next === "string" && sp.next.startsWith("/") ? sp.next : "/";
 
   return (
     <main className="wrap">
@@ -33,14 +35,14 @@ export default async function LoginPage() {
                   退出登录
                 </button>
               </form>
-              <a className="btn btnSecondary" href="/">
-                返回首页
+              <a className="btn btnSecondary" href={next}>
+                返回
               </a>
             </div>
           </section>
         ) : (
           <section className="loginSection">
-            <PhoneLoginForm />
+            <PhoneLoginForm next={next} />
           </section>
         )}
       </section>

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { CREATOR_OUTPUT_FORMAT_ADDON, CREATOR_SYSTEM_PROMPT } from "@/lib/creator/systemPrompt";
+import { getSession } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -42,6 +43,8 @@ function parseCreatorJson(s: string) {
 }
 
 export async function POST(req: Request) {
+  const sess = await getSession();
+  if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED" });
   const key = process.env.DEEPSEEK_API_KEY || "";
   if (!key) return json(500, { ok: false, error: "MISSING_DEEPSEEK_API_KEY" });
 
@@ -173,7 +176,8 @@ export async function POST(req: Request) {
           }
         } catch (e: any) {
           // 流式传输中断：用非流式再请求一次兜底，尽量给用户结果
-          sendStatus("连接中断，AI 正在改用“快速交付”模式…");
+          // 流式连接偶尔会中断：这里用一次非流式请求兜底，继续给用户结果
+          sendStatus("连接有点不稳定，我换个方式继续生成…");
           const once = await callDeepSeekOnce({
             model,
             messages: [{ role: "system", content: systemPrompt }, ...messages],

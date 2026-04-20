@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>小小消消乐</title>
+    <link rel="stylesheet" href="./style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Comic+Neue:wght@700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <h1>✨ 宝石消消乐 ✨</h1>
+        
+        <div class="game-info">
+            <div class="score-box">
+                <span class="score-label">分数：</span>
+                <span id="score" class="score-value">0</span>
+            </div>
+            <button id="hint-btn" class="hint-btn">
+                <span class="btn-text">💡 给我提示</span>
+                <span class="btn-subtext">(3秒后消失)</span>
+            </button>
+        </div>
+        
+        <div class="game-board" id="board">
+            <!-- 宝石网格会在这里生成 -->
+        </div>
+        
+        <div class="instructions">
+            <h3>🎮 游戏玩法：</h3>
+            <p>1. 点击一个宝石选中它（会变亮）</p>
+            <p>2. 再点击旁边的宝石交换位置</p>
+            <p>3. 三个相同颜色连成一行或一列就会消失！</p>
+            <p>4. 找不到可以交换的？点击提示按钮！</p>
+        </div>
+    </div>
+    
+    <script src="./game.js"></script>
+</body>
+</html>

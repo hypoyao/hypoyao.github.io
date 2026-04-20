@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import path from "node:path";
 import fs from "node:fs/promises";
+import { getSession } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,8 @@ function safeGameId(id: string) {
 }
 
 export async function POST(req: Request) {
+  const sess = await getSession();
+  if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED" });
   let body: Body;
   try {
     body = (await req.json()) as Body;

@@ -38,7 +38,8 @@
   gap: 10px;
 }
 
-.homeHeaderActions .homeCreateBtn {
+/* 仅在首页隐藏右上角“创作我的游戏”，不影响 create 页面右上角“回首页”按钮 */
+.homeNew .homeHeaderActions .homeCreateBtn {
   display: none;
 }
 

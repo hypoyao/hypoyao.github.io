@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import path from "node:path";
 import fs from "node:fs/promises";
+import { getSession } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -14,6 +15,8 @@ function isCreatorGameId(id: string) {
 }
 
 export async function POST(req: Request) {
+  const sess = await getSession();
+  if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED" });
   let body: { gameId?: string };
   try {
     body = (await req.json()) as any;
@@ -33,4 +36,3 @@ export async function POST(req: Request) {
 
   return json(200, { ok: true, gameId: gid });
 }
-

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import path from "node:path";
 import fs from "node:fs/promises";
+import { getSession } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
@@ -19,9 +20,10 @@ function genId() {
 }
 
 export async function POST() {
+  const sess = await getSession();
+  if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED" });
   const id = genId();
   const base = path.join(process.cwd(), "public", "games", id);
   await fs.mkdir(base, { recursive: true });
   return json(200, { ok: true, gameId: id, entry: `/games/${id}/index.html` });
 }
-

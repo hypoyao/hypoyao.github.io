@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import path from "node:path";
 import fs from "node:fs/promises";
+import { getSession } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -61,6 +62,8 @@ async function tryReadKeyword(gameDir: string) {
 }
 
 export async function GET() {
+  const sess = await getSession();
+  if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED", games: [] });
   const base = path.join(process.cwd(), "public", "games");
   let items: Array<{ gameId: string; entry: string; mtimeMs: number; title?: string }> = [];
   try {

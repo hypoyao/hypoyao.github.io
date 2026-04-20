@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 
-export default function PhoneLoginForm() {
+export default function PhoneLoginForm({ next = "/" }: { next?: string }) {
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [msg, setMsg] = useState("");
   const [tempCode, setTempCode] = useState<string | null>(null);
 
@@ -35,11 +36,17 @@ export default function PhoneLoginForm() {
     const r = await fetch("/api/auth/phone/verify", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ phone, code, next: "/" }),
+      body: JSON.stringify({ phone, code, inviteCode, next }),
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
-      setMsg(`登录失败：${data?.error || r.status}`);
+      const err = String(data?.error || r.status);
+      const map: Record<string, string> = {
+        INVITE_REQUIRED: "需要邀请码才能注册（老用户登录不需要）。",
+        INVITE_INVALID: "邀请码不正确。",
+        INVITE_EXHAUSTED: "邀请码已用完。",
+      };
+      setMsg(`登录失败：${map[err] || err}`);
       return;
     }
     setMsg("登录成功，正在返回首页…");
@@ -62,6 +69,17 @@ export default function PhoneLoginForm() {
         <label className="loginField">
           <div className="loginLabel">验证码</div>
           <input className="restInput" value={code} onChange={(e) => setCode(e.target.value)} placeholder="6位验证码" />
+        </label>
+
+        <label className="loginField">
+          <div className="loginLabel">邀请码（新用户）</div>
+          <input
+            className="restInput"
+            value={inviteCode}
+            onChange={(e) => setInviteCode(e.target.value)}
+            placeholder="已有账号可不填"
+            autoComplete="off"
+          />
         </label>
 
         <div className="actions loginFooterActions">
