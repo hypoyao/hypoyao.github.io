@@ -578,11 +578,34 @@ export default function CreateStudio() {
               disabled={busy}
             />
             <div className="sendCol">
-              <button className="btn btnGray" type="button" onClick={toggleSpeech} disabled={busy || !speechSupported}>
-                {listening ? "停止语音" : "语音输入"}
+              <button
+                className="btn btnGray voiceBtn"
+                type="button"
+                onClick={toggleSpeech}
+                disabled={busy || !speechSupported}
+                aria-label={listening ? "停止语音输入" : "语音输入"}
+                title={listening ? "停止语音输入" : "语音输入"}
+              >
+                {listening ? (
+                  <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" />
+                  </svg>
+                ) : (
+                  <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M12 14a3 3 0 0 0 3-3V7a3 3 0 1 0-6 0v4a3 3 0 0 0 3 3Z"
+                      fill="currentColor"
+                    />
+                    <path
+                      d="M7 11a5 5 0 0 0 10 0h2a7 7 0 0 1-6 6.93V20h-2v-2.07A7 7 0 0 1 5 11h2Z"
+                      fill="currentColor"
+                      opacity="0.9"
+                    />
+                  </svg>
+                )}
               </button>
-              <button className="btn" type="button" onClick={send} disabled={busy || !input.trim()}>
-                发送
+              <button className="btn sendBtn" type="button" onClick={send} disabled={busy || !input.trim()} aria-label="发送">
+                ➤ 发送
               </button>
             </div>
           </div>
@@ -590,32 +613,20 @@ export default function CreateStudio() {
       </div>
 
         <div className="createPanel previewPanel" aria-label="preview">
-          <div className="createPanelHeader">
-            <div className="previewHeadLeft">
-              <div className="createPanelTitle">预览</div>
-              <div className="previewUrl" title={previewUrl}>
-                {previewUrl}
+          <div className="simShell" aria-label="simulator">
+            <div className="simBar" aria-hidden="true">
+              <div className="simDots">
+                <span className="simDot red" />
+                <span className="simDot yellow" />
+                <span className="simDot green" />
               </div>
+              <div className="simTitle"> </div>
+              <div className="simSpacer" />
             </div>
-            <div className="previewToolbar">
-              <button
-                className="btn btnGray iconBtn"
-                type="button"
-                onClick={() => {
-                  if (!gameId) return;
-                  setPreviewUrl(`${entryOf(gameId)}?t=${encodeURIComponent(nowId())}`);
-                }}
-                aria-label="刷新预览"
-                title="刷新预览"
-              >
-                ⟳
-              </button>
-              <a className="btn btnGray iconBtn" href={previewUrl} target="_blank" rel="noreferrer" aria-label="新窗口打开" title="新窗口打开">
-                ↗
-              </a>
+            <div className="simScreen">
+              <iframe className="previewFrame" src={previewUrl} title="preview" />
             </div>
           </div>
-          <iframe className="previewFrame" src={previewUrl} title="preview" />
         </div>
       </section>
     </section>

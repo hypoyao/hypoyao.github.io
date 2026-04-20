@@ -31,23 +31,21 @@ export default function PublishForm({ defaultCreatorId, initial, meCreatorId, is
   const coverFileRef = useRef<HTMLInputElement | null>(null);
 
   const defaultCover = initial?.coverUrl || (id ? `/assets/screenshots/${id}.png` : "");
+  const effectiveId = immutable ? initial?.id || id : id;
   const payload = useMemo(() => {
     const effId = immutable ? initial?.id || id : id;
-    const effCreatorId = immutable ? initial?.creatorId || creatorId : creatorId;
+    const effCreatorId = immutable ? (isAdmin ? creatorId : initial?.creatorId || creatorId) : creatorId;
     const effPath = immutable ? initial?.path || path : path;
-    const isData = typeof coverUrl === "string" && coverUrl.startsWith("data:image/");
-    const effCoverUrl = isData ? `/assets/covers/${effId}` : coverUrl;
     return {
       id: effId,
       title,
       shortDesc,
       ruleText,
       creatorId: effCreatorId,
-      coverUrl: effCoverUrl || undefined,
-      coverDataUrl: isData ? coverUrl : undefined,
+      coverUrl: coverUrl || undefined,
       path: effPath ? effPath : undefined,
     };
-  }, [immutable, initial?.id, initial?.creatorId, initial?.path, id, title, shortDesc, ruleText, creatorId, coverUrl, path]);
+  }, [immutable, isAdmin, initial?.id, initial?.creatorId, initial?.path, id, title, shortDesc, ruleText, creatorId, coverUrl, path]);
 
   async function cropCoverToSquareDataUrl(file: File) {
     // 自动居中裁剪为正方形，并缩放到 512x512（封面要求 1:1）
@@ -88,11 +86,24 @@ export default function PublishForm({ defaultCreatorId, initial, meCreatorId, is
   async function onPickCoverFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f) return;
-    setMsg("正在处理封面…");
+    if (!effectiveId) {
+      setMsg("请先填写 id，再上传封面。");
+      e.target.value = "";
+      return;
+    }
+    setMsg("正在处理并上传封面…");
     try {
       const url = await cropCoverToSquareDataUrl(f);
-      setCoverUrl(url);
-      setMsg("已上传封面（已自动裁剪为 1:1）。");
+      // 上传到 public/assets/covers，并回填相对路径（不要在输入框显示 base64）
+      const r = await fetch("/api/covers", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: effectiveId, dataUrl: url }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j?.ok || !j?.coverUrl) throw new Error(j?.error || "UPLOAD_FAILED");
+      setCoverUrl(String(j.coverUrl));
+      setMsg("封面已上传（已自动裁剪为 1:1）。");
     } catch {
       setMsg("封面处理失败，请换一张图片再试。");
     } finally {
@@ -161,7 +172,13 @@ export default function PublishForm({ defaultCreatorId, initial, meCreatorId, is
           />
         </label>
 
-        {/* 隐藏：创作者 creatorId（由后端按权限与数据库现有值控制） */}
+        {/* 管理员：可指定作者 creatorId */}
+        {isAdmin ? (
+          <label style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontWeight: 900 }}>作者 creatorId（管理员可改）</div>
+            <input className="restInput" value={creatorId} onChange={(e) => setCreatorId(e.target.value)} placeholder="例如 tianqing" />
+          </label>
+        ) : null}
 
         <label style={{ display: "grid", gap: 6 }}>
           <div style={{ fontWeight: 900 }}>封面（1:1，可上传自定义）</div>

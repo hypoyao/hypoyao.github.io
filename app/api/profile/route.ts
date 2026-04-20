@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { creators } from "@/lib/db/schema";
 import { getSession } from "@/lib/auth/session";
 import { ensureCreatorsAuthFields } from "@/lib/db/ensureCreatorsAuthFields";
+import { safeProfilePathForCreatorId } from "@/lib/creatorProfilePath";
 
 function json(status: number, data: unknown) {
   return NextResponse.json(data, { status, headers: { "cache-control": "no-store" } });
@@ -17,8 +18,6 @@ function normText(s: unknown, max = 40) {
 function isAllowedAvatarUrl(s: string) {
   if (!s) return true;
   if (s.startsWith("/")) return true;
-  // 允许 dataURL（本地头像裁剪后上传到 DB）
-  if (/^data:image\/(png|jpeg|webp|svg\+xml);base64,/i.test(s)) return true;
   return false;
 }
 
@@ -71,6 +70,7 @@ export async function POST(req: Request) {
         gender,
         age,
         city: city || null,
+        profilePath: safeProfilePathForCreatorId(row.id),
         updatedAt: new Date(),
       })
       .where(eq(creators.id, row.id));
@@ -78,5 +78,5 @@ export async function POST(req: Request) {
     return json(500, { ok: false, error: "DB_UPDATE_FAILED" });
   }
 
-  return json(200, { ok: true, creatorId: row.id, profilePath: `/creators/${row.id}` });
+  return json(200, { ok: true, creatorId: row.id, profilePath: safeProfilePathForCreatorId(row.id) });
 }

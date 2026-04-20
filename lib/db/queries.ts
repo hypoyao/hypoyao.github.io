@@ -87,6 +87,11 @@ export async function getCreatorById(creatorId: string) {
   return row ?? null;
 }
 
+export async function getCreatorByProfilePath(profilePath: string) {
+  const [row] = await db.select().from(creators).where(eq(creators.profilePath, profilePath)).limit(1);
+  return row ?? null;
+}
+
 export async function listGamesByCreator(creatorId: string): Promise<GameWithCreator[]> {
   const rows = await db
     .select({

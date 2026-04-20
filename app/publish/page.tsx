@@ -68,7 +68,7 @@ export default async function PublishPage({
   if (!sess) {
     return (
       <main className="wrap">
-        <section className="card homeCard">
+        <section className="card homeCard createBento">
           <header className="header">
             <h1>发布游戏</h1>
             <p className="desc">需要先登录后才能发布游戏到首页。</p>
@@ -112,12 +112,8 @@ export default async function PublishPage({
 
   // 未发布的本地小游戏：仅管理员或作者可见
   if (!isAdmin) {
-    const out: string[] = [];
-    for (const gid of unpublished) {
-      const cid = await getLocalGameCreatorId(gid);
-      if (cid && meCreatorId && cid === meCreatorId) out.push(gid);
-    }
-    unpublished = out;
+    const pairs = await Promise.all(unpublished.map(async (gid) => [gid, await getLocalGameCreatorId(gid)] as const));
+    unpublished = pairs.filter(([, cid]) => cid && meCreatorId && cid === meCreatorId).map(([gid]) => gid);
   }
 
   // 如果数据库里已存在该 game，则用数据库数据预填（“更新”场景）
@@ -147,49 +143,10 @@ export default async function PublishPage({
 
   return (
     <main className="wrap">
-      <section className="card homeCard">
+      <section className="card homeCard createBento">
         <header className="header">
-          <h1>{existsInDb ? "更新游戏" : "发布游戏"}</h1>
-          <p className="desc">
-            {existsInDb ? "该游戏已在数据库中，修改后保存即更新首页展示。" : "填写游戏信息并发布到首页列表（数据库）。也可以从下方“未发布”一键填充。"}
-          </p>
-          <p className="homeSub">已登录 openid：{sess.openid}</p>
+          <h1>更新应用信息</h1>
         </header>
-
-        {unpublished.length > 0 ? (
-          <section style={{ marginTop: 8 }}>
-            <div style={{ fontWeight: 1000, marginBottom: 8 }}>未发布的本地小游戏</div>
-            <div style={{ display: "grid", gap: 8 }}>
-              {unpublished.map((id) => (
-                <div
-                  key={id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 10,
-                    padding: "10px 12px",
-                    borderRadius: 14,
-                    border: "1px solid rgba(15,23,42,0.10)",
-                    background: "rgba(255,255,255,0.55)",
-                  }}
-                >
-                  <div style={{ fontWeight: 900 }}>{id}</div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <a className="homePublishBtn" href={`/publish?id=${encodeURIComponent(id)}`}>
-                      填充并发布
-                    </a>
-                    <a className="homeLoginBtn" href={`/games/${encodeURIComponent(id)}/index.html`}>
-                      预览
-                    </a>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        ) : (
-          <div style={{ marginTop: 8, fontSize: 13, color: "rgba(100,116,139,0.95)" }}>暂无未发布的本地小游戏。</div>
-        )}
 
         <PublishForm
           defaultCreatorId="tianqing"

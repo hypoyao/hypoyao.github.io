@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 
 type Props = {
   initial: {
+    id: string;
     name: string;
     avatarUrl: string;
     gender: string | null;
@@ -74,13 +75,21 @@ export default function ProfileEditForm({ initial, profilePath }: Props) {
   async function onPickLocalAvatar(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f) return;
-    setMsg("正在处理头像…");
+    setMsg("正在处理并上传头像…");
     try {
-      const url = await cropToSquareDataUrl(f);
-      setAvatarUrl(url);
-      setMsg("已选择本地头像（已自动裁剪）。");
+      const dataUrl = await cropToSquareDataUrl(f);
+      // 上传到 public/assets/avatars/uploads，并回填相对路径（不要在 DB 里存 base64）
+      const r = await fetch("/api/avatars", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ creatorId: initial.id, dataUrl }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j?.ok || !j?.avatarUrl) throw new Error(j?.error || "UPLOAD_FAILED");
+      setAvatarUrl(String(j.avatarUrl));
+      setMsg("头像已上传（已自动裁剪）。");
     } catch {
-      setMsg("头像处理失败，请换一张图片再试。");
+      setMsg("头像处理/上传失败，请换一张图片再试。");
     } finally {
       // 允许再次选择同一文件
       e.target.value = "";

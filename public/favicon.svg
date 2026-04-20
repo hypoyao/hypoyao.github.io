@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="网站图标">
+  <!-- 说明：
+       之前用“SVG 内嵌 PNG(base64)”做 favicon，部分浏览器会不显示或被安全策略拦截。
+       这里改为纯矢量 SVG（根据你上传头像做抽象：蓝底 + 深色头发 + 肤色脸 + 橙色围巾），兼容性更好。 -->
+
+  <rect x="4" y="4" width="56" height="56" rx="14" fill="#e7f4ff"/>
+  <rect x="4" y="4" width="56" height="56" rx="14" fill="none" stroke="#111827" stroke-width="2"/>
+
+  <!-- 围巾 -->
+  <path d="M14 42c5-5 11-7 18-7s13 2 18 7c-4 6-12 10-18 10S18 48 14 42Z" fill="#fb6a2a"/>
+  <path d="M29.5 50.5 32 58l7-9-9 1.5Z" fill="#fb6a2a"/>
+
+  <!-- 衣服 -->
+  <path d="M12 50c4-9 14-12 20-12s16 3 20 12v8H12v-8Z" fill="#fbbf24"/>
+
+  <!-- 脸 -->
+  <circle cx="32" cy="28" r="18" fill="#f5d0c0"/>
+
+  <!-- 头发 -->
+  <path d="M16 25c2-9 10-15 16-15 7 0 14 4 16 12-5-2-9-3-16-3-7 0-11 1-16 6Z" fill="#2b1b12"/>
+
+  <!-- 眼睛（小点） -->
+  <circle cx="26" cy="29" r="2.2" fill="#111827"/>
+  <circle cx="38" cy="29" r="2.2" fill="#111827"/>
+
+  <!-- 微笑 -->
+  <path d="M25 35c3 4 11 4 14 0" fill="none" stroke="#111827" stroke-width="2.2" stroke-linecap="round"/>
+</svg>
+

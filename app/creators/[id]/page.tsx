@@ -1,7 +1,11 @@
-import { notFound } from "next/navigation";
-import { getCreatorById, listGamesByCreator } from "@/lib/db/queries";
+import { notFound, redirect } from "next/navigation";
+import { eq } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { creators as creatorsTable } from "@/lib/db/schema";
+import { getCreatorById, getCreatorByProfilePath, listGamesByCreator } from "@/lib/db/queries";
 import { getSession } from "@/lib/auth/session";
 import { ensureCreatorsAuthFields } from "@/lib/db/ensureCreatorsAuthFields";
+import { safeProfilePathForCreatorId } from "@/lib/creatorProfilePath";
 
 export const dynamic = "force-dynamic";
 
@@ -15,50 +19,62 @@ export default async function CreatorPage({ params }: { params: Promise<{ id: st
   try {
     await ensureCreatorsAuthFields();
   } catch {}
-  const creator = await getCreatorById(id);
-  if (!creator) notFound();
+  // 隐私：URL 不使用 creators.id（可能包含手机号），而使用 creators.profilePath 中的 token
+  let creator = await getCreatorByProfilePath(`/creators/${id}`);
+  if (!creator) {
+    // 兼容旧链接：/creators/<creatorId>，命中后立即跳转到安全链接
+    const legacy = await getCreatorById(id);
+    if (legacy) {
+      const safe = safeProfilePathForCreatorId(legacy.id);
+      // 顺便把 profilePath 迁移成安全路径
+      try {
+        await db.update(creatorsTable).set({ profilePath: safe, updatedAt: new Date() }).where(eq(creatorsTable.id, legacy.id));
+      } catch {}
+      redirect(safe);
+    }
+    notFound();
+  }
 
-  const games = await listGamesByCreator(id);
+  const games = await listGamesByCreator(creator.id);
   const sess = await getSession();
   const isMe = !!sess?.phone && creator.phone && sess.phone === creator.phone;
 
-  const gender = creator.gender || "未设置";
-  const age = typeof creator.age === "number" && creator.age > 0 ? `${creator.age} 岁` : "未设置";
-  const city = creator.city || "未设置";
+  const gender = creator.gender ? `性别：${creator.gender}` : null;
+  const age = typeof creator.age === "number" && creator.age > 0 ? `年龄：${creator.age} 岁` : null;
+  const city = creator.city ? `城市：${creator.city}` : null;
+  const tags = [gender, age, city].filter(Boolean) as string[];
 
   return (
     <main className="wrap">
-      <section className="card homeCard">
+      <section className="card homeCard createBento">
         <header className="header">
-          <h1>创作者</h1>
-          <p className="desc">用 AI，释放孩子的奇思妙想，体验创造的快乐。</p>
-          <p className="homeSub">点击作品卡片进入小游戏。</p>
-        </header>
-
-        <section className="creatorList" aria-label="creator">
-          <section className="creatorCard" aria-label={`creator-${creator.id}`}>
-            <div className="creatorHead">
-              <img className="creatorAvatar" src={creator.avatarUrl} alt={`${creator.name}头像`} />
-              <div className="creatorInfo">
-                <div className="creatorName">{creator.name}</div>
+          <div className="creatorTop">
+            <img className="creatorAvatar creatorAvatarLg" src={creator.avatarUrl} alt={`${creator.name}头像`} />
+            <div className="creatorTopInfo">
+              <h1 className="creatorTopName">{creator.name}</h1>
+              {tags.length > 0 ? (
                 <div className="creatorTag">
-                  <span className="creatorTagItem">性别：{gender}</span>
-                  <span className="creatorTagSep">·</span>
-                  <span className="creatorTagItem">年龄：{age}</span>
-                  <span className="creatorTagSep">·</span>
-                  <span className="creatorTagItem">城市：{city}</span>
+                  {tags.map((t, i) => (
+                    <span key={t}>
+                      <span className="creatorTagItem">{t}</span>
+                      {i < tags.length - 1 ? <span className="creatorTagSep">·</span> : null}
+                    </span>
+                  ))}
                 </div>
-              </div>
+              ) : null}
             </div>
-
             {isMe ? (
-              <div className="creatorActions">
+              <div className="creatorTopActions">
                 <a className="btn btnGray" href="/profile/edit">
                   编辑资料
                 </a>
               </div>
             ) : null}
+          </div>
+        </header>
 
+        <section className="creatorList" aria-label="creator">
+          <section className="creatorCard" aria-label="creator-card">
             <div className="creatorWorks">
               {games.map((g) => (
                 <a key={g.id} className="gameItem gameItemCompact" href={toGameEntryHref(g.path)} aria-label={g.title}>

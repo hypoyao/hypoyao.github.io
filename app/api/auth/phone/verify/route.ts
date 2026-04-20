@@ -4,8 +4,9 @@ import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { creators } from "@/lib/db/schema";
 import { encodeSession, sessionCookieName } from "@/lib/auth/session";
-import { genCuteAvatarDataUrl, genCuteName, normalizePhone, sha256Hex } from "@/lib/auth/phone";
+import { genCuteName, normalizePhone, sha256Hex } from "@/lib/auth/phone";
 import { ensureCreatorsAuthFields } from "@/lib/db/ensureCreatorsAuthFields";
+import { safeProfilePathForCreatorId } from "@/lib/creatorProfilePath";
 
 const COOKIE = "phone_code_v1";
 
@@ -54,14 +55,16 @@ export async function POST(req: Request) {
   // upsert 到 creators：把手机号当“用户账号”，id 使用 u_<phone>
   const userId = `u_${phone}`;
   const name = genCuteName(phone);
-  const avatarUrl = genCuteAvatarDataUrl(phone);
-  const profilePath = `/creators/${userId}`;
+  // 不在 DB 里存 base64，默认给一个静态头像（用户可在“个人资料”里上传自己的头像）
+  const avatarUrl = "/assets/avatars/user.svg";
+  const profilePath = safeProfilePathForCreatorId(userId);
 
   try {
     await db.execute(sql`
       insert into creators (id, name, avatar_url, profile_path, phone)
       values (${userId}, ${name}, ${avatarUrl}, ${profilePath}, ${phone})
       on conflict (phone) do update set
+        profile_path = excluded.profile_path,
         updated_at = now()
     `);
   } catch (e) {

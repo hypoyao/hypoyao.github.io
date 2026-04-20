@@ -101,8 +101,9 @@
 .createGrid {
   margin-top: 10px;
   display: grid;
-  grid-template-columns: minmax(320px, 420px) 1fr;
-  gap: 14px;
+  /* 更适合孩子：对话框更宽一点，且面板间距更通透 */
+  grid-template-columns: minmax(360px, 520px) 1fr;
+  gap: 24px;
   align-items: stretch;
 }
 
@@ -170,6 +171,18 @@
   background: rgba(37, 99, 235, 0.08);
   border-color: rgba(37, 99, 235, 0.18);
 }
+.createNeo .chatMsg {
+  /* AI 气泡：淡绿（更像卡片） */
+  background: rgba(187, 247, 208, 0.28);
+}
+.createNeo .chatMsg.isUser {
+  /* 用户气泡：淡蓝，靠右 */
+  background: rgba(186, 230, 253, 0.35);
+  justify-self: end;
+}
+.createNeo .chatMsg.isUser .chatRole {
+  text-align: right;
+}
 .chatRole {
   font-size: 12px;
   font-weight: 1000;
@@ -192,6 +205,20 @@
   padding: 12px 14px;
   font-size: 15px;
   font-weight: 1100;
+}
+.voiceBtn {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  padding: 12px 0 !important;
+}
+.sendBtn {
+  /* 明显、活泼的发送按钮 */
+  background: linear-gradient(135deg, rgba(255, 122, 0, 0.95), rgba(236, 72, 153, 0.90)) !important;
+  color: rgba(255, 255, 255, 0.96) !important;
+}
+.createNeo .sendBtn {
+  border-color: rgba(17, 24, 39, 0.95);
 }
 
 .thinkBox {
@@ -239,6 +266,8 @@
 
 .previewPanel {
   min-height: 620px;
+  /* 预览区不需要顶部“浏览器栏”，让内容直接占满 */
+  grid-template-rows: 1fr;
 }
 
 .previewFrame {
@@ -248,18 +277,54 @@
   background: white;
 }
 
-.previewToolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+/* 预览区“模拟器外壳” */
+.simShell {
+  margin: 12px;
+  border-radius: 18px;
+  border: 2px solid rgba(17, 24, 39, 0.95);
+  background: rgba(17, 24, 39, 0.10);
+  box-shadow: 8px 8px 0 rgba(17, 24, 39, 0.95);
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
 }
-
-.previewHeadLeft {
-  display: flex;
+.simBar {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 10px;
-  min-width: 0; /* 允许 URL 省略号生效 */
+  padding: 10px 12px;
+  border-bottom: 2px solid rgba(17, 24, 39, 0.95);
+  background: rgba(255, 255, 255, 0.92);
+}
+.simDots {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.simDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 2px solid rgba(17, 24, 39, 0.95);
+}
+.simDot.red { background: rgba(239, 68, 68, 0.95); }
+.simDot.yellow { background: rgba(250, 204, 21, 0.95); }
+.simDot.green { background: rgba(34, 197, 94, 0.95); }
+.simTitle {
+  font-size: 12px;
+  font-weight: 1100;
+  color: rgba(17, 24, 39, 0.78);
+  text-align: center;
+}
+.simSpacer { width: 16px; }
+.simScreen {
+  background: rgba(255, 255, 255, 0.96);
+  min-height: 0;
+}
+.simScreen .previewFrame {
+  background: white;
 }
 
 .miniBtn {
@@ -350,4 +415,137 @@
   .previewUrl {
     max-width: 44vw;
   }
+}
+
+/* =========================
+   Bento Grid（便当盒布局）
+   仅作用于 create 页面：.createBento
+   ========================= */
+.createBento {
+  --b-bg: rgba(248, 250, 252, 1); /* 极浅灰 */
+  --b-card: rgba(255, 255, 255, 1);
+  --b-border: rgba(226, 232, 240, 1); /* gray-200 */
+  --b-border2: rgba(241, 245, 249, 1); /* gray-100 */
+  --b-text: rgba(15, 23, 42, 0.92);
+  --b-muted: rgba(100, 116, 139, 0.95);
+  --b-shadow: 0 1px 2px rgba(2, 6, 23, 0.06);
+
+  border: 1px solid var(--b-border2);
+  background: var(--b-bg);
+  box-shadow: var(--b-shadow);
+}
+.createBento .header h1 {
+  color: var(--b-text);
+}
+.createBento .header .desc {
+  color: var(--b-muted);
+  font-weight: 900;
+}
+
+.createBento .createTopActions .homeCreateBtn,
+.createBento .createMenuBtn {
+  border: 1px solid var(--b-border);
+  box-shadow: var(--b-shadow);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 1);
+  font-weight: 1000;
+}
+.createBento .createMenuPanel {
+  border: 1px solid var(--b-border);
+  box-shadow: 0 10px 20px rgba(2, 6, 23, 0.08);
+  border-radius: 18px;
+}
+.createBento .createMenuItem {
+  border: 1px solid var(--b-border2);
+  box-shadow: none;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 1);
+}
+.createBento .createMenuItem.danger {
+  background: rgba(254, 242, 242, 1);
+  border-color: rgba(254, 202, 202, 1);
+}
+
+.createBento .createPanel {
+  border-radius: 24px;
+  border: 1px solid var(--b-border);
+  background: var(--b-card);
+  box-shadow: var(--b-shadow);
+}
+.createBento .createPanelHeader {
+  border-bottom: 1px solid var(--b-border2);
+  background: rgba(248, 250, 252, 1);
+}
+.createBento .createPanelTitle {
+  color: var(--b-text);
+  font-weight: 1100;
+}
+
+/* 聊天：更像卡片气泡（用户/AI 分色） */
+.createBento .chatMsg {
+  border: 1px solid var(--b-border2);
+  background: rgba(248, 250, 252, 1);
+  box-shadow: none;
+  border-radius: 18px;
+}
+.createBento .chatMsg.isUser {
+  background: rgba(239, 246, 255, 1); /* 淡蓝 */
+  border-color: rgba(191, 219, 254, 1);
+  justify-self: end;
+}
+.createBento .chatMsg:not(.isUser) {
+  background: rgba(240, 253, 244, 1); /* 淡绿 */
+  border-color: rgba(187, 247, 208, 1);
+}
+.createBento .chatRole {
+  color: var(--b-muted);
+}
+.createBento .chatText {
+  color: var(--b-text);
+}
+
+.createBento .restInput,
+.createBento .restTextarea {
+  border: 1px solid var(--b-border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 1);
+  box-shadow: var(--b-shadow);
+  font-weight: 900;
+}
+
+.createBento .btn {
+  border: 1px solid var(--b-border);
+  border-radius: 18px;
+  box-shadow: var(--b-shadow);
+  font-weight: 1100;
+  /* 默认按钮为高可读性主按钮（浅色背景时避免白字看不见） */
+  background: rgba(56, 189, 248, 0.95); /* 天蓝 */
+  color: rgba(255, 255, 255, 0.96);
+}
+.createBento .btnGray {
+  background: rgba(248, 250, 252, 1);
+  color: var(--b-text);
+}
+.createBento .sendBtn {
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.95), rgba(34, 197, 94, 0.95)) !important;
+  color: rgba(255, 255, 255, 0.96) !important;
+  border-color: rgba(56, 189, 248, 0.40);
+}
+
+/* 预览“模拟器外壳”也改成 bento：柔和边框 + 阴影 */
+.createBento .simShell {
+  border: 1px solid var(--b-border);
+  box-shadow: var(--b-shadow);
+  background: rgba(255, 255, 255, 1);
+  border-radius: 24px;
+}
+.createBento .simBar {
+  border-bottom: 1px solid var(--b-border2);
+  background: rgba(248, 250, 252, 1);
+}
+.createBento .simDot {
+  border: 1px solid rgba(148, 163, 184, 0.75);
+}
+.createBento .simScreen {
+  background: rgba(255, 255, 255, 1);
 }

@@ -96,6 +96,13 @@ export async function POST(req: Request) {
     return json(400, { ok: false, error: "MISSING_FIELDS" });
   }
 
+  // 管理员鉴权（用于允许指定作者）
+  const key = process.env.ADMIN_API_KEY;
+  const auth = req.headers.get("authorization") || "";
+  const bearerAdmin = key && auth === `Bearer ${key}`;
+  const meCreatorId = await getMyCreatorId();
+  const isAdmin = isSuperAdminId(meCreatorId) || bearerAdmin;
+
   // 如果是“更新”场景：id/creatorId/path 不允许更改（以 DB 现有值为准）
   const [existing] = await db
     .select({ creatorId: games.creatorId, path: games.path, coverUrl: games.coverUrl })
@@ -103,7 +110,8 @@ export async function POST(req: Request) {
     .where(eq(games.id, id))
     .limit(1);
 
-  const effCreatorId = existing?.creatorId || creatorId;
+  // 如果是管理员：允许覆盖作者（便于代发布/修正作者归属）
+  const effCreatorId = isAdmin ? creatorId : existing?.creatorId || creatorId;
   const effPath =
     existing?.path || (typeof body.path === "string" && body.path.trim() ? body.path.trim() : `/games/${id}/`);
 
@@ -133,13 +141,7 @@ export async function POST(req: Request) {
   if (!creator) return json(400, { ok: false, error: "CREATOR_NOT_FOUND" });
 
   // 作者权限：非管理员只能以自己的 creatorId 发布/更新
-  const key = process.env.ADMIN_API_KEY;
-  const auth = req.headers.get("authorization") || "";
-  const bearerAdmin = key && auth === `Bearer ${key}`;
   if (!bearerAdmin) {
-    const meCreatorId = await getMyCreatorId();
-    const isAdmin = isSuperAdminId(meCreatorId);
-
     if (!isAdmin) {
       // 仅允许更新“自己是作者”的游戏；更新场景以 DB 现有 creatorId 为准
       if (!meCreatorId || meCreatorId !== effCreatorId) {
@@ -177,6 +179,8 @@ export async function POST(req: Request) {
         ruleText,
         coverUrl,
         ...(coverData ? { coverMime, coverData } : {}),
+        // 管理员允许调整作者归属（creatorId）
+        ...(isAdmin ? { creatorId: effCreatorId } : {}),
         updatedAt: new Date(),
       },
     });

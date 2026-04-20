@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { creators } from "@/lib/db/schema";
 import { getSession } from "@/lib/auth/session";
 import { ensureCreatorsAuthFields } from "@/lib/db/ensureCreatorsAuthFields";
+import { safeProfilePathForCreatorId } from "@/lib/creatorProfilePath";
 import ProfileEditForm from "./ProfileEditForm";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +22,7 @@ export default async function ProfileEditPage() {
       id: creators.id,
       name: creators.name,
       avatarUrl: creators.avatarUrl,
+      profilePath: creators.profilePath,
       gender: creators.gender,
       age: creators.age,
       city: creators.city,
@@ -30,21 +32,22 @@ export default async function ProfileEditPage() {
     .limit(1);
 
   if (!row?.id) redirect("/login");
+  const profilePath = row.profilePath || safeProfilePathForCreatorId(row.id);
 
   return (
     <main className="wrap">
-      <section className="card homeCard">
+      <section className="card homeCard createBento">
         <header className="header">
           <h1>个人资料</h1>
           <p className="desc">简洁优雅地展示你的信息。</p>
         </header>
 
         <section className="creatorList">
-          <ProfileEditForm initial={row} profilePath={`/creators/${row.id}`} />
+          <ProfileEditForm initial={row} profilePath={profilePath} />
         </section>
 
         <div className="homeFooter">
-          <a className="btn btnSecondary" href={`/creators/${row.id}`}>
+          <a className="btn btnSecondary" href={profilePath}>
             返回个人主页
           </a>
         </div>
@@ -52,4 +55,3 @@ export default async function ProfileEditPage() {
     </main>
   );
 }
-
