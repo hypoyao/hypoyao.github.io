@@ -167,16 +167,23 @@
   min-height: 0;
 }
 
-.chatStopRow {
-  padding: 0 12px 8px;
-  display: flex;
-  justify-content: flex-end;
+/* 旧的“停止任务”行已移除：按钮现在在 AI 气泡右上角 */
+
+.chatStopLink {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 1000;
+  color: rgba(37, 99, 235, 0.95);
+  text-decoration: underline;
 }
-.chatStopRow .btn {
-  width: auto;
-  padding: 10px 14px;
-  font-size: 13px;
-  font-weight: 1100;
+.chatStopLink:hover {
+  filter: brightness(0.95);
 }
 
 .chatModelRow {
@@ -209,14 +216,16 @@
   border: 1px solid rgba(15, 23, 42, 0.08);
   background: rgba(255, 255, 255, 0.60);
   /* 气泡高度跟随内容，但限制最小/最大高度 */
-  min-height: 144px;
+  /* 最小高度：一行内容即可（避免空泡太高） */
+  min-height: 56px;
   max-height: min(1040px, 90vh);
   overflow: auto;
+  position: relative;
 }
 
 /* AI 流式输出（“AI 正在生成代码…”）的气泡：给更大的可视高度 */
 .chatMsg.isThinking {
-  min-height: 360px;
+  min-height: 180px;
   max-height: min(1640px, 92vh);
 }
 

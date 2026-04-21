@@ -4,10 +4,16 @@
     "fef0692f75adf92f633a5d28": {
       "games": [
         {
+          "gameId": "g-20260421-c107b9",
+          "entry": "/games/g-20260421-c107b9/index.html",
+          "mtimeMs": 1776737854619,
+          "title": "新建一个扫雷的小游戏"
+        },
+        {
           "gameId": "g-20260421-a6bbee",
           "entry": "/games/g-20260421-a6bbee/index.html",
-          "mtimeMs": 1776734988303.2737,
-          "title": "扫雷小英雄"
+          "mtimeMs": 1776737633352,
+          "title": "🧨 扫雷小游戏"
         },
         {
           "gameId": "g-20260420-31acef",
@@ -28,7 +34,7 @@
           "title": "打地鼠游戏"
         }
       ],
-      "updatedAt": 1776736184967,
+      "updatedAt": 1776737854620,
       "complete": true
     }
   }

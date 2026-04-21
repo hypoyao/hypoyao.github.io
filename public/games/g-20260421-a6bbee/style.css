@@ -1,169 +1,218 @@
 * {
-    box-sizing: border-box;
-    -webkit-tap-highlight-color: transparent;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
 body {
-    font-family: 'Comic Sans MS', 'PingFang SC', sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    min-height: 100vh;
-    display: flex;
-    justify-content: center;
-    align-items: flex-start;
-    padding: 20px;
-    margin: 0;
+  font-family: 'Comic Sans MS', '微软雅黑', sans-serif;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  padding: 10px;
 }
 
 .game-container {
-    background: #f5f5f5;
-    border-radius: 20px;
-    padding: 20px;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.3);
-    max-width: 100%;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 20px;
+  padding: 15px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+  max-width: 100%;
+  width: 100%;
+  max-width: 600px;
 }
 
 h1 {
-    text-align: center;
-    color: #333;
-    margin: 0 0 15px 0;
-    font-size: 1.5rem;
+  text-align: center;
+  color: #333;
+  margin-bottom: 15px;
+  font-size: 1.8rem;
 }
 
 .controls {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 15px;
 }
 
-select, button {
-    padding: 10px 15px;
-    border: none;
-    border-radius: 10px;
-    font-size: 14px;
-    cursor: pointer;
+.difficulty {
+  display: flex;
+  gap: 5px;
+  justify-content: center;
 }
 
-select {
-    flex: 1;
-    background: #fff;
-    border: 2px solid #ddd;
+.difficulty button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 20px;
+  background: #e0e0e0;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.3s;
 }
 
-#newGame {
-    background: #4CAF50;
-    color: white;
-    font-weight: bold;
+.difficulty button.active {
+  background: #667eea;
+  color: white;
 }
 
-.status-bar {
-    display: flex;
-    justify-content: space-between;
-    background: #333;
-    color: #fff;
-    padding: 10px 20px;
-    border-radius: 10px;
-    margin-bottom: 15px;
-    font-size: 18px;
+.game-info {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 20px;
+  font-size: 1.2rem;
+  font-weight: bold;
+}
+
+.face-btn {
+  font-size: 1.5rem;
+  background: #ffd700;
+  border: none;
+  border-radius: 50%;
+  width: 45px;
+  height: 45px;
+  cursor: pointer;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+  transition: transform 0.2s;
+}
+
+.face-btn:hover {
+  transform: scale(1.1);
 }
 
 .mode-switch {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 15px;
+  display: flex;
+  justify-content: center;
 }
 
-.mode-btn {
-    flex: 1;
-    padding: 12px;
-    background: #e0e0e0;
-    color: #666;
-    font-size: 16px;
+.flag-mode {
+  padding: 8px 20px;
+  border: 2px solid #ff6b6b;
+  border-radius: 20px;
+  background: white;
+  color: #ff6b6b;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: bold;
 }
 
-.mode-btn.active {
-    background: #2196F3;
-    color: white;
+.flag-mode.active {
+  background: #ff6b6b;
+  color: white;
 }
 
-.mode-btn.active.flag-mode {
-    background: #f44336;
+/* 游戏区域：允许垂直滚动，禁止水平滚动 */
+.board-wrapper {
+  overflow-x: hidden;
+  overflow-y: auto;
+  max-height: 70vh;
+  border: 3px solid #333;
+  border-radius: 8px;
+  background: #bdbdbd;
 }
 
 .board {
-    display: grid;
-    background: #999;
-    padding: 5px;
-    border-radius: 10px;
-    gap: 2px;
-    justify-content: center;
-    border: 4px solid #666;
-    box-shadow: inset 0 0 10px rgba(0,0,0,0.3);
+  display: grid;
+  gap: 1px;
+  background: #999;
+  padding: 2px;
+  margin: 0 auto;
 }
 
 .cell {
-    width: 30px;
-    height: 30px;
-    background: linear-gradient(145deg, #f0f0f0, #dcdcdc);
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: bold;
-    font-size: 16px;
-    cursor: pointer;
-    user-select: none;
-    -webkit-user-select: none;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 18px;
+  cursor: pointer;
+  user-select: none;
+  background: linear-gradient(145deg, #c9c9c9, #a0a0a0);
+  border: 2px solid;
+  border-color: #fff #666 #666 #fff;
 }
 
-.cell:active {
-    transform: scale(0.95);
+.cell:hover {
+  background: linear-gradient(145deg, #dcdcdc, #b0b0b0);
 }
 
 .cell.revealed {
-    background: #fff;
-    cursor: default;
+  background: #d4d4d4;
+  border: 1px solid #999;
+  cursor: default;
 }
 
 .cell.mine {
-    background: #ff4444;
+  background: #ff6b6b;
 }
 
 .cell.flagged {
-    color: #f44336;
+  color: #ff6b6b;
 }
 
-.cell[data-num="1"] { color: #2196F3; }
-.cell[data-num="2"] { color: #4CAF50; }
-.cell[data-num="3"] { color: #f44336; }
-.cell[data-num="4"] { color: #9C27B0; }
-.cell[data-num="5"] { color: #FF9800; }
-.cell[data-num="6"] { color: #00BCD4; }
+/* 数字颜色 */
+.cell[data-num="1"] { color: #0066cc; }
+.cell[data-num="2"] { color: #00aa00; }
+.cell[data-num="3"] { color: #cc0000; }
+.cell[data-num="4"] { color: #6600cc; }
+.cell[data-num="5"] { color: #cc6600; }
+.cell[data-num="6"] { color: #00cccc; }
 .cell[data-num="7"] { color: #333; }
-.cell[data-num="8"] { color: #888; }
+.cell[data-num="8"] { color: #666; }
 
-.message {
-    text-align: center;
-    font-size: 20px;
-    font-weight: bold;
-    margin-top: 15px;
-    padding: 15px;
-    border-radius: 10px;
+/* 手机适配 */
+@media (max-width: 480px) {
+  .game-container {
+    padding: 10px;
+  }
+  
+  h1 {
+    font-size: 1.5rem;
+  }
+  
+  .cell {
+    width: 30px;
+    height: 30px;
+    font-size: 14px;
+  }
+  
+  .board-wrapper {
+    max-height: 65vh;
+  }
 }
 
-.message.win {
-    background: #C8E6C9;
-    color: #2E7D32;
+/* 游戏结束遮罩 */
+.game-over {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0,0,0,0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  z-index: 100;
 }
 
-.message.lose {
-    background: #FFCDD2;
-    color: #C62828;
+.game-over h2 {
+  color: white;
+  font-size: 2rem;
+  margin-bottom: 20px;
 }
 
-@media (max-width: 400px) {
-    .cell {
-        width: 25px;
-        height: 25px;
-        font-size: 14px;
-    }
+.game-over button {
+  padding: 15px 30px;
+  font-size: 1.2rem;
+  background: #667eea;
+  color: white;
+  border: none;
+  border-radius: 25px;
+  cursor: pointer;
 }

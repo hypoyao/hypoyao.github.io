@@ -916,6 +916,44 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
             </div>
           </details>
         </div>
+
+        <div className="createTopRight" aria-label="model picker">
+          <div className="createTopInline" style={{ gap: 6, minWidth: 0 }}>
+            <span className="createTopLabel">模型</span>
+            <select
+              className="restInput"
+              value={provider}
+              disabled={busy}
+              onChange={(e) => {
+                const p = (e.target.value || "openrouter") as any;
+                if (p !== "deepseek" && p !== "openrouter") return;
+                setProvider(p);
+                // 切换 provider 时给一个合理默认
+                if (p === "openrouter") setModel("nvidia/nemotron-3-super-120b-a12b:free");
+                else setModel("deepseek-reasoner");
+              }}
+              style={{ padding: "8px 10px", fontSize: 13, fontWeight: 900, width: 140 }}
+              aria-label="选择模型平台"
+            >
+              <option value="openrouter">OpenRouter</option>
+              <option value="deepseek">DeepSeek</option>
+            </select>
+            <select
+              className="restInput"
+              value={model}
+              disabled={busy}
+              onChange={(e) => setModel(e.target.value)}
+              style={{ padding: "8px 10px", fontSize: 13, fontWeight: 900, width: 320, maxWidth: "52vw" }}
+              aria-label="选择模型"
+            >
+              {(provider === "openrouter" ? openrouterModels : deepseekModels).map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
       </div>
 
       <section className="createGrid">
@@ -935,7 +973,15 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
                 `${m.role === "assistant" && typeof m.content === "string" && m.content.startsWith(THINK_PREFIX) ? "isThinking" : ""}`
               }
             >
-              <div className="chatRole">{m.role === "user" ? "我" : "AI"}</div>
+              {busy &&
+              idx === viewMessages.length - 1 &&
+              m.role === "assistant" &&
+              typeof m.content === "string" &&
+              m.content.startsWith(THINK_PREFIX) ? (
+                <button className="chatStopLink" type="button" onClick={stopAi} aria-label="停止AI任务">
+                  停止
+                </button>
+              ) : null}
               {m.role === "assistant" && typeof m.content === "string" && m.content.startsWith(THINK_PREFIX) ? (
                 (() => {
                   const rest = m.content.slice(THINK_PREFIX.length).trimStart();
@@ -944,25 +990,20 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
                   const detail = nl >= 0 ? rest.slice(nl + 1) : "";
                   return (
                     <details className="thinkBox">
-                      <summary className="thinkSummary">{summary}</summary>
+                      <summary className="thinkSummary">AI · {summary}</summary>
                       <pre className="thinkBody">{detail || "（暂无输出）"}</pre>
                     </details>
                   );
                 })()
               ) : (
-                <div className="chatText">{m.content}</div>
+                <>
+                  <div className="chatRole">{m.role === "user" ? "我" : "AI"}</div>
+                  <div className="chatText">{m.content}</div>
+                </>
               )}
             </div>
           ))}
         </div>
-
-        {busy ? (
-          <div className="chatStopRow">
-            <button className="btn btnGray" type="button" onClick={stopAi} aria-label="停止AI任务">
-              停止任务
-            </button>
-          </div>
-        ) : null}
 
         <div className="chatComposer">
           {msg ? (
@@ -977,39 +1018,6 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
               ) : null}
             </div>
           ) : null}
-          <div className="chatModelRow" aria-label="model select">
-            <div className="chatModelLabel">模型：</div>
-            <select
-              className="chatModelSelect"
-              value={provider}
-              disabled={busy}
-              onChange={(e) => {
-                const p = (e.target.value || "openrouter") as any;
-                if (p !== "deepseek" && p !== "openrouter") return;
-                setProvider(p);
-                // 切换 provider 时给一个合理默认
-                if (p === "openrouter") setModel("nvidia/nemotron-3-super-120b-a12b:free");
-                else setModel("deepseek-reasoner");
-              }}
-            >
-              <option value="openrouter">OpenRouter</option>
-              <option value="deepseek">DeepSeek</option>
-            </select>
-
-            <select
-              className="chatModelSelect"
-              value={model}
-              disabled={busy}
-              onChange={(e) => setModel(e.target.value)}
-            >
-              {(provider === "openrouter" ? openrouterModels : deepseekModels).map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
           <div className="chatRow">
             <textarea
               className="restTextarea"
