@@ -846,15 +846,31 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
         })();
       } else if (type === "publish") {
         if (!gameId) return;
-        if (!loggedIn) {
-          if (window.confirm("发布/更新需要先登录。现在去登录吗？")) window.location.href = "/login";
-          return;
-        }
-        setMsg("发布中…正在打开发布页面…");
-        // 让提示先渲染出来再跳转
-        setTimeout(() => {
-          window.location.href = `/publish?id=${encodeURIComponent(gameId)}`;
-        }, 80);
+        (async () => {
+          // 有时页面刚加载完，loggedIn 还没来得及从 /api/me 更新；
+          // 这里再确认一次，避免“明明已登录却提示去登录”。
+          let okLogin = loggedIn;
+          if (!okLogin) {
+            try {
+              const me = await fetch("/api/me", { cache: "no-store" })
+                .then((x) => x.json())
+                .catch(() => null);
+              okLogin = !!me?.loggedIn;
+              setLoggedIn(okLogin);
+            } catch {
+              okLogin = false;
+            }
+          }
+          if (!okLogin) {
+            if (window.confirm("发布需要先登录。现在去登录吗？")) window.location.href = `/login?next=${encodeURIComponent("/create")}`;
+            return;
+          }
+          setMsg("发布中…正在打开发布页面…");
+          // 让提示先渲染出来再跳转
+          setTimeout(() => {
+            window.location.href = `/publish?id=${encodeURIComponent(gameId)}`;
+          }, 80);
+        })();
       } else if (type === "migrate") {
         (async () => {
           setMsg("导入中…");

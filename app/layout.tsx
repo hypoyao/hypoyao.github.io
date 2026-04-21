@@ -19,10 +19,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="shortcut icon" href="/favicon.ico?v=7" />
         <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=7" />
         {/* 复用原有静态样式（位于 public/） */}
-        <link rel="stylesheet" href="/styles.css" />
-        <link rel="stylesheet" href="/home.css" />
-        <link rel="stylesheet" href="/creators.css" />
-        <link rel="stylesheet" href="/create.css" />
+        {/* 注意：public 下的 css 可能被浏览器/CDN 缓存；这里加版本号方便样式立即生效 */}
+        <link rel="stylesheet" href="/styles.css?v=8" />
+        <link rel="stylesheet" href="/home.css?v=8" />
+        <link rel="stylesheet" href="/creators.css?v=8" />
+        <link rel="stylesheet" href="/create.css?v=8" />
       </head>
       <body>
         {children}
