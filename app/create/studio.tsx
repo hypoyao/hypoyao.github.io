@@ -172,12 +172,14 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
     } catch {}
   }, [provider, model]);
 
-  function act(type: "new" | "publish" | "delete") {
+  function act(type: "new" | "publish" | "delete" | "migrate") {
     const ok =
       type === "new"
         ? window.confirm("确定新建一个游戏吗？\n\n当前游戏不会丢失，你可以在“我的游戏”里再切回来。")
         : type === "publish"
           ? window.confirm(`确定${publishText}吗？`)
+          : type === "migrate"
+            ? window.confirm("导入旧游戏：会把历史 public/games 里的草稿游戏导入到数据库。\n\n提示：如果你之前的草稿是在其它机器/旧部署创建的，这里可能导入不到。是否继续？")
           : window.confirm("确定删除当前游戏吗？\n\n删除后无法恢复。");
     if (!ok) return;
     if (opMenuRef.current) opMenuRef.current.open = false;
@@ -845,6 +847,19 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
         setTimeout(() => {
           window.location.href = `/publish?id=${encodeURIComponent(gameId)}`;
         }, 80);
+      } else if (type === "migrate") {
+        (async () => {
+          setMsg("导入中…");
+          try {
+            const r = await fetch("/api/creator/migrate", { method: "POST" });
+            const j = await r.json().catch(() => ({}));
+            if (!r.ok || !j?.ok) throw new Error(j?.error || `MIGRATE_FAILED(${r.status})`);
+            await refreshProjects();
+            setMsg(`导入完成：共扫描 ${j.scanned || 0} 个，成功导入 ${j.migrated || 0} 个。`);
+          } catch (err: any) {
+            setMsg(`导入失败：${err?.message || "未知错误"}`);
+          }
+        })();
       } else if (type === "delete") {
         if (!gameId) return;
         (async () => {
@@ -919,6 +934,9 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
               </button>
               <button className="createMenuItem" type="button" onClick={() => act("publish")} disabled={busy || !gameId}>
                 {publishText}
+              </button>
+              <button className="createMenuItem" type="button" onClick={() => act("migrate")} disabled={busy}>
+                导入旧游戏
               </button>
               <button className="createMenuItem" type="button" onClick={() => act("delete")} disabled={busy || !gameId}>
                 删除游戏

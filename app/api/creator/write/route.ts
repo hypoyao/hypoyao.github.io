@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
-import path from "node:path";
-import fs from "node:fs/promises";
 import { getSession } from "@/lib/auth/session";
-import { ownerKeyFromSession, upsertCreatorGame } from "@/lib/creator/creatorIndex";
+import { ownerKeyFromSession } from "@/lib/creator/creatorIndex";
+import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
+import { db } from "@/lib/db";
+import { sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -56,25 +57,12 @@ function toKeywordFromPrompt(s: string) {
   return k;
 }
 
-async function updateMeta(base: string, patch: Record<string, any>) {
-  try {
-    const p = path.join(base, "meta.json");
-    let obj: any = {};
-    try {
-      const raw = await fs.readFile(p, "utf8");
-      obj = JSON.parse(raw);
-    } catch {}
-    obj = { ...(obj || {}), ...(patch || {}) };
-    await fs.writeFile(p, JSON.stringify(obj, null, 2), "utf8");
-  } catch {
-    // ignore
-  }
-}
-
 export async function POST(req: Request) {
   try {
     const sess = await getSession();
     if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED" });
+    const ownerKey = ownerKeyFromSession(sess);
+    if (!ownerKey) return json(401, { ok: false, error: "UNAUTHORIZED" });
     let body: Body;
     try {
       body = (await req.json()) as Body;
@@ -87,28 +75,52 @@ export async function POST(req: Request) {
 
     const gid = safeGameId(body?.gameId || "creator-playground");
     if (!gid) return json(400, { ok: false, error: "INVALID_GAME_ID" });
-    const base = path.join(process.cwd(), "public", "games", gid);
-    await fs.mkdir(base, { recursive: true });
+    await ensureCreatorDraftTables();
 
-    // seed 模式：如果 index.html 已存在就不覆盖（避免误删用户内容）
-    const indexPath = path.join(base, "index.html");
-    const indexExists = await fs
-      .stat(indexPath)
-      .then(() => true)
-      .catch(() => false);
+    // 确保该 game 属于当前用户
+    const owns = await db.execute(sql`
+      select id
+      from creator_draft_games
+      where id = ${gid} and owner_key = ${ownerKey}
+      limit 1
+    `);
+    const ownRows = Array.isArray((owns as any).rows) ? (owns as any).rows : [];
+    if (!ownRows.length) {
+      // 允许“第一次写入”时自动创建（兼容旧流程）
+      await db.execute(sql`
+        insert into creator_draft_games (id, owner_key, title)
+        values (${gid}, ${ownerKey}, '')
+        on conflict (id) do nothing
+      `);
+    }
 
     const written: string[] = [];
     let updatedTitle = "";
     for (const f of files) {
       const rel = safeRel(f?.path || "");
       if (!rel) continue;
-      if (body.seed && indexExists && rel === "index.html") continue;
-      const out = path.join(base, rel);
       const content = typeof f?.content === "string" ? f.content : "";
-      await fs.writeFile(out, content, "utf8");
+      if (body.seed && rel === "index.html") {
+        // seed：如果 index 已存在就不覆盖
+        const ex = await db.execute(sql`
+          select 1
+          from creator_draft_files
+          where game_id = ${gid} and path = 'index.html'
+          limit 1
+        `);
+        const exRows = Array.isArray((ex as any).rows) ? (ex as any).rows : [];
+        if (exRows.length) continue;
+      }
+
+      await db.execute(sql`
+        insert into creator_draft_files (game_id, path, content)
+        values (${gid}, ${rel}, ${content})
+        on conflict (game_id, path)
+        do update set content = excluded.content, updated_at = now()
+      `);
       written.push(`/games/${gid}/${rel}`);
 
-      // 同步 meta，方便 list 更快读取
+      // 同步 title
       if (rel === "prompt.md") {
         const k = toKeywordFromPrompt(content);
         if (k) updatedTitle = k;
@@ -120,19 +132,12 @@ export async function POST(req: Request) {
 
     if (!written.length) return json(400, { ok: false, error: "NO_VALID_FILES" });
 
-    if (updatedTitle) await updateMeta(base, { title: updatedTitle, mtimeMs: Date.now() });
-    // 同步到高速索引
-    try {
-      const ownerKey = ownerKeyFromSession(sess);
-      if (ownerKey) {
-        await upsertCreatorGame(ownerKey, {
-          gameId: gid,
-          entry: `/games/${gid}/index.html`,
-          mtimeMs: Date.now(),
-          title: updatedTitle || undefined,
-        });
-      }
-    } catch {}
+    await db.execute(sql`
+      update creator_draft_games
+      set updated_at = now(),
+          title = case when ${updatedTitle} <> '' then ${updatedTitle} else title end
+      where id = ${gid} and owner_key = ${ownerKey}
+    `);
 
     return json(200, { ok: true, written, gameId: gid, entry: `/games/${gid}/index.html` });
   } catch (e: any) {

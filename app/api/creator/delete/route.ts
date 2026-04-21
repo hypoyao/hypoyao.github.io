@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
-import path from "node:path";
-import fs from "node:fs/promises";
 import { getSession } from "@/lib/auth/session";
-import { ownerKeyFromSession, removeCreatorGame } from "@/lib/creator/creatorIndex";
+import { ownerKeyFromSession } from "@/lib/creator/creatorIndex";
+import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
+import { db } from "@/lib/db";
+import { sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -28,18 +29,17 @@ export async function POST(req: Request) {
   const gid = String(body?.gameId || "").trim();
   if (!isCreatorGameId(gid)) return json(400, { ok: false, error: "INVALID_GAME_ID" });
 
-  const dir = path.join(process.cwd(), "public", "games", gid);
   try {
-    await fs.rm(dir, { recursive: true, force: true });
+    const ownerKey = ownerKeyFromSession(sess);
+    if (!ownerKey) return json(401, { ok: false, error: "UNAUTHORIZED" });
+    await ensureCreatorDraftTables();
+    await db.execute(sql`
+      delete from creator_draft_games
+      where id = ${gid} and owner_key = ${ownerKey}
+    `);
   } catch (e: any) {
     return json(500, { ok: false, error: String(e?.message || e) });
   }
-
-  // 同步索引
-  try {
-    const ownerKey = ownerKeyFromSession(sess);
-    if (ownerKey) await removeCreatorGame(ownerKey, gid);
-  } catch {}
 
   return json(200, { ok: true, gameId: gid });
 }

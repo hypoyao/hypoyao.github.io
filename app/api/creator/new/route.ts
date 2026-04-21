@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
-import path from "node:path";
-import fs from "node:fs/promises";
 import { getSession } from "@/lib/auth/session";
-import { ownerKeyFromSession, upsertCreatorGame } from "@/lib/creator/creatorIndex";
+import { ownerKeyFromSession } from "@/lib/creator/creatorIndex";
+import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
+import { db } from "@/lib/db";
+import { sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 function json(status: number, data: unknown) {
   return NextResponse.json(data, { status, headers: { "cache-control": "no-store" } });
@@ -30,20 +32,16 @@ export async function POST() {
   if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED" });
 
   try {
+    await ensureCreatorDraftTables();
     const id = genId();
-    const base = path.join(process.cwd(), "public", "games", id);
-    await fs.mkdir(base, { recursive: true });
-    // 写入 meta：用于“我的游戏”列表快速筛选 + 加速
-    try {
-      const metaPath = path.join(base, "meta.json");
-      const ownerKey = ownerKeyFromSession(sess);
-      const meta = { ownerKey, createdAt: Date.now(), title: "" };
-      await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), "utf8");
-      // 同步到高速索引（create 页“我的游戏”列表）
-      if (ownerKey) {
-        await upsertCreatorGame(ownerKey, { gameId: id, entry: `/games/${id}/index.html`, mtimeMs: Date.now(), title: "" });
-      }
-    } catch {}
+    const ownerKey = ownerKeyFromSession(sess);
+    if (!ownerKey) return json(401, { ok: false, error: "UNAUTHORIZED" });
+
+    await db.execute(sql`
+      insert into creator_draft_games (id, owner_key, title)
+      values (${id}, ${ownerKey}, '')
+      on conflict (id) do nothing;
+    `);
     return json(200, { ok: true, gameId: id, entry: `/games/${id}/index.html` });
   } catch (e: any) {
     return json(500, { ok: false, error: `NEW_GAME_FAILED:${String(e?.message || e)}` });
