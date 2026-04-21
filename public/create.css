@@ -236,6 +236,10 @@
 .chatMsg.isUser {
   background: rgba(37, 99, 235, 0.08);
   border-color: rgba(37, 99, 235, 0.18);
+  /* 用户自己发的内容：允许更高，超过才在气泡内滚动 */
+  /* 不要用 vh 兜底：否则最多也就一屏高，看起来还是“很小”；
+     允许气泡随着内容继续变高，由外层 chatList 滚动承载 */
+  max-height: 3600px;
 }
 .createNeo .chatMsg {
   /* AI 气泡：淡绿（更像卡片） */

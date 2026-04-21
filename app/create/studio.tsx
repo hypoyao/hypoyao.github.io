@@ -557,7 +557,12 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
       body: JSON.stringify({ gameId: useId, files }),
     });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok || !j?.ok) throw new Error(j?.error || "WRITE_FAILED");
+    if (!r.ok || !j?.ok) {
+      const err = String(j?.error || "").trim();
+      // 常见：登录过期 -> 401
+      if (r.status === 401 || err === "UNAUTHORIZED") throw new Error("UNAUTHORIZED");
+      throw new Error(err || `WRITE_FAILED(${r.status})`);
+    }
   }
 
   async function sendText(textRaw: string, gid?: string, baseMsgs?: ChatMsg[]) {
@@ -753,14 +758,19 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
         return;
       }
       const m = String(e?.message || "未知错误");
+      const ml = m.toLowerCase();
       const hint =
-        m.toLowerCase().includes("missing_deepseek_api_key")
+        ml.includes("unauthorized")
+          ? "（登录状态可能已过期：请刷新页面或重新登录）"
+          : ml.includes("missing_deepseek_api_key")
           ? "（服务端未配置 DEEPSEEK_API_KEY）"
-          : m.toLowerCase().includes("missing_openrouter_api_key")
+          : ml.includes("missing_openrouter_api_key")
             ? "（服务端未配置 OPENROUTER_API_KEY）"
-            : m.toLowerCase().includes("fetch failed")
-              ? "（服务端请求模型失败：常见原因是网络/DNS/代理/TLS/Key 限制；建议重试或切换模型）"
-          : m.toLowerCase().includes("terminated")
+            : ml.includes("write_internal:erofs") || ml.includes("write_internal:eperm")
+              ? "（服务器文件系统可能是只读/无权限，导致无法保存游戏文件；需要换成可写环境或改用数据库/对象存储保存）"
+            : ml.includes("fetch_failed") || ml.includes("fetch failed") || ml.includes("network error")
+              ? "（网络异常：可能是服务端到模型的网络/DNS/代理/TLS 问题，或浏览器到服务端连接中断；建议重试、切换模型/Provider，必要时刷新页面）"
+          : ml.includes("terminated")
             ? "（连接被中断：可能是网络/模型超时/Key 无效/服务端被重启，建议重试）"
             : "（建议重试；如持续失败再检查 OPENROUTER_API_KEY / DEEPSEEK_API_KEY）";
       setMsg(`出错：${m}${hint}`);
