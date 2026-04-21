@@ -60,6 +60,24 @@ export async function GET(_req: Request, ctx: { params: Promise<{ slug: string[]
         },
       });
     }
+    // 如果还没写入任何文件：对 index.html 给一个可用占位页面，避免预览 404
+    if (rel === "index.html") {
+      const html =
+        "<!doctype html><html lang='zh-CN'><head><meta charset='UTF-8'/>" +
+        "<meta name='viewport' content='width=device-width,initial-scale=1.0'/>" +
+        "<title>草稿未初始化</title>" +
+        "<style>body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;background:#f8fafc}" +
+        ".wrap{max-width:860px;margin:24px auto;padding:0 16px}.card{background:#fff;border:1px solid rgba(15,23,42,.10);" +
+        "border-radius:16px;padding:16px}h1{margin:0 0 8px;font-size:18px}p{margin:0;color:rgba(15,23,42,.75);line-height:1.6}" +
+        "</style></head><body><div class='wrap'><div class='card'>" +
+        "<h1>这个草稿还没有生成文件</h1>" +
+        "<p>请回到 create 页面，在左侧发一句话让 AI 生成/修改游戏，预览就会自动出现。</p>" +
+        "</div></div></body></html>";
+      return new NextResponse(html, {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+      });
+    }
     return new NextResponse("Not Found", { status: 404 });
   }
 
@@ -77,4 +95,3 @@ export async function GET(_req: Request, ctx: { params: Promise<{ slug: string[]
     return new NextResponse("Not Found", { status: 404 });
   }
 }
-

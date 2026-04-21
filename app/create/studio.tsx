@@ -296,7 +296,7 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
 
   async function ensureSeed(gid: string) {
     // 初始化该小游戏文件（seed 模式下 index.html 不会覆盖已存在内容）
-    await fetch("/api/creator/write", {
+    const r = await fetch("/api/creator/write", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -334,12 +334,16 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
         ],
       }),
     });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      throw new Error(String(j?.error || `SEED_FAILED(${r.status})`));
+    }
   }
 
   async function writePrompt(gid: string, promptText: string) {
     const content = (promptText || "").trim();
     if (!content) return;
-    await fetch("/api/creator/write", {
+    const r = await fetch("/api/creator/write", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -347,6 +351,10 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
         files: [{ path: "prompt.md", content }],
       }),
     });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      throw new Error(String(j?.error || `WRITE_PROMPT_FAILED(${r.status})`));
+    }
   }
 
   useEffect(() => {

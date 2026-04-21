@@ -218,7 +218,9 @@
   /* 气泡高度跟随内容，但限制最小/最大高度 */
   /* 最小高度：一行内容即可（避免空泡太高） */
   min-height: 56px;
-  max-height: min(1040px, 90vh);
+  /* 最大高度：尽量让气泡随内容变高，由外层聊天列表滚动承载；
+     只有超过这个上限才在气泡内部滚动 */
+  max-height: 3600px;
   overflow: auto;
   position: relative;
 }
@@ -226,12 +228,12 @@
 /* AI 流式输出（“AI 正在生成代码…”）的气泡：给更大的可视高度 */
 .chatMsg.isThinking {
   min-height: 180px;
-  max-height: min(1640px, 92vh);
+  max-height: 5200px;
 }
 
 /* 普通 AI 消息也给更大的可视高度（用户反馈太挤） */
 .chatMsg.isAi {
-  max-height: min(1280px, 92vh);
+  max-height: 3600px;
 }
 .chatMsg.isUser {
   background: rgba(37, 99, 235, 0.08);
