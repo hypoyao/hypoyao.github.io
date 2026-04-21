@@ -3,7 +3,17 @@
 }
 
 .createCard {
-  width: min(1320px, 100%);
+  width: min(1560px, 100%);
+}
+
+/* create 页：大屏尽量铺宽，提升预览体验 */
+.createWrap {
+  place-items: start center;
+}
+@media (min-width: 1100px) {
+  .createWrap {
+    padding: 16px 16px 22px;
+  }
 }
 
 /* create 顶部右侧“回到首页”图标按钮（复用 homeAvatarBtn 的外框） */
@@ -52,6 +62,20 @@
   font-size: 13px;
   font-weight: 1000;
   user-select: none;
+  transition: filter 120ms ease, transform 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+.createMenuBtn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.22), 0 10px 22px rgba(2, 6, 23, 0.06);
+}
+@media (hover: hover) {
+  .createMenuBtn:hover {
+    filter: brightness(1.03);
+    border-color: rgba(15, 23, 42, 0.18);
+  }
+}
+.createMenuBtn:active {
+  transform: scale(0.99);
 }
 .createMenuBtn::-webkit-details-marker {
   display: none;
@@ -83,6 +107,7 @@
 }
 .createMenuItem:hover {
   filter: brightness(1.02);
+  border-color: rgba(15, 23, 42, 0.16);
 }
 .createMenuItem:active {
   transform: scale(0.995);
@@ -368,6 +393,7 @@
   list-style: none;
   cursor: pointer;
   width: fit-content;
+  max-width: min(560px, 92vw);
   padding: 7px 10px;
   border-radius: 999px;
   border: 1px solid rgba(15, 23, 42, 0.12);
@@ -377,6 +403,9 @@
   font-weight: 1000;
   color: rgba(15, 23, 42, 0.82);
   user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .modelEggPanel {
   margin-top: 8px;
@@ -418,6 +447,17 @@
   align-items: stretch;
 }
 .previewGame {
+  min-height: 0;
+  /* 让模拟器填满预览面板高度（否则 iframe 会按默认高度渲染，导致预览不完整） */
+  display: flex;
+  align-items: stretch;
+}
+.previewGame .simShell {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+.previewGame .simScreen {
   min-height: 0;
 }
 .metaPanel {
@@ -690,6 +730,12 @@
   border-radius: 16px;
   background: rgba(255, 255, 255, 1);
   font-weight: 1000;
+}
+@media (hover: hover) {
+  .createBento .createMenuBtn:hover {
+    filter: brightness(1.02);
+    border-color: rgba(148, 163, 184, 0.55);
+  }
 }
 .createBento .createMenuPanel {
   border: 1px solid var(--b-border);

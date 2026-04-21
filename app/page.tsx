@@ -6,9 +6,8 @@ export const dynamic = "force-static";
 export const revalidate = 300;
 
 function toGameEntryHref(path: string) {
-  // public/ 下的静态小游戏实际入口是 /games/<id>/index.html
-  // 为了避免目录 URL 在某些情况下被 Next 误判为“缺少路由”，这里直接指向 index.html
-  return path.endsWith("/") ? `${path}index.html` : path;
+  // 统一走 /games/<id>/（由 app route 输出“两栏壳”页面；游戏本体在 iframe 的 /__raw/ 下）
+  return path.endsWith("/") ? path : `${path}/`;
 }
 
 export default async function HomePage() {

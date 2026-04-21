@@ -298,7 +298,8 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
   }, [viewMessages.length, busy]);
 
   function entryOf(gid: string) {
-    return `/games/${gid}/index.html`;
+    // create 里预览要“原始游戏页面”（不带外层信息栏），避免双层嵌套
+    return `/games/${gid}/__raw/index.html`;
   }
 
   async function newGame() {
@@ -1140,7 +1141,9 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
 
           {/* 彩蛋：模型选择（默认收起，避免占用首屏） */}
           <details className="modelEgg" aria-label="模型选择（彩蛋）">
-            <summary className="modelEggBtn">模型（彩蛋） ▾</summary>
+            <summary className="modelEggBtn" title={currentModelLabel || `${provider} / ${model}`}>
+              模型（彩蛋）：{model} ▾
+            </summary>
             <div className="modelEggPanel">
               <div className="modelEggRow">
                 <span className="modelEggLabel">平台</span>

@@ -11,7 +11,7 @@ import { safeProfilePathForCreatorId } from "@/lib/creatorProfilePath";
 export const dynamic = "force-dynamic";
 
 function toGameEntryHref(path: string) {
-  return path.endsWith("/") ? `${path}index.html` : path;
+  return path.endsWith("/") ? path : `${path}/`;
 }
 
 export default async function CreatorPage({ params }: { params: Promise<{ id: string }> }) {

@@ -59,6 +59,21 @@ async function existsFile(p: string) {
   }
 }
 
+function isTextLikeFile(name: string) {
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  return ["html", "htm", "css", "js", "mjs", "json", "md", "txt", "svg"].includes(ext);
+}
+
+async function listTextFilesFlat(dir: string) {
+  const ents = await fs.readdir(dir, { withFileTypes: true });
+  return ents
+    .filter((e) => e.isFile())
+    .map((e) => e.name)
+    .filter((n) => !n.startsWith("."))
+    .filter((n) => isTextLikeFile(n))
+    .sort();
+}
+
 export async function POST(req: Request) {
   const key = (process.env.ADMIN_API_KEY || "").trim();
   const auth = (req.headers.get("authorization") || "").trim();
@@ -72,7 +87,8 @@ export async function POST(req: Request) {
   const defaultCreatorId = (process.env.MIGRATION_DEFAULT_CREATOR_ID || "tianqing").trim();
   const dryRun = url.searchParams.get("dryRun") === "1";
   const includeDrafts = url.searchParams.get("includeDrafts") === "1";
-  const draftOwnerKey = (process.env.MIGRATION_DRAFT_OWNER_KEY || "").trim();
+  const draftOwnerKey =
+    (url.searchParams.get("draftOwnerKey") || "").trim() || (process.env.MIGRATION_DRAFT_OWNER_KEY || "").trim() || "imported";
 
   try {
     await ensureGamesCoverFields();
@@ -125,17 +141,31 @@ export async function POST(req: Request) {
       const ruleText = String(meta?.rules || meta?.ruleText || "").trim() || shortDesc;
 
       const cidHtml = parseCreatorIdFromHtml(indexHtml);
-      const creatorId = cidHtml || defaultCreatorId;
-      const [creator] = await db.select({ id: creators.id }).from(creators).where(eq(creators.id, creatorId)).limit(1);
-      const effCreatorId = creator?.id || defaultCreatorId;
+      // 兼容：旧 index.html 里 creatorBadge 可能链接到 /creators/p_xxx（profile token），而不是 creators.id
+      let effCreatorId = defaultCreatorId;
+      const tryId = (cidHtml || "").trim();
+      if (tryId) {
+        const [c1] = await db.select({ id: creators.id }).from(creators).where(eq(creators.id, tryId)).limit(1);
+        if (c1?.id) effCreatorId = c1.id;
+        else {
+          const p1 = `/creators/${tryId}`;
+          const p2 = `/creators/${tryId}/`;
+          const [c2] = await db
+            .select({ id: creators.id })
+            .from(creators)
+            .where(eq(creators.profilePath, p1))
+            .limit(1);
+          const [c3] = c2?.id
+            ? [c2]
+            : await db.select({ id: creators.id }).from(creators).where(eq(creators.profilePath, p2)).limit(1);
+          if (c3?.id) effCreatorId = c3.id;
+        }
+      }
 
       // legacy 草稿（g-xxxx）：默认迁移为“草稿”而不是发布（避免污染首页）
       if (isLegacyDraftId(id)) {
         if (!includeDrafts) continue;
-        if (!draftOwnerKey) {
-          errors.push({ id, error: "MISSING_ENV:MIGRATION_DRAFT_OWNER_KEY" });
-          continue;
-        }
+        // draftOwnerKey 为空时会退回 "imported"（不会出现在任何登录用户的“我的游戏”里，但 /games/<id> 可访问）
         if (!dryRun) {
           await ensureCreatorDraftTables();
           await db.execute(sql`
@@ -186,9 +216,10 @@ export async function POST(req: Request) {
       }
       upserted++;
 
-      // 写入文件：index/style/game/prompt/meta
+      // 写入文件：把目录下所有“文本类文件”都入库（兼容 chess.js / chess.css / app.js 等旧游戏结构）
       const fileList: Array<{ path: string; content: string }> = [];
-      for (const p of ["index.html", "style.css", "game.js", "prompt.md", "meta.json"]) {
+      const names = await listTextFilesFlat(dir);
+      for (const p of names) {
         const c = await readTextIfExists(path.join(dir, p));
         if (c) fileList.push({ path: p, content: c });
       }

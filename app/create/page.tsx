@@ -20,7 +20,7 @@ export default async function CreatePage({ searchParams }: { searchParams?: Prom
     redirect(`/login?next=${encodeURIComponent(next)}`);
   }
   return (
-    <main className="wrap">
+    <main className="wrap createWrap">
       <section className="card createCard createBento">
         <header className="header">
           <div className="homeHeaderRow">
