@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 
 type Props = {
   defaultCreatorId: string;
+  sourceDraftId?: string;
   initial?: Partial<{
     id: string;
     title: string;
@@ -18,7 +19,7 @@ type Props = {
   existsInDb?: boolean;
 };
 
-export default function PublishForm({ defaultCreatorId, initial, meCreatorId, isAdmin, existsInDb }: Props) {
+export default function PublishForm({ defaultCreatorId, sourceDraftId, initial, meCreatorId, isAdmin, existsInDb }: Props) {
   const immutable = !!existsInDb;
   const [id, setId] = useState(initial?.id || "");
   const [title, setTitle] = useState(initial?.title || "");
@@ -56,8 +57,9 @@ export default function PublishForm({ defaultCreatorId, initial, meCreatorId, is
       creatorId: effCreatorId,
       coverUrl: coverUrl || undefined,
       path: effPath ? effPath : undefined,
+      sourceDraftId: sourceDraftId || undefined,
     };
-  }, [immutable, isAdmin, initial?.id, initial?.creatorId, initial?.path, id, title, shortDesc, ruleText, creatorId, coverUrl, path]);
+  }, [immutable, isAdmin, initial?.id, initial?.creatorId, initial?.path, id, title, shortDesc, ruleText, creatorId, coverUrl, path, sourceDraftId]);
 
   async function cropCoverToSquareDataUrl(file: File) {
     // 自动居中裁剪为正方形，并缩放到 512x512（封面要求 1:1）
@@ -135,7 +137,7 @@ export default function PublishForm({ defaultCreatorId, initial, meCreatorId, is
       return;
     }
     setMsg("发布中…");
-    const r = await fetch("/api/games", {
+    const r = await fetch("/api/games/publish", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),

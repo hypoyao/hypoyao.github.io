@@ -15,9 +15,12 @@
   gap: 2px;
 }
 .homeBrandTitle {
+  margin: 0;
   font-size: 18px;
   font-weight: 1100;
   letter-spacing: 0.2px;
+  line-height: 1.15;
+  color: rgba(15, 23, 42, 0.86);
 }
 .homeBrandSub {
   font-size: 12px;
@@ -197,6 +200,13 @@
   background: rgba(255, 255, 255, 0.65);
 }
 
+/* 手机端：示例模板只展示前两个，避免首屏过长 */
+@media (max-width: 420px) {
+  .heroChips .heroChip:nth-child(n + 3) {
+    display: none;
+  }
+}
+
 .promptBody {
   margin-top: 6px;
   font-size: 12px;
@@ -326,6 +336,10 @@
   margin: 0;
   font-size: 18px;
   font-weight: 1100;
+  letter-spacing: 0.2px;
+  line-height: 1.15;
+  color: rgba(15, 23, 42, 0.86);
+  white-space: nowrap;
 }
 .sectionSub {
   font-size: 12px;
@@ -415,6 +429,13 @@
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.gameMetaRow .gameMeta {
+  /* 在一行内对齐头像与文字，避免 margin-top 造成“下沉” */
+  margin-top: 0;
+  line-height: 18px;
+  display: inline-flex;
+  align-items: center;
 }
 .gameMetaAvatar {
   width: 18px;

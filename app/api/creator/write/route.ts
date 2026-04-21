@@ -23,7 +23,7 @@ function safeRel(p: string) {
   if (!s) return "";
   if (s.includes("..") || s.includes("\\") || s.includes(":")) return "";
   // 允许写入的文件（避免任意文件写入）
-  if (!["index.html", "game.js", "style.css", "prompt.md"].includes(s)) return "";
+  if (!["index.html", "game.js", "style.css", "prompt.md", "meta.json"].includes(s)) return "";
   return s;
 }
 

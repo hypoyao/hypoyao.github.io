@@ -42,7 +42,6 @@
 - Prompt 面板：折叠 `details/summary`，低干扰但可随时展开查看“过程”
 
 ## 数据策略（落地）
-- Prompt 摘要优先读取：`public/games/<gameId>/prompt.md`（或 prompt.txt）
+- Prompt 等游戏文件统一从数据库读取（`game_files` / `creator_draft_files`），不再依赖 `public/games/*`
 - 没有 prompt 时显示占位文案：暂未公开 Prompt（后续可自动保存创作对话记录）
 - 首页输入框会把 prompt 传到 `/create?prompt=...` 并预填充在创作页输入框中
-

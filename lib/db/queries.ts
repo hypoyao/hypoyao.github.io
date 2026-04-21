@@ -1,15 +1,14 @@
 import { eq } from "drizzle-orm";
 import { db } from "./index";
 import { creators, games } from "./schema";
-import fs from "node:fs/promises";
-import path from "node:path";
+import { unstable_cache } from "next/cache";
 
 export type GameWithCreator = {
   id: string;
   title: string;
   shortDesc: string;
   ruleText: string;
-  prompt?: string | null;
+  prompt?: string | null; // 已不再用于首页展示；保留字段兼容旧代码
   coverUrl: string;
   path: string;
   creator: {
@@ -20,47 +19,7 @@ export type GameWithCreator = {
   };
 };
 
-async function tryGetLocalTitle(gameId: string) {
-  try {
-    const p = path.join(process.cwd(), "public", "games", gameId, "index.html");
-    const html = await fs.readFile(p, "utf-8");
-    const m = html.match(/<title>([^<]{1,80})<\/title>/i);
-    return m?.[1]?.trim() || null;
-  } catch {
-    return null;
-  }
-}
-
-async function hasLocalPngCover(gameId: string) {
-  try {
-    const p = path.join(process.cwd(), "public", "assets", "screenshots", `${gameId}.png`);
-    await fs.access(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function tryGetLocalPrompt(gameId: string) {
-  const base = path.join(process.cwd(), "public", "games", gameId);
-  const tryFiles = ["prompt.md", "prompt.txt", "prompt.mdx"];
-  for (const f of tryFiles) {
-    try {
-      const p = path.join(base, f);
-      const raw = await fs.readFile(p, "utf-8");
-      const s = raw.replace(/\r/g, "").trim();
-      if (!s) continue;
-      // 首页卡片需要“可展开全文”，这里做轻度长度限制避免极端文件过大
-      const normalized = s.replace(/\n{3,}/g, "\n\n").trim();
-      return normalized.slice(0, 2400);
-    } catch {
-      // ignore
-    }
-  }
-  return null;
-}
-
-export async function listGames(): Promise<GameWithCreator[]> {
+async function listGamesUncached(): Promise<GameWithCreator[]> {
   let rows:
     | Array<{
         gameId: string;
@@ -92,38 +51,39 @@ export async function listGames(): Promise<GameWithCreator[]> {
       .from(games)
       .innerJoin(creators, eq(games.creatorId, creators.id));
   } catch {
-    // 数据库不可用/表结构不一致时：不要让首页挂掉，直接返回空列表
     return [];
   }
 
-  const out = await Promise.all(
-    (rows || []).map(async (r) => {
-      const localTitle = await tryGetLocalTitle(r.gameId);
-      const useTitle = localTitle || r.title;
+  if (!rows.length) return [];
 
-      let useCover = r.coverUrl;
-      if (await hasLocalPngCover(r.gameId)) useCover = `/assets/screenshots/${r.gameId}.png`;
-      const prompt = await tryGetLocalPrompt(r.gameId);
+  return (rows || []).map((r) => ({
+    id: r.gameId,
+    title: r.title,
+    shortDesc: r.shortDesc,
+    ruleText: r.ruleText,
+    prompt: null,
+    coverUrl: r.coverUrl,
+    path: r.path,
+    creator: {
+      id: r.creatorId,
+      name: r.creatorName,
+      avatarUrl: r.creatorAvatarUrl,
+      profilePath: r.creatorProfilePath,
+    },
+  })) satisfies GameWithCreator[];
+}
 
-      return {
-        id: r.gameId,
-        title: useTitle,
-        shortDesc: r.shortDesc,
-        ruleText: r.ruleText,
-        prompt,
-        coverUrl: useCover,
-        path: r.path,
-        creator: {
-          id: r.creatorId,
-          name: r.creatorName,
-          avatarUrl: r.creatorAvatarUrl,
-          profilePath: r.creatorProfilePath,
-        },
-      } satisfies GameWithCreator;
-    }),
-  );
+const listGamesCached = unstable_cache(
+  async () => {
+    return await listGamesUncached();
+  },
+  ["listGames:v2"],
+  // CDN / Serverless 缓存 5 分钟：保证首页秒开，同时允许内容定期刷新
+  { revalidate: 300 },
+);
 
-  return out;
+export async function listGames(): Promise<GameWithCreator[]> {
+  return await listGamesCached();
 }
 
 export async function getCreatorById(creatorId: string) {
@@ -172,34 +132,21 @@ export async function listGamesByCreator(creatorId: string): Promise<GameWithCre
     return [];
   }
 
-  const out = await Promise.all(
-    (rows || []).map(async (r) => {
-      const localTitle = await tryGetLocalTitle(r.gameId);
-      const useTitle = localTitle || r.title;
-
-      let useCover = r.coverUrl;
-      if (await hasLocalPngCover(r.gameId)) useCover = `/assets/screenshots/${r.gameId}.png`;
-      const prompt = await tryGetLocalPrompt(r.gameId);
-
-      return {
-        id: r.gameId,
-        title: useTitle,
-        shortDesc: r.shortDesc,
-        ruleText: r.ruleText,
-        prompt,
-        coverUrl: useCover,
-        path: r.path,
-        creator: {
-          id: r.creatorId,
-          name: r.creatorName,
-          avatarUrl: r.creatorAvatarUrl,
-          profilePath: r.creatorProfilePath,
-        },
-      } satisfies GameWithCreator;
-    }),
-  );
-
-  return out;
+  return (rows || []).map((r) => ({
+    id: r.gameId,
+    title: r.title,
+    shortDesc: r.shortDesc,
+    ruleText: r.ruleText,
+    prompt: null,
+    coverUrl: r.coverUrl,
+    path: r.path,
+    creator: {
+      id: r.creatorId,
+      name: r.creatorName,
+      avatarUrl: r.creatorAvatarUrl,
+      profilePath: r.creatorProfilePath,
+    },
+  })) satisfies GameWithCreator[];
 }
 
 // ===== legacy exports（下方旧实现已移动到上面并增强为“与本地游戏页同步”）=====

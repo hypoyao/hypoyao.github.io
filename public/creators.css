@@ -40,10 +40,38 @@
   font-weight: 1100;
   margin: 0;
   color: rgba(15, 23, 42, 0.92);
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .creatorTopActions {
   display: flex;
   justify-content: flex-end;
+}
+
+.iconMiniBtn {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: rgba(255, 255, 255, 0.70);
+  box-shadow: 0 10px 22px rgba(2, 6, 23, 0.06);
+  display: grid;
+  place-items: center;
+  color: rgba(15, 23, 42, 0.82);
+  text-decoration: none;
+  user-select: none;
+  transition: transform 120ms ease, filter 120ms ease;
+}
+.iconMiniBtn:hover {
+  filter: brightness(1.02);
+}
+.iconMiniBtn:active {
+  transform: scale(0.99);
+}
+.iconMiniSvg {
+  width: 16px;
+  height: 16px;
 }
 
 .creatorHead {
@@ -157,6 +185,13 @@
 .gameItemCompact {
   padding: 10px;
   border-radius: 16px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.gameItemCompact .gameName,
+.gameItemCompact .gameDesc {
+  text-decoration: none;
 }
 
 .gameItemCompact .gameThumb {
@@ -176,11 +211,14 @@
     height: 60px;
   }
   .creatorTop {
-    grid-template-columns: auto 1fr;
+    /* 手机端也保持右上角操作位（避免跑到头像下方） */
+    grid-template-columns: auto 1fr auto;
+    align-items: start;
   }
   .creatorTopActions {
-    grid-column: 1 / -1;
-    justify-content: flex-start;
+    grid-column: auto;
+    justify-content: flex-end;
+    align-self: start;
   }
   .profileGrid {
     grid-template-columns: 1fr;

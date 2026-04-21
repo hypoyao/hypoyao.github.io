@@ -13,6 +13,8 @@ const OPENROUTER_MODELS = [
   "qwen/qwen-2.5-72b-instruct:free",
   "anthropic/claude-sonnet-4.6",
   "deepseek/deepseek-v3.2",
+  // Gemini：有些地区/本地网络下走官方节点容易被拦，后端会对该类模型加 provider routing（见下方）
+  "google/gemini-3-flash",
   "google/gemini-3-flash-preview",
   "minimax/minimax-m2.5",
 ] as const;
@@ -55,6 +57,10 @@ function parseCreatorJson(s: string) {
   }
   if (!obj || typeof obj !== "object") throw new Error("NOT_JSON_OBJECT");
   if (typeof obj.assistant !== "string") throw new Error("MISSING_ASSISTANT");
+  if (obj.meta != null) {
+    if (typeof obj.meta !== "object") throw new Error("BAD_META");
+    // 宽松校验：只要是 object 即可；字段缺失交给前端兜底
+  }
   if (obj.files != null) {
     if (!Array.isArray(obj.files)) throw new Error("FILES_NOT_ARRAY");
     for (const f of obj.files) {
@@ -136,6 +142,72 @@ export async function POST(req: Request) {
     model = (OPENROUTER_MODELS as readonly string[]).includes(picked) ? picked : OPENROUTER_MODELS[0];
   }
 
+  // ===== 本地开发：仅对“受地区/风控影响更明显”的模型走线上 Vercel 中转 =====
+  // 目的：本地出口 IP 下，OpenRouter 可能返回 "This model is not available in your region"（Gemini/OpenAI/Claude 常见）；
+  // 让本地仅在调用这些模型时，把请求转发到线上 Vercel 域名，由 Vercel 出口去请求 OpenRouter。
+  //
+  // 使用方式（本地）：
+  //   在 .env.local 设置：DEV_OPENROUTER_PROXY_ORIGIN=https://你的线上域名
+  //
+  // 注意：
+  // - 只影响 /api/creator/chat（其它 API 仍走本地）
+  // - 会把 Cookie header 一并转发到线上（如线上也需要 session）
+  const devProxyOrigin = String(process.env.DEV_OPENROUTER_PROXY_ORIGIN || "").trim().replace(/\/+$/, "");
+  if (process.env.NODE_ENV === "development" && devProxyOrigin && provider === "openrouter") {
+    const ml = String(model || "").toLowerCase();
+    const needProxy =
+      (ml.startsWith("google/") && ml.includes("gemini")) ||
+      ml.startsWith("openai/") ||
+      (ml.startsWith("anthropic/") && ml.includes("claude"));
+    if (needProxy) {
+      const forwardBody = { ...(body as any), messages };
+      const doProxy = async () => {
+        const upstream = await fetch(`${devProxyOrigin}/api/creator/chat`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "text/event-stream, application/json",
+            // 把本地 cookie 转发过去（如果线上需要 session）
+            ...(req.headers.get("cookie") ? { cookie: String(req.headers.get("cookie")) } : {}),
+            // 某些网关会对 UA/Referer 更宽松；给一个稳定值
+            "user-agent": "local-dev-openrouter-proxy",
+          },
+          body: JSON.stringify(forwardBody),
+          // 避免中转请求“永久挂起”
+          signal: AbortSignal.timeout(120_000),
+        });
+        const h = new Headers();
+        const ct = upstream.headers.get("content-type");
+        if (ct) h.set("content-type", ct);
+        h.set("cache-control", "no-store");
+        return new Response(upstream.body, { status: upstream.status, headers: h });
+      };
+      try {
+        return await doProxy();
+      } catch (e: any) {
+        const code = e?.cause?.code || e?.code || "";
+        // ECONNRESET 在本地“系统代理/杀软/公司网络”拦截 HTTPS 长连接时很常见：重试一次
+        if (String(code).toUpperCase() === "ECONNRESET") {
+          try {
+            await new Promise((r) => setTimeout(r, 180));
+            return await doProxy();
+          } catch (e2: any) {
+            const code2 = e2?.cause?.code || e2?.code || "";
+            const msg2 = String(code2 || e2?.message || e2);
+            return json(502, {
+              ok: false,
+              error: `DEV_OPENROUTER_PROXY_FAILED:${msg2}`,
+              hint:
+                "本地到线上域名的连接被重置（ECONNRESET）。常见原因：系统全局代理/本地 7897 代理污染、杀软拦截、公司网络重置 HTTP/2/SSE。建议：临时关闭全局代理；或设置 NO_PROXY=aiprograms.cloud；或把 DEV_OPENROUTER_PROXY_ORIGIN 换成 *.vercel.app 域名再试。",
+            });
+          }
+        }
+        const msg = String(code || e?.message || e);
+        return json(502, { ok: false, error: `DEV_OPENROUTER_PROXY_FAILED:${msg}` });
+      }
+    }
+  }
+
   const serverBasePrompt = (process.env.CREATOR_SYSTEM_PROMPT || CREATOR_SYSTEM_PROMPT).trim();
   const addon = typeof body.promptAddon === "string" ? body.promptAddon.trim() : "";
   // 限制一下长度，避免被塞超长 prompt
@@ -153,6 +225,22 @@ export async function POST(req: Request) {
     temperature: 0.4,
     stream: true,
   };
+  // OpenRouter：对 Gemini 等“官方节点容易被封”的模型，强制走第三方 provider，绕过 Google 官方入口。
+  // 参考：{ provider: { order: ["DeepInfra","Novita","Together"], allow_fallbacks: true } }
+  if (provider === "openrouter") {
+    const m = String(model || "").toLowerCase();
+    const isGemini = m.startsWith("google/") && m.includes("gemini");
+    if (isGemini) {
+      const orderEnv = String(process.env.OPENROUTER_PROVIDER_ORDER || "").trim();
+      const order = orderEnv
+        ? orderEnv
+            .split(",")
+            .map((x) => x.trim())
+            .filter(Boolean)
+        : ["DeepInfra", "Novita", "Together"];
+      payloadBase.provider = { order, allow_fallbacks: true };
+    }
+  }
   // DeepSeek 通常兼容 OpenAI 的 response_format；如果不支持，会返回错误，我们会在下方兜底重试非 json_mode
   payloadBase.response_format = { type: "json_object" };
 
@@ -261,6 +349,8 @@ export async function POST(req: Request) {
             url = `${baseUrl}/v1/chat/completions`;
             model = process.env.DEEPSEEK_MODEL || "deepseek-chat";
             payloadBase.model = model;
+            // DeepSeek API 不支持 OpenRouter 的 provider routing
+            delete payloadBase.provider;
             // 通知前端：已经回退
             sendMeta({ provider, model, reason: "fallback_openrouter_fetch_failed" });
             resp = await callModelStream(payloadBase);
@@ -268,6 +358,7 @@ export async function POST(req: Request) {
             throw e;
           }
         }
+        // 不做“地区不可用时自动降级”：让错误显式暴露，方便用户选择用代理/用 Vercel 中转等方案解决。
         if (!resp.ok) {
           // response_format 可能不兼容，退回普通 stream
           try {

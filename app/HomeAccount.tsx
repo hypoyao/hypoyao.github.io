@@ -48,9 +48,12 @@ export default function HomeAccount() {
     );
   }
 
+  // 已登录但还没有 creator 资料（或缺少头像/主页路径）：也用默认头像占位，引导完善资料
   return (
-    <a className="homeLoginBtn" href="/login" aria-label="账户">
-      已登录
+    <a className="homeAvatarBtn" href="/profile/edit" aria-label="完善资料">
+      <img className="homeAvatarImg" src="/assets/avatars/user.svg" alt="用户头像" />
     </a>
   );
+
+  // unreachable
 }

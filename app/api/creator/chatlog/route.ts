@@ -40,7 +40,8 @@ export async function GET(req: Request) {
   const sess = await getSession();
   if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED" });
   const creatorId = await getMyCreatorId();
-  if (!creatorId) return json(403, { ok: false, error: "FORBIDDEN" });
+  // 有些环境可能还没有创建 creators 记录：聊天记录只是“可选增强”，不要因为它影响创作体验
+  if (!creatorId) return json(200, { ok: true, gameId: "", messages: [] });
 
   const url = new URL(req.url);
   const gameId = normalizeGameId(url.searchParams.get("gameId") || "");
@@ -67,7 +68,8 @@ export async function POST(req: Request) {
   const sess = await getSession();
   if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED" });
   const creatorId = await getMyCreatorId();
-  if (!creatorId) return json(403, { ok: false, error: "FORBIDDEN" });
+  // 同上：没有 creatorId 时直接忽略写入（不报错）
+  if (!creatorId) return json(200, { ok: true, skipped: true });
 
   let body: any = null;
   try {
@@ -88,4 +90,3 @@ export async function POST(req: Request) {
   `);
   return json(200, { ok: true });
 }
-

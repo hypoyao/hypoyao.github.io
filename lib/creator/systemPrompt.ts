@@ -23,14 +23,25 @@ export const CREATOR_SYSTEM_PROMPT =
 export const CREATOR_OUTPUT_FORMAT_ADDON =
   `\n\n` +
   `【非常重要：输出格式】\n` +
-  `为了让系统能自动写入右侧预览工程，你每次回复必须输出 JSON（不要输出多余文本）：\n` +
+  `为了让系统能自动写入右侧预览工程，并在预览区旁边展示“作品信息模块”，你每次回复必须输出 JSON（不要输出多余文本）：\n` +
   `{\n` +
   `  "assistant": "给小朋友看的鼓励式说明（可包含怎么玩/魔法原理）",\n` +
+  `  "meta": {\n` +
+  `    "title": "游戏/应用的名称（简短）",\n` +
+  `    "shortDesc": "一句话简介（≤ 40字）",\n` +
+  `    "rules": "玩法/规则（用分点或短段落，尽量清晰）",\n` +
+  `    "creator": {\n` +
+  `      "name": "创作者名称（如果未知就写“创作者”）"\n` +
+  `    }\n` +
+  `  },\n` +
   `  "files": [\n` +
   `    {"path":"index.html","content":"...可直接运行的 HTML...（建议内联或引用 ./style.css 与 ./game.js）"},\n` +
   `    {"path":"style.css","content":"...样式...（可选）"},\n` +
   `    {"path":"game.js","content":"...脚本...（可选）"}\n` +
   `  ]\n` +
   `}\n` +
-  `限制：files 的 path 只能是 index.html、style.css、game.js 三个之一；不要写其它路径。\n`;
-
+  `限制：\n` +
+  `- files 的 path 只能是 index.html、style.css、game.js 三个之一；不要写其它路径。\n` +
+  `- “meta 模块”用于在游戏区域之外展示信息：不要把规则/作者信息写进游戏画面里。\n`;
+  `- “创作过程/创作者指令”由系统根据对话记录自动整理，你不需要在 JSON 里单独输出。\n`;
+  `- “meta 模块”用于在游戏区域之外展示信息：不要把规则/作者信息写进游戏画面里。\n`;

@@ -6,6 +6,13 @@ type ChatMsg = { role: "system" | "user" | "assistant"; content: string };
 
 type ModelFile = { path: string; content: string };
 
+type GameMeta = {
+  title?: string;
+  shortDesc?: string;
+  rules?: string;
+  creator?: { name?: string };
+};
+
 function nowId() {
   return String(Date.now()) + "-" + Math.random().toString(16).slice(2);
 }
@@ -117,6 +124,9 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
     } catch {}
     return "nvidia/nemotron-3-super-120b-a12b:free";
   });
+  const [currentModelLabel, setCurrentModelLabel] = useState<string>("");
+  const [creatorName, setCreatorName] = useState<string>("");
+  const [gameMeta, setGameMeta] = useState<GameMeta | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const [projects, setProjects] = useState<Array<{ gameId: string; title?: string; entry: string; mtimeMs?: number }>>([]);
   const [loggedIn, setLoggedIn] = useState(false);
@@ -139,6 +149,7 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
       { id: "qwen/qwen-2.5-72b-instruct:free", name: "qwen/qwen-2.5-72b-instruct:free" },
       { id: "anthropic/claude-sonnet-4.6", name: "anthropic/claude-sonnet-4.6" },
       { id: "deepseek/deepseek-v3.2", name: "deepseek/deepseek-v3.2" },
+      { id: "google/gemini-3-flash", name: "google/gemini-3-flash" },
       { id: "google/gemini-3-flash-preview", name: "google/gemini-3-flash-preview" },
       { id: "minimax/minimax-m2.5", name: "minimax/minimax-m2.5" },
     ],
@@ -172,14 +183,17 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
     } catch {}
   }, [provider, model]);
 
-  function act(type: "new" | "publish" | "delete" | "migrate") {
+  // 顶部/聊天区展示当前模型（常驻显示）
+  useEffect(() => {
+    setCurrentModelLabel(`当前模型：${provider} / ${model}`);
+  }, [provider, model]);
+
+  function act(type: "new" | "publish" | "delete") {
     const ok =
       type === "new"
         ? window.confirm("确定新建一个游戏吗？\n\n当前游戏不会丢失，你可以在“我的游戏”里再切回来。")
         : type === "publish"
           ? window.confirm(`确定${publishText}吗？`)
-          : type === "migrate"
-            ? window.confirm("导入旧游戏：会把历史 public/games 里的草稿游戏导入到数据库。\n\n提示：如果你之前的草稿是在其它机器/旧部署创建的，这里可能导入不到。是否继续？")
           : window.confirm("确定删除当前游戏吗？\n\n删除后无法恢复。");
     if (!ok) return;
     if (opMenuRef.current) opMenuRef.current.open = false;
@@ -221,6 +235,22 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
   ]);
 
   const viewMessages = useMemo(() => messages, [messages]);
+
+  // “创作过程/创作者想法”：从对话里提取用户发给 AI 的指令（步骤）
+  const creatorStepsText = useMemo(() => {
+    const userMsgs = (messages || [])
+      .filter((m) => m?.role === "user")
+      .map((m) => String(m.content || "").trim())
+      .filter(Boolean);
+    if (!userMsgs.length) return "";
+    // 去重（避免重复重试导致相同文本堆叠）
+    const dedup: string[] = [];
+    for (const t of userMsgs) {
+      if (!dedup.length || dedup[dedup.length - 1] !== t) dedup.push(t);
+    }
+    const lastN = dedup.slice(-8);
+    return lastN.map((t, i) => `${i + 1}. ${t}`).join("\n");
+  }, [messages]);
 
   // === 聊天记录持久化（刷新不丢） ===
   // 1) gameId 变化时：尝试从 localStorage 恢复该项目的聊天记录
@@ -381,6 +411,7 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
         if (isFromHome) {
           const me = await meP;
           setLoggedIn(!!me?.loggedIn);
+          if (me?.creator?.name) setCreatorName(String(me.creator.name));
           // 只在“从其它页面跳转过来且明确带 auto=1”时自动启动；
           // 启动后立刻把 URL 里的 auto=1 去掉，避免用户刷新页面时重复启动。
           try {
@@ -449,6 +480,7 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
 
         const me = await meP;
         setLoggedIn(!!me?.loggedIn);
+        if (me?.creator?.name) setCreatorName(String(me.creator.name));
       } catch {}
       try {
         const gid = await newGame();
@@ -575,6 +607,34 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
     }
   }
 
+  async function loadGameMeta(gid: string) {
+    const id = (gid || "").trim();
+    if (!id) return;
+    try {
+      const r = await fetch(`/games/${encodeURIComponent(id)}/meta.json?t=${encodeURIComponent(nowId())}`, { cache: "no-store" });
+      if (!r.ok) {
+        setGameMeta(null);
+        return;
+      }
+      const text = await r.text();
+      const j = text ? JSON.parse(text) : null;
+      if (j && typeof j === "object") setGameMeta(j as any);
+      else setGameMeta(null);
+    } catch {
+      setGameMeta(null);
+    }
+  }
+
+  // 切换游戏时加载对应的 meta（用于右侧“作品信息模块”）
+  useEffect(() => {
+    if (!gameId) {
+      setGameMeta(null);
+      return;
+    }
+    loadGameMeta(gameId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameId]);
+
   async function sendText(textRaw: string, gid?: string, baseMsgs?: ChatMsg[]) {
     const text = (textRaw || "").trim();
     const useId = gid || gameId;
@@ -696,8 +756,10 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
                 if (reason && p === "deepseek") {
                   // 明确提醒用户：已回退到 DeepSeek
                   statusRaw = `已回退到 DeepSeek（${m || "deepseek-chat"}）`;
+                  if (m) setCurrentModelLabel(`当前模型：deepseek / ${m}`);
                 } else if (p && m) {
                   statusRaw = `当前模型：${p} / ${m}`;
+                  setCurrentModelLabel(`当前模型：${p} / ${m}`);
                 }
                 statusLine = withTime(statusRaw);
                 paintDraft(true);
@@ -744,10 +806,28 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
         return mm;
       });
 
+      // 作品信息模块（独立于游戏区）：写入 meta.json 以便跨刷新保留
+      let metaObj: GameMeta | null = null;
+      const metaRaw = (parsed as any)?.meta;
+      if (metaRaw && typeof metaRaw === "object") {
+        const creator = metaRaw?.creator && typeof metaRaw.creator === "object" ? metaRaw.creator : {};
+        metaObj = {
+          title: String(metaRaw?.title || "").trim() || String(projects.find((p) => p.gameId === useId)?.title || "").trim() || useId,
+          shortDesc: String(metaRaw?.shortDesc || "").trim(),
+          rules: String(metaRaw?.rules || "").trim(),
+          creator: { name: String(creator?.name || "").trim() || creatorName || "创作者" },
+        };
+        setGameMeta(metaObj);
+      }
+
       const files = (Array.isArray(parsed.files) ? parsed.files : []) as ModelFile[];
-      if (files.length) {
-        await writeFiles(files, useId);
+      const toWrite: ModelFile[] = files.slice();
+      if (metaObj) toWrite.push({ path: "meta.json", content: JSON.stringify(metaObj, null, 2) });
+      if (toWrite.length) {
+        await writeFiles(toWrite, useId);
         setPreviewUrl(`${entryOf(useId)}?t=${encodeURIComponent(nowId())}`);
+        // 重新拉一下 meta，确保与 DB 同步（例如被后端裁剪/规范化）
+        loadGameMeta(useId);
       }
     } catch (e: any) {
       // 用户主动停止
@@ -871,19 +951,6 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
             window.location.href = `/publish?id=${encodeURIComponent(gameId)}`;
           }, 80);
         })();
-      } else if (type === "migrate") {
-        (async () => {
-          setMsg("导入中…");
-          try {
-            const r = await fetch("/api/creator/migrate", { method: "POST" });
-            const j = await r.json().catch(() => ({}));
-            if (!r.ok || !j?.ok) throw new Error(j?.error || `MIGRATE_FAILED(${r.status})`);
-            await refreshProjects();
-            setMsg(`导入完成：共扫描 ${j.scanned || 0} 个，成功导入 ${j.migrated || 0} 个。`);
-          } catch (err: any) {
-            setMsg(`导入失败：${err?.message || "未知错误"}`);
-          }
-        })();
       } else if (type === "delete") {
         if (!gameId) return;
         (async () => {
@@ -959,52 +1026,11 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
               <button className="createMenuItem" type="button" onClick={() => act("publish")} disabled={busy || !gameId}>
                 {publishText}
               </button>
-              <button className="createMenuItem" type="button" onClick={() => act("migrate")} disabled={busy}>
-                导入旧游戏
-              </button>
               <button className="createMenuItem" type="button" onClick={() => act("delete")} disabled={busy || !gameId}>
                 删除游戏
               </button>
             </div>
           </details>
-        </div>
-
-        <div className="createTopRight" aria-label="model picker">
-          <div className="createTopInline" style={{ gap: 6, minWidth: 0 }}>
-            <span className="createTopLabel">模型</span>
-            <select
-              className="restInput"
-              value={provider}
-              disabled={busy}
-              onChange={(e) => {
-                const p = (e.target.value || "openrouter") as any;
-                if (p !== "deepseek" && p !== "openrouter") return;
-                setProvider(p);
-                // 切换 provider 时给一个合理默认
-                if (p === "openrouter") setModel("nvidia/nemotron-3-super-120b-a12b:free");
-                else setModel("deepseek-reasoner");
-              }}
-              style={{ padding: "8px 10px", fontSize: 13, fontWeight: 900, width: 140 }}
-              aria-label="选择模型平台"
-            >
-              <option value="openrouter">OpenRouter</option>
-              <option value="deepseek">DeepSeek</option>
-            </select>
-            <select
-              className="restInput"
-              value={model}
-              disabled={busy}
-              onChange={(e) => setModel(e.target.value)}
-              style={{ padding: "8px 10px", fontSize: 13, fontWeight: 900, width: 320, maxWidth: "52vw" }}
-              aria-label="选择模型"
-            >
-              {(provider === "openrouter" ? openrouterModels : deepseekModels).map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-          </div>
         </div>
       </div>
 
@@ -1013,6 +1039,7 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
           <div className="createPanelHeader">
             <div>
               <div className="createPanelTitle">AI 聊天</div>
+              <div className="createPanelSub">{currentModelLabel || `当前模型：${provider} / ${model}`}</div>
             </div>
           </div>
 
@@ -1110,44 +1137,114 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
               </button>
             </div>
           </div>
+
+          {/* 彩蛋：模型选择（默认收起，避免占用首屏） */}
+          <details className="modelEgg" aria-label="模型选择（彩蛋）">
+            <summary className="modelEggBtn">模型（彩蛋） ▾</summary>
+            <div className="modelEggPanel">
+              <div className="modelEggRow">
+                <span className="modelEggLabel">平台</span>
+                <select
+                  className="restInput modelEggSelect"
+                  value={provider}
+                  disabled={busy}
+                  onChange={(e) => {
+                    const p = (e.target.value || "openrouter") as any;
+                    if (p !== "deepseek" && p !== "openrouter") return;
+                    setProvider(p);
+                    if (p === "openrouter") setModel("nvidia/nemotron-3-super-120b-a12b:free");
+                    else setModel("deepseek-reasoner");
+                  }}
+                  aria-label="选择模型平台"
+                >
+                  <option value="openrouter">OpenRouter</option>
+                  <option value="deepseek">DeepSeek</option>
+                </select>
+              </div>
+              <div className="modelEggRow">
+                <span className="modelEggLabel">模型</span>
+                <select
+                  className="restInput modelEggSelect"
+                  value={model}
+                  disabled={busy}
+                  onChange={(e) => setModel(e.target.value)}
+                  aria-label="选择模型"
+                >
+                  {(provider === "openrouter" ? openrouterModels : deepseekModels).map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </details>
         </div>
       </div>
 
         <div className="createPanel previewPanel" aria-label="preview">
-          <div className="simShell" aria-label="simulator">
-            <div className="simBar" aria-hidden="true">
-              <div className="simDots">
-                <span className="simDot red" />
-                <span className="simDot yellow" />
-                <span className="simDot green" />
-              </div>
-              <div className="simTitle"> </div>
-              <div className="simActions">
-                <a
-                  className="btn btnGray iconBtn simOpenBtn"
-                  href={previewUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="在新标签页打开预览"
-                  title="在新标签页打开预览"
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3Z"
-                      fill="currentColor"
-                    />
-                    <path
-                      d="M5 5h6v2H7v10h10v-4h2v6H5V5Z"
-                      fill="currentColor"
-                      opacity="0.9"
-                    />
-                  </svg>
-                </a>
+          <div className="previewSplit" aria-label="preview-split">
+            <div className="previewGame" aria-label="game">
+              <div className="simShell" aria-label="simulator">
+                <div className="simBar" aria-hidden="true">
+                  <div className="simDots">
+                    <span className="simDot red" />
+                    <span className="simDot yellow" />
+                    <span className="simDot green" />
+                  </div>
+                  <div className="simTitle"> </div>
+                  <div className="simActions">
+                    <a
+                      className="btn btnGray iconBtn simOpenBtn"
+                      href={previewUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label="在新标签页打开预览"
+                      title="在新标签页打开预览"
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3Z"
+                          fill="currentColor"
+                        />
+                        <path
+                          d="M5 5h6v2H7v10h10v-4h2v6H5V5Z"
+                          fill="currentColor"
+                          opacity="0.9"
+                        />
+                      </svg>
+                    </a>
+                  </div>
+                </div>
+                <div className="simScreen">
+                  <iframe className="previewFrame" src={previewUrl} title="preview" />
+                </div>
               </div>
             </div>
-            <div className="simScreen">
-              <iframe className="previewFrame" src={previewUrl} title="preview" />
-            </div>
+
+            <aside className="metaPanel" aria-label="meta">
+              <div className="metaTitle">作品信息</div>
+              <div className="metaBlock">
+                <div className="metaLabel">名称</div>
+                <div className="metaValue">{gameMeta?.title || "（等待 AI 生成…）"}</div>
+              </div>
+              <div className="metaBlock">
+                <div className="metaLabel">简介</div>
+                <div className="metaValue">{gameMeta?.shortDesc || "（待补充）"}</div>
+              </div>
+              <div className="metaBlock">
+                <div className="metaLabel">规则</div>
+                <div className="metaValue metaPre">{gameMeta?.rules || "（待补充）"}</div>
+              </div>
+              <div className="metaBlock">
+                <div className="metaLabel">创作者</div>
+                <div className="metaValue">{gameMeta?.creator?.name || creatorName || "创作者"}</div>
+              </div>
+              <div className="metaBlock">
+                <div className="metaLabel">创作过程</div>
+                <div className="metaValue metaPre">{creatorStepsText || "（待补充：先发一句需求给 AI）"}</div>
+              </div>
+            </aside>
           </div>
         </div>
       </section>

@@ -3,8 +3,8 @@ import { Analytics } from "@vercel/analytics/react";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 
 export const metadata: Metadata = {
-  title: "AI创意小游戏",
-  description: "用 AI，释放孩子的奇思妙想，体验创造的快乐。",
+  title: "奇点小匠",
+  description: "用 AI 对话，让创意成真。把想法做成可分享的应用与互动作品。",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -20,10 +20,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=7" />
         {/* 复用原有静态样式（位于 public/） */}
         {/* 注意：public 下的 css 可能被浏览器/CDN 缓存；这里加版本号方便样式立即生效 */}
-        <link rel="stylesheet" href="/styles.css?v=8" />
-        <link rel="stylesheet" href="/home.css?v=8" />
-        <link rel="stylesheet" href="/creators.css?v=8" />
-        <link rel="stylesheet" href="/create.css?v=8" />
+        <link rel="stylesheet" href="/styles.css?v=11" />
+        <link rel="stylesheet" href="/home.css?v=11" />
+        <link rel="stylesheet" href="/creators.css?v=11" />
+        <link rel="stylesheet" href="/create.css?v=11" />
       </head>
       <body>
         {children}

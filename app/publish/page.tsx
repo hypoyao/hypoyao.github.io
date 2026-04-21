@@ -2,61 +2,35 @@ import { getSession } from "@/lib/auth/session";
 import PublishForm from "./PublishForm";
 import { db } from "@/lib/db";
 import { creators, games as gamesTable } from "@/lib/db/schema";
-import fs from "node:fs/promises";
-import path from "node:path";
 import { eq } from "drizzle-orm";
 import { ensureCreatorsAuthFields } from "@/lib/db/ensureCreatorsAuthFields";
 import { ensureGamesCoverFields } from "@/lib/db/ensureGamesCoverFields";
 import { isSuperAdminId } from "@/lib/auth/admin";
+import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
+import { sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
-async function listLocalGameIds() {
-  const dir = path.join(process.cwd(), "public", "games");
-  const ents = await fs.readdir(dir, { withFileTypes: true });
-  return ents.filter((e) => e.isDirectory()).map((e) => e.name).sort();
-}
-
-async function getLocalGameCreatorId(id: string) {
+async function readDraftFile(gameId: string, filePath: string) {
   try {
-    const file = path.join(process.cwd(), "public", "games", id, "index.html");
-    const html = await fs.readFile(file, "utf8");
-    const m = html.match(/class="creatorBadge"[^>]*href="\/creators\/([^"?#/]+)"/i);
-    return (m?.[1] || "").trim();
+    await ensureCreatorDraftTables();
+    const rows = await db.execute(sql`
+      select content
+      from creator_draft_files
+      where game_id = ${gameId} and path = ${filePath}
+      limit 1
+    `);
+    const list = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
+    const content = list?.[0]?.content;
+    return typeof content === "string" ? content : "";
   } catch {
     return "";
   }
 }
 
-async function getGameDefaults(id: string) {
-  // 从 public/games/<id>/index.html 解析默认标题/描述
-  try {
-    const file = path.join(process.cwd(), "public", "games", id, "index.html");
-    const html = await fs.readFile(file, "utf8");
-    const title = (html.match(/<title>([^<]+)<\/title>/i)?.[1] || "").trim();
-    const descHtml = html.match(/<p\s+class="desc"[^>]*>([\s\S]*?)<\/p>/i)?.[1] || "";
-    const desc = descHtml
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-    return {
-      id,
-      title: title || id,
-      shortDesc: desc ? desc.slice(0, 42) : "",
-      ruleText: desc || "",
-      coverUrl: `/assets/screenshots/${id}.png`,
-      path: `/games/${id}/`,
-    };
-  } catch {
-    return {
-      id,
-      title: id,
-      shortDesc: "",
-      ruleText: "",
-      coverUrl: `/assets/screenshots/${id}.png`,
-      path: `/games/${id}/`,
-    };
-  }
+function parseTitleFromHtml(html: string) {
+  const m = html.match(/<title>\s*([^<]{1,80})\s*<\/title>/i);
+  return (m?.[1] || "").trim();
 }
 
 export default async function PublishPage({
@@ -89,16 +63,6 @@ export default async function PublishPage({
   const sp = (await searchParams) || {};
   const pickedId = typeof sp.id === "string" ? sp.id : "";
 
-  let publishedIds = new Set<string>();
-  try {
-    const published = await db.select({ id: gamesTable.id }).from(gamesTable);
-    publishedIds = new Set(published.map((x) => x.id));
-  } catch {
-    publishedIds = new Set();
-  }
-  const localIds = await listLocalGameIds();
-  let unpublished = localIds.filter((id) => !publishedIds.has(id));
-
   // me 信息（用于作者权限：非管理员禁用 creatorId）
   let meCreatorId: string | null = null;
   let isAdmin = false;
@@ -114,12 +78,6 @@ export default async function PublishPage({
     }
     isAdmin = isSuperAdminId(meCreatorId);
   } catch {}
-
-  // 未发布的本地小游戏：仅管理员或作者可见
-  if (!isAdmin) {
-    const pairs = await Promise.all(unpublished.map(async (gid) => [gid, await getLocalGameCreatorId(gid)] as const));
-    unpublished = pairs.filter(([, cid]) => cid && meCreatorId && cid === meCreatorId).map(([gid]) => gid);
-  }
 
   // 如果数据库里已存在该 game，则用数据库数据预填（“更新”场景）
   let initial: any = undefined;
@@ -156,12 +114,33 @@ export default async function PublishPage({
           path: row.path,
         };
       } else {
-        initial = await getGameDefaults(pickedId);
+        // 新发布：从草稿 meta/index.html 预填标题/简介/规则（id 由用户手动填）
+        const metaRaw = await readDraftFile(pickedId, "meta.json");
+        let meta: any = null;
+        try {
+          meta = metaRaw ? JSON.parse(metaRaw) : null;
+        } catch {
+          meta = null;
+        }
+        const indexHtml = await readDraftFile(pickedId, "index.html");
+        const title0 = String(meta?.title || "").trim() || parseTitleFromHtml(indexHtml) || "";
+        const shortDesc0 = String(meta?.shortDesc || "").trim();
+        const rules0 = String(meta?.rules || meta?.ruleText || "").trim();
+        initial = {
+          id: "",
+          title: title0,
+          shortDesc: shortDesc0,
+          ruleText: rules0,
+          creatorId: meCreatorId || "tianqing",
+          coverUrl: title0 ? "" : "",
+          path: "",
+        };
         existsInDb = false;
       }
     } catch {
-      // 数据库查询失败（连接/表结构/权限等）：不要让页面崩，退回本地默认
-      initial = await getGameDefaults(pickedId);
+      // 数据库查询失败（连接/表结构/权限等）：不要让页面崩，退回草稿预填
+      const indexHtml = await readDraftFile(pickedId, "index.html");
+      initial = { id: "", title: parseTitleFromHtml(indexHtml) || "", shortDesc: "", ruleText: "", creatorId: meCreatorId || "tianqing" };
       existsInDb = false;
     }
   }
@@ -175,6 +154,7 @@ export default async function PublishPage({
 
         <PublishForm
           defaultCreatorId="tianqing"
+          sourceDraftId={pickedId || undefined}
           initial={initial || undefined}
           meCreatorId={meCreatorId || undefined}
           isAdmin={isAdmin}

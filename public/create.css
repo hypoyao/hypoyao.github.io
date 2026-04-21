@@ -6,6 +6,17 @@
   width: min(1320px, 100%);
 }
 
+/* create 顶部右侧“回到首页”图标按钮（复用 homeAvatarBtn 的外框） */
+.createHomeIconBtn {
+  display: grid;
+  place-items: center;
+  color: rgba(15, 23, 42, 0.82);
+}
+.createHomeIconSvg {
+  width: 18px;
+  height: 18px;
+}
+
 .createTopBar {
   margin-top: 8px;
   display: flex;
@@ -209,39 +220,47 @@
 }
 
 .chatMsg {
-  display: grid;
+  /* 仿微信：每条消息一行，气泡随内容自适应高度（不做气泡内滚动） */
+  display: flex;
+  flex-direction: column;
   gap: 6px;
-  padding: 10px 10px;
-  border-radius: 14px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  background: rgba(255, 255, 255, 0.60);
-  /* 气泡高度跟随内容，但限制最小/最大高度 */
-  /* 最小高度：一行内容即可（避免空泡太高） */
-  min-height: 56px;
-  /* 最大高度：尽量让气泡随内容变高，由外层聊天列表滚动承载；
-     只有超过这个上限才在气泡内部滚动 */
-  max-height: 3600px;
-  overflow: auto;
+  padding: 10px 12px;
+  border-radius: 18px;
   position: relative;
+  width: fit-content;
+  max-width: min(78%, 560px);
+  /* 在 chatList 的 grid 里：默认靠左 */
+  justify-self: start;
+  overflow: visible;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.92);
 }
 
-/* AI 流式输出（“AI 正在生成代码…”）的气泡：给更大的可视高度 */
+/* AI 流式输出：唯一允许气泡内滚动的场景 */
 .chatMsg.isThinking {
-  min-height: 180px;
-  max-height: 5200px;
+  max-height: min(56vh, 520px);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
-/* 普通 AI 消息也给更大的可视高度（用户反馈太挤） */
 .chatMsg.isAi {
-  max-height: 3600px;
+  align-self: flex-start;
+  justify-self: start;
 }
 .chatMsg.isUser {
-  background: rgba(37, 99, 235, 0.08);
-  border-color: rgba(37, 99, 235, 0.18);
-  /* 用户自己发的内容：允许更高，超过才在气泡内滚动 */
-  /* 不要用 vh 兜底：否则最多也就一屏高，看起来还是“很小”；
-     允许气泡随着内容继续变高，由外层 chatList 滚动承载 */
-  max-height: 3600px;
+  /* 微信常见：自己消息靠右、偏绿色 */
+  align-self: flex-end;
+  justify-self: end;
+  background: rgba(149, 236, 105, 0.92);
+  border-color: rgba(149, 236, 105, 0.92);
+  color: rgba(15, 23, 42, 0.92);
+  max-height: none !important;
+  overflow: visible !important;
+}
+.chatMsg.isUser .chatText {
+  max-height: none;
+  overflow: visible;
 }
 .createNeo .chatMsg {
   /* AI 气泡：淡绿（更像卡片） */
@@ -250,18 +269,19 @@
 .createNeo .chatMsg.isUser {
   /* 用户气泡：淡蓝，靠右 */
   background: rgba(186, 230, 253, 0.35);
-  justify-self: end;
+  align-self: flex-end;
 }
 .createNeo .chatMsg.isUser .chatRole {
   text-align: right;
 }
 .chatRole {
-  font-size: 12px;
-  font-weight: 1000;
-  color: rgba(15, 23, 42, 0.72);
+  /* 仿微信：默认不显示“我/AI”行 */
+  display: none;
 }
 .chatText {
   white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
   line-height: 1.55;
   font-size: 14px;
   font-weight: 850;
@@ -337,10 +357,106 @@
   flex-wrap: wrap;
 }
 
+/* ===== 彩蛋：模型选择（默认折叠） ===== */
+.modelEgg {
+  margin-top: 2px;
+}
+.modelEgg > summary::-webkit-details-marker {
+  display: none;
+}
+.modelEggBtn {
+  list-style: none;
+  cursor: pointer;
+  width: fit-content;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: rgba(255, 255, 255, 0.70);
+  box-shadow: 0 10px 22px rgba(2, 6, 23, 0.06);
+  font-size: 12px;
+  font-weight: 1000;
+  color: rgba(15, 23, 42, 0.82);
+  user-select: none;
+}
+.modelEggPanel {
+  margin-top: 8px;
+  display: grid;
+  gap: 8px;
+}
+.modelEggRow {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: center;
+}
+.modelEggLabel {
+  font-size: 12px;
+  font-weight: 1000;
+  color: rgba(100, 116, 139, 0.92);
+  white-space: nowrap;
+}
+.modelEggSelect {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 900;
+}
+
 .previewPanel {
   min-height: 620px;
   /* 预览区不需要顶部“浏览器栏”，让内容直接占满 */
   grid-template-rows: 1fr;
+}
+
+.previewSplit {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 12px;
+  align-items: stretch;
+}
+.previewGame {
+  min-height: 0;
+}
+.metaPanel {
+  margin: 12px 12px 12px 0;
+  border-radius: 18px;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 10px 24px rgba(2, 6, 23, 0.06);
+  padding: 12px;
+  overflow: auto;
+  min-height: 0;
+}
+.metaTitle {
+  font-weight: 1100;
+  font-size: 14px;
+  color: rgba(15, 23, 42, 0.86);
+  margin-bottom: 8px;
+}
+.metaBlock {
+  padding: 8px 0;
+  border-top: 1px solid rgba(15, 23, 42, 0.06);
+}
+.metaBlock:first-of-type {
+  border-top: none;
+}
+.metaLabel {
+  font-size: 12px;
+  font-weight: 1000;
+  color: rgba(100, 116, 139, 0.92);
+  margin-bottom: 4px;
+}
+.metaValue {
+  font-size: 13px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.86);
+  line-height: 1.55;
+}
+.metaPre {
+  white-space: pre-wrap;
 }
 
 .previewFrame {
@@ -454,12 +570,37 @@
   .previewPanel {
     min-height: 520px;
   }
+  /* 小屏：信息模块放到预览下方 */
+  .previewSplit {
+    grid-template-columns: 1fr;
+  }
+  .metaPanel {
+    margin: 0 12px 12px 12px;
+  }
 }
 
 @media (max-width: 520px) {
   .createCard {
     width: 100%;
   }
+  /* 手机端：不要出现横向滚动 */
+  .createBento {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+  .createTopBar,
+  .createGrid {
+    width: 100%;
+    max-width: 100%;
+  }
+  .createTopLeft,
+  .createTopRight,
+  .createTopInline {
+    min-width: 0;
+    max-width: 100%;
+  }
+
   .createTopBar {
     gap: 10px;
   }
@@ -469,6 +610,25 @@
   .createMenuBtn {
     padding: 8px 10px;
     font-size: 13px;
+  }
+
+  /* 手机端：让“操作”按钮紧贴在“我的游戏”下拉右侧，不要被挤到下一行 */
+  .createTopLeft {
+    flex-wrap: nowrap;
+    align-items: center;
+  }
+  .createTopLeft .createTopInline {
+    flex: 1 1 auto;
+  }
+  .createTopLeft .restInput {
+    min-width: 0;
+    width: 100%;
+  }
+  .createMenu {
+    flex: 0 0 auto;
+  }
+  .createMenuBtn {
+    white-space: nowrap;
   }
 
   .createPanelHeader {
@@ -566,18 +726,48 @@
   border-radius: 18px;
 }
 .createBento .chatMsg.isUser {
-  background: rgba(239, 246, 255, 1); /* 淡蓝 */
-  border-color: rgba(191, 219, 254, 1);
-  justify-self: end;
+  /* Bento 主题下也保持“微信绿” */
+  background: rgba(149, 236, 105, 0.92);
+  border-color: rgba(149, 236, 105, 0.92);
+  align-self: flex-end;
+  max-height: none !important;
+  overflow: visible !important;
+}
+.createBento .chatMsg.isUser .chatText {
+  max-height: none;
+  overflow: visible;
+}
+
+/* 手机端滚动更顺滑（避免看起来像“内容展示不全”） */
+@media (max-width: 520px) {
+  .chatList {
+    -webkit-overflow-scrolling: touch;
+  }
 }
 .createBento .chatMsg:not(.isUser) {
-  background: rgba(240, 253, 244, 1); /* 淡绿 */
-  border-color: rgba(187, 247, 208, 1);
+  background: rgba(255, 255, 255, 0.92);
+  border-color: var(--b-border2);
+  align-self: flex-start;
 }
 .createBento .chatRole {
-  color: var(--b-muted);
+  display: none;
 }
 .createBento .chatText {
+  color: var(--b-text);
+}
+
+.createBento .metaPanel {
+  border: 1px solid var(--b-border);
+  background: rgba(255, 255, 255, 1);
+  box-shadow: var(--b-shadow);
+}
+.createBento .metaTitle {
+  color: var(--b-text);
+}
+.createBento .metaLabel {
+  color: var(--b-muted);
+}
+.createBento .metaValue {
   color: var(--b-text);
 }
 

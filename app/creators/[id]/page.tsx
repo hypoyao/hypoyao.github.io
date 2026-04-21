@@ -1,4 +1,5 @@
 import { notFound, redirect } from "next/navigation";
+import Link from "next/link";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { creators as creatorsTable } from "@/lib/db/schema";
@@ -51,7 +52,30 @@ export default async function CreatorPage({ params }: { params: Promise<{ id: st
           <div className="creatorTop">
             <img className="creatorAvatar creatorAvatarLg" src={creator.avatarUrl} alt={`${creator.name}头像`} />
             <div className="creatorTopInfo">
-              <h1 className="creatorTopName">{creator.name}</h1>
+              <h1 className="creatorTopName">
+                <span>{creator.name}</span>
+                {isMe ? (
+                  <a className="iconMiniBtn" href="/profile/edit" aria-label="编辑资料">
+                    {/* pencil */}
+                    <svg className="iconMiniSvg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path
+                        d="M12 20h9"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </a>
+                ) : null}
+              </h1>
               {tags.length > 0 ? (
                 <div className="creatorTag">
                   {tags.map((t, i) => (
@@ -63,13 +87,34 @@ export default async function CreatorPage({ params }: { params: Promise<{ id: st
                 </div>
               ) : null}
             </div>
-            {isMe ? (
-              <div className="creatorTopActions">
-                <a className="btn btnGray" href="/profile/edit">
-                  编辑资料
-                </a>
-              </div>
-            ) : null}
+            <div className="creatorTopActions">
+              <Link className="iconMiniBtn" href="/" aria-label="回到主页" prefetch>
+                {/* home */}
+                <svg className="iconMiniSvg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M3 10.5 12 3l9 7.5"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <path
+                    d="M5.5 10.5V21h13V10.5"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <path
+                    d="M10 21v-6h4v6"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </Link>
+            </div>
           </div>
         </header>
 
@@ -89,11 +134,7 @@ export default async function CreatorPage({ params }: { params: Promise<{ id: st
           </section>
         </section>
 
-        <div className="homeFooter">
-          <a className="btn btnSecondary" href="/">
-            返回首页
-          </a>
-        </div>
+        {/* 右上角已提供“回到主页”图标 */}
       </section>
     </main>
   );
