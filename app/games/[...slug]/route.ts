@@ -55,6 +55,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ slug: string[]
       headers: {
         "content-type": contentTypeFor(rel),
         "cache-control": "no-store",
+        "x-game-source": "creator_draft_files",
       },
     });
   }
@@ -104,6 +105,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ slug: string[]
         "content-type": contentTypeFor(rel),
         // 生产环境可改为更激进缓存；开发期先 no-store，避免调试时缓存不生效
         "cache-control": "no-store",
+        "x-game-source": "game_files",
       },
     });
   }

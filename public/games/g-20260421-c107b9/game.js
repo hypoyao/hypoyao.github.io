@@ -1,1 +1,0 @@
-(()=>{const el=document.getElementById('app');if(!el) return; el.innerHTML="<div style='font-weight:900'>准备就绪 ✅</div>";})();
