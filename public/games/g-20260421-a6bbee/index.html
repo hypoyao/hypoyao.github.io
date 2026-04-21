@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>扫雷小英雄</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="game-container">
+        <h1>💣 扫雷小英雄</h1>
+        
+        <div class="controls">
+            <select id="difficulty">
+                <option value="easy">🌟 初级 (9×9)</option>
+                <option value="medium">⭐ 中级 (16×16)</option>
+                <option value="hard">🏆 高级 (16×30)</option>
+            </select>
+            <button id="newGame">🔄 新游戏</button>
+        </div>
+        
+        <div class="status-bar">
+            <span>🚩 <span id="flagCount">0</span></span>
+            <span>⏱️ <span id="timer">0</span></span>
+        </div>
+        
+        <div class="mode-switch">
+            <button id="modeClick" class="mode-btn active">👆 翻开</button>
+            <button id="modeFlag" class="mode-btn">🚩 插旗</button>
+        </div>
+        
+        <div id="board" class="board"></div>
+        
+        <div id="message" class="message"></div>
+    </div>
+    
+    <script src="game.js"></script>
+</body>
+</html>

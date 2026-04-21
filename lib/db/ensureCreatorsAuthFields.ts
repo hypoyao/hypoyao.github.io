@@ -8,6 +8,17 @@ export async function ensureCreatorsAuthFields() {
   if (_ensured) return;
   if (_ensuring) return _ensuring;
   _ensuring = (async () => {
+    // creators 表可能在某些环境尚未初始化：这里做一次幂等建表，避免后续查询直接失败
+    await db.execute(sql`
+      create table if not exists creators (
+        id text primary key,
+        name text not null,
+        avatar_url text not null,
+        profile_path text not null,
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+      );
+    `);
     await db.execute(sql`alter table creators add column if not exists phone text;`);
     await db.execute(sql`alter table creators add column if not exists openid text;`);
     await db.execute(sql`alter table creators add column if not exists gender text;`);

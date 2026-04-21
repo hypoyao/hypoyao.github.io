@@ -89,8 +89,13 @@ export default async function PublishPage({
   const sp = (await searchParams) || {};
   const pickedId = typeof sp.id === "string" ? sp.id : "";
 
-  const published = await db.select({ id: gamesTable.id }).from(gamesTable);
-  const publishedIds = new Set(published.map((x) => x.id));
+  let publishedIds = new Set<string>();
+  try {
+    const published = await db.select({ id: gamesTable.id }).from(gamesTable);
+    publishedIds = new Set(published.map((x) => x.id));
+  } catch {
+    publishedIds = new Set();
+  }
   const localIds = await listLocalGameIds();
   let unpublished = localIds.filter((id) => !publishedIds.has(id));
 
@@ -123,19 +128,39 @@ export default async function PublishPage({
     try {
       await ensureGamesCoverFields();
     } catch {}
-    const [row] = await db.select().from(gamesTable).where(eq(gamesTable.id, pickedId)).limit(1);
-    if (row) {
-      existsInDb = true;
-      initial = {
-        id: row.id,
-        title: row.title,
-        shortDesc: row.shortDesc,
-        ruleText: row.ruleText,
-        creatorId: row.creatorId,
-        coverUrl: row.coverUrl,
-        path: row.path,
-      };
-    } else {
+    try {
+      // 不要 select() 全字段：某些部署/旧库可能尚未补齐 cover_mime/cover_data/时间戳字段
+      // 这里仅取发布表单需要的字段，避免因为“列缺失”导致页面直接崩溃。
+      const [row] = await db
+        .select({
+          id: gamesTable.id,
+          title: gamesTable.title,
+          shortDesc: gamesTable.shortDesc,
+          ruleText: gamesTable.ruleText,
+          coverUrl: gamesTable.coverUrl,
+          path: gamesTable.path,
+          creatorId: gamesTable.creatorId,
+        })
+        .from(gamesTable)
+        .where(eq(gamesTable.id, pickedId))
+        .limit(1);
+      if (row) {
+        existsInDb = true;
+        initial = {
+          id: row.id,
+          title: row.title,
+          shortDesc: row.shortDesc,
+          ruleText: row.ruleText,
+          creatorId: row.creatorId,
+          coverUrl: row.coverUrl,
+          path: row.path,
+        };
+      } else {
+        initial = await getGameDefaults(pickedId);
+        existsInDb = false;
+      }
+    } catch {
+      // 数据库查询失败（连接/表结构/权限等）：不要让页面崩，退回本地默认
       initial = await getGameDefaults(pickedId);
       existsInDb = false;
     }

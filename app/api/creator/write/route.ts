@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { getSession } from "@/lib/auth/session";
+import { ownerKeyFromSession, upsertCreatorGame } from "@/lib/creator/creatorIndex";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,43 @@ function safeGameId(id: string) {
   return s;
 }
 
+function toKeywordFromPrompt(s: string) {
+  const t = (s || "").replace(/\r/g, "").trim();
+  if (!t) return "";
+  const m1 = t.match(/(?:我想|想)?做(?:一个|个)?\s*([^\n，。,.]{1,24}?游戏)/);
+  const m2 = t.match(/([^\n，。,.]{1,24}?游戏)/);
+  let k = (m1?.[1] || m2?.[1] || "").trim();
+  if (!k) {
+    const first =
+      t
+        .split("\n")
+        .map((x) => x.trim())
+        .find((x) => x && !x.startsWith("#")) || "";
+    k = first.trim();
+  }
+  k = k.replace(/（.*?）/g, "").trim();
+  if (k.length > 14) {
+    k = k.slice(0, 14);
+    if (!k.endsWith("游戏") && t.includes("游戏")) k = k.replace(/\s+$/g, "") + "…";
+  }
+  return k;
+}
+
+async function updateMeta(base: string, patch: Record<string, any>) {
+  try {
+    const p = path.join(base, "meta.json");
+    let obj: any = {};
+    try {
+      const raw = await fs.readFile(p, "utf8");
+      obj = JSON.parse(raw);
+    } catch {}
+    obj = { ...(obj || {}), ...(patch || {}) };
+    await fs.writeFile(p, JSON.stringify(obj, null, 2), "utf8");
+  } catch {
+    // ignore
+  }
+}
+
 export async function POST(req: Request) {
   const sess = await getSession();
   if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED" });
@@ -58,6 +96,7 @@ export async function POST(req: Request) {
     .catch(() => false);
 
   const written: string[] = [];
+  let updatedTitle = "";
   for (const f of files) {
     const rel = safeRel(f?.path || "");
     if (!rel) continue;
@@ -66,7 +105,30 @@ export async function POST(req: Request) {
     const content = typeof f?.content === "string" ? f.content : "";
     await fs.writeFile(out, content, "utf8");
     written.push(`/games/${gid}/${rel}`);
+
+    // 同步 meta，方便 list 更快读取
+    if (rel === "prompt.md") {
+      const k = toKeywordFromPrompt(content);
+      if (k) updatedTitle = k;
+    } else if (rel === "index.html") {
+      const m = content.match(/<title>\s*([^<]{1,80})\s*<\/title>/i);
+      if (m && m[1]) updatedTitle = String(m[1]).trim();
+    }
   }
+
+  if (updatedTitle) await updateMeta(base, { title: updatedTitle, mtimeMs: Date.now() });
+  // 同步到高速索引
+  try {
+    const ownerKey = ownerKeyFromSession(sess);
+    if (ownerKey) {
+      await upsertCreatorGame(ownerKey, {
+        gameId: gid,
+        entry: `/games/${gid}/index.html`,
+        mtimeMs: Date.now(),
+        title: updatedTitle || undefined,
+      });
+    }
+  } catch {}
 
   return json(200, { ok: true, written, gameId: gid, entry: `/games/${gid}/index.html` });
 }

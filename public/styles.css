@@ -582,6 +582,13 @@ body {
   box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
 }
 
+.restInput.isError,
+.restTextarea.isError {
+  border-color: rgba(239, 68, 68, 0.75);
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.12);
+  background: rgba(254, 242, 242, 0.75);
+}
+
 .tipPanel {
   width: min(420px, 100%);
   padding: 14px 14px;

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { getSession } from "@/lib/auth/session";
+import { ownerKeyFromSession, removeCreatorGame } from "@/lib/creator/creatorIndex";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -33,6 +34,12 @@ export async function POST(req: Request) {
   } catch (e: any) {
     return json(500, { ok: false, error: String(e?.message || e) });
   }
+
+  // 同步索引
+  try {
+    const ownerKey = ownerKeyFromSession(sess);
+    if (ownerKey) await removeCreatorGame(ownerKey, gid);
+  } catch {}
 
   return json(200, { ok: true, gameId: gid });
 }

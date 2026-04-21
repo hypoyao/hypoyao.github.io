@@ -89,12 +89,13 @@ export async function POST(req: Request) {
   if (!id) return json(400, { ok: false, error: "MISSING_ID" });
 
   const title = typeof body.title === "string" ? body.title.trim() : "";
-  const shortDesc = typeof body.shortDesc === "string" ? body.shortDesc.trim() : "";
-  const ruleText = typeof body.ruleText === "string" ? body.ruleText.trim() : "";
+  let shortDesc = typeof body.shortDesc === "string" ? body.shortDesc.trim() : "";
+  let ruleText = typeof body.ruleText === "string" ? body.ruleText.trim() : "";
   const creatorId = typeof body.creatorId === "string" ? body.creatorId.trim() : "";
-  if (!title || !shortDesc || !ruleText || !creatorId) {
-    return json(400, { ok: false, error: "MISSING_FIELDS" });
-  }
+  if (!title || !creatorId) return json(400, { ok: false, error: "MISSING_FIELDS" });
+  // 允许简介/规则为空：自动用标题兜底（避免“发布页默认解析不到 desc”导致无法发布）
+  if (!shortDesc) shortDesc = title.slice(0, 42);
+  if (!ruleText) ruleText = shortDesc || title;
 
   // 管理员鉴权（用于允许指定作者）
   const key = process.env.ADMIN_API_KEY;

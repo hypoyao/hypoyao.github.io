@@ -86,12 +86,6 @@
 .createMenuItem:disabled {
   opacity: 0.6;
 }
-.createMenuItem.danger {
-  /* 删除按钮：只用红色文字提示，不要红色背景 */
-  border-color: rgba(239, 68, 68, 0.22);
-  background: rgba(255, 255, 255, 0.70);
-  color: rgba(185, 28, 28, 0.95);
-}
 .createTopInline {
   display: flex;
   align-items: center;
@@ -185,6 +179,28 @@
   font-weight: 1100;
 }
 
+.chatModelRow {
+  padding: 10px 12px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.chatModelLabel {
+  font-size: 12px;
+  font-weight: 1000;
+  color: rgba(100, 116, 139, 0.92);
+}
+.chatModelSelect {
+  border-radius: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  background: rgba(255, 255, 255, 0.75);
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.86);
+}
+
 .chatMsg {
   display: grid;
   gap: 6px;
@@ -193,9 +209,20 @@
   border: 1px solid rgba(15, 23, 42, 0.08);
   background: rgba(255, 255, 255, 0.60);
   /* 气泡高度跟随内容，但限制最小/最大高度 */
-  min-height: 56px;
-  max-height: 320px;
+  min-height: 144px;
+  max-height: min(1040px, 90vh);
   overflow: auto;
+}
+
+/* AI 流式输出（“AI 正在生成代码…”）的气泡：给更大的可视高度 */
+.chatMsg.isThinking {
+  min-height: 360px;
+  max-height: min(1640px, 92vh);
+}
+
+/* 普通 AI 消息也给更大的可视高度（用户反馈太挤） */
+.chatMsg.isAi {
+  max-height: min(1280px, 92vh);
 }
 .chatMsg.isUser {
   background: rgba(37, 99, 235, 0.08);
@@ -271,8 +298,9 @@
   font-size: 12px;
   line-height: 1.55;
   color: rgba(15, 23, 42, 0.82);
-  max-height: 240px;
-  overflow: auto;
+  /* 交给外层气泡滚动，避免双层滚动不方便阅读 */
+  max-height: none;
+  overflow: visible;
 }
 
 .chatComposer {
@@ -348,7 +376,15 @@
   color: rgba(17, 24, 39, 0.78);
   text-align: center;
 }
-.simSpacer { width: 16px; }
+.simActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.simOpenBtn {
+  text-decoration: none;
+}
 .simScreen {
   background: rgba(255, 255, 255, 0.96);
   min-height: 0;
@@ -490,10 +526,6 @@
   box-shadow: none;
   border-radius: 16px;
   background: rgba(255, 255, 255, 1);
-}
-.createBento .createMenuItem.danger {
-  background: rgba(255, 255, 255, 1);
-  border-color: rgba(254, 202, 202, 1);
 }
 
 .createBento .createPanel {

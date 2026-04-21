@@ -1,0 +1,35 @@
+{
+  "v": 2,
+  "owners": {
+    "fef0692f75adf92f633a5d28": {
+      "games": [
+        {
+          "gameId": "g-20260421-a6bbee",
+          "entry": "/games/g-20260421-a6bbee/index.html",
+          "mtimeMs": 1776734988303.2737,
+          "title": "扫雷小英雄"
+        },
+        {
+          "gameId": "g-20260420-31acef",
+          "entry": "/games/g-20260420-31acef/index.html",
+          "mtimeMs": 1776688420221.0342,
+          "title": "优化一下这个俄罗斯方块游戏"
+        },
+        {
+          "gameId": "g-20260420-ef9f45",
+          "entry": "/games/g-20260420-ef9f45/index.html",
+          "mtimeMs": 1776675872323.7834,
+          "title": "消消乐的小游戏"
+        },
+        {
+          "gameId": "g-20260420-c51a86",
+          "entry": "/games/g-20260420-c51a86/index.html",
+          "mtimeMs": 1776660293503.0334,
+          "title": "打地鼠游戏"
+        }
+      ],
+      "updatedAt": 1776736184967,
+      "complete": true
+    }
+  }
+}

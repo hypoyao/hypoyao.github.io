@@ -61,24 +61,43 @@ async function tryGetLocalPrompt(gameId: string) {
 }
 
 export async function listGames(): Promise<GameWithCreator[]> {
-  const rows = await db
-    .select({
-      gameId: games.id,
-      title: games.title,
-      shortDesc: games.shortDesc,
-      ruleText: games.ruleText,
-      coverUrl: games.coverUrl,
-      path: games.path,
-      creatorId: creators.id,
-      creatorName: creators.name,
-      creatorAvatarUrl: creators.avatarUrl,
-      creatorProfilePath: creators.profilePath,
-    })
-    .from(games)
-    .innerJoin(creators, eq(games.creatorId, creators.id));
+  let rows:
+    | Array<{
+        gameId: string;
+        title: string;
+        shortDesc: string;
+        ruleText: string;
+        coverUrl: string;
+        path: string;
+        creatorId: string;
+        creatorName: string;
+        creatorAvatarUrl: string;
+        creatorProfilePath: string;
+      }>
+    | null = null;
+  try {
+    rows = await db
+      .select({
+        gameId: games.id,
+        title: games.title,
+        shortDesc: games.shortDesc,
+        ruleText: games.ruleText,
+        coverUrl: games.coverUrl,
+        path: games.path,
+        creatorId: creators.id,
+        creatorName: creators.name,
+        creatorAvatarUrl: creators.avatarUrl,
+        creatorProfilePath: creators.profilePath,
+      })
+      .from(games)
+      .innerJoin(creators, eq(games.creatorId, creators.id));
+  } catch {
+    // 数据库不可用/表结构不一致时：不要让首页挂掉，直接返回空列表
+    return [];
+  }
 
   const out = await Promise.all(
-    rows.map(async (r) => {
+    (rows || []).map(async (r) => {
       const localTitle = await tryGetLocalTitle(r.gameId);
       const useTitle = localTitle || r.title;
 
@@ -118,25 +137,43 @@ export async function getCreatorByProfilePath(profilePath: string) {
 }
 
 export async function listGamesByCreator(creatorId: string): Promise<GameWithCreator[]> {
-  const rows = await db
-    .select({
-      gameId: games.id,
-      title: games.title,
-      shortDesc: games.shortDesc,
-      ruleText: games.ruleText,
-      coverUrl: games.coverUrl,
-      path: games.path,
-      creatorId: creators.id,
-      creatorName: creators.name,
-      creatorAvatarUrl: creators.avatarUrl,
-      creatorProfilePath: creators.profilePath,
-    })
-    .from(games)
-    .innerJoin(creators, eq(games.creatorId, creators.id))
-    .where(eq(games.creatorId, creatorId));
+  let rows:
+    | Array<{
+        gameId: string;
+        title: string;
+        shortDesc: string;
+        ruleText: string;
+        coverUrl: string;
+        path: string;
+        creatorId: string;
+        creatorName: string;
+        creatorAvatarUrl: string;
+        creatorProfilePath: string;
+      }>
+    | null = null;
+  try {
+    rows = await db
+      .select({
+        gameId: games.id,
+        title: games.title,
+        shortDesc: games.shortDesc,
+        ruleText: games.ruleText,
+        coverUrl: games.coverUrl,
+        path: games.path,
+        creatorId: creators.id,
+        creatorName: creators.name,
+        creatorAvatarUrl: creators.avatarUrl,
+        creatorProfilePath: creators.profilePath,
+      })
+      .from(games)
+      .innerJoin(creators, eq(games.creatorId, creators.id))
+      .where(eq(games.creatorId, creatorId));
+  } catch {
+    return [];
+  }
 
   const out = await Promise.all(
-    rows.map(async (r) => {
+    (rows || []).map(async (r) => {
       const localTitle = await tryGetLocalTitle(r.gameId);
       const useTitle = localTitle || r.title;
 

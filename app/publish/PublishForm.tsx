@@ -29,9 +29,21 @@ export default function PublishForm({ defaultCreatorId, initial, meCreatorId, is
   const [path, setPath] = useState(initial?.path || "");
   const [msg, setMsg] = useState<string>("");
   const coverFileRef = useRef<HTMLInputElement | null>(null);
+  const [submitTried, setSubmitTried] = useState(false);
+  const [touched, setTouched] = useState<{ id?: boolean; title?: boolean; creatorId?: boolean }>({});
+
+  const idRef = useRef<HTMLInputElement | null>(null);
+  const titleRef = useRef<HTMLInputElement | null>(null);
+  const creatorRef = useRef<HTMLInputElement | null>(null);
 
   const defaultCover = initial?.coverUrl || (id ? `/assets/screenshots/${id}.png` : "");
   const effectiveId = immutable ? initial?.id || id : id;
+  const idMissing = !String(effectiveId || "").trim();
+  const titleMissing = !String(title || "").trim();
+  const creatorMissing = !!isAdmin && !String(creatorId || "").trim();
+  const idErr = (submitTried || touched.id) && idMissing;
+  const titleErr = (submitTried || touched.title) && titleMissing;
+  const creatorErr = (submitTried || touched.creatorId) && creatorMissing;
   const payload = useMemo(() => {
     const effId = immutable ? initial?.id || id : id;
     const effCreatorId = immutable ? (isAdmin ? creatorId : initial?.creatorId || creatorId) : creatorId;
@@ -113,6 +125,15 @@ export default function PublishForm({ defaultCreatorId, initial, meCreatorId, is
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setSubmitTried(true);
+    // 必填项校验：为空则标红 + 聚焦
+    if (idMissing || titleMissing || creatorMissing) {
+      setMsg("请先填写必填项（标红处）。");
+      if (idMissing) idRef.current?.focus();
+      else if (titleMissing) titleRef.current?.focus();
+      else if (creatorMissing) creatorRef.current?.focus();
+      return;
+    }
     setMsg("发布中…");
     const r = await fetch("/api/games", {
       method: "POST",
@@ -136,11 +157,13 @@ export default function PublishForm({ defaultCreatorId, initial, meCreatorId, is
         <label style={{ display: "grid", gap: 6 }}>
           <div style={{ fontWeight: 900 }}>id（英文/数字/短横线）</div>
           <input
-            className="restInput"
+            ref={idRef}
+            className={`restInput ${idErr ? "isError" : ""}`.trim()}
             value={id}
             onChange={(e) => setId(e.target.value)}
             placeholder="例如 weiqi"
             readOnly={immutable}
+            onBlur={() => setTouched((t) => ({ ...t, id: true }))}
             style={immutable ? { background: "rgba(148,163,184,0.18)" } : undefined}
           />
           {immutable ? <div style={{ fontSize: 12, color: "rgba(100,116,139,0.95)" }}>更新模式下，id 不允许修改。</div> : null}
@@ -148,7 +171,14 @@ export default function PublishForm({ defaultCreatorId, initial, meCreatorId, is
 
         <label style={{ display: "grid", gap: 6 }}>
           <div style={{ fontWeight: 900 }}>标题</div>
-          <input className="restInput" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="例如 围棋对弈·人机" />
+          <input
+            ref={titleRef}
+            className={`restInput ${titleErr ? "isError" : ""}`.trim()}
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onBlur={() => setTouched((t) => ({ ...t, title: true }))}
+            placeholder="例如 围棋对弈·人机"
+          />
         </label>
 
         <label style={{ display: "grid", gap: 6 }}>
@@ -176,7 +206,14 @@ export default function PublishForm({ defaultCreatorId, initial, meCreatorId, is
         {isAdmin ? (
           <label style={{ display: "grid", gap: 6 }}>
             <div style={{ fontWeight: 900 }}>作者 creatorId（管理员可改）</div>
-            <input className="restInput" value={creatorId} onChange={(e) => setCreatorId(e.target.value)} placeholder="例如 tianqing" />
+            <input
+              ref={creatorRef}
+              className={`restInput ${creatorErr ? "isError" : ""}`.trim()}
+              value={creatorId}
+              onChange={(e) => setCreatorId(e.target.value)}
+              onBlur={() => setTouched((t) => ({ ...t, creatorId: true }))}
+              placeholder="例如 tianqing"
+            />
           </label>
         ) : null}
 

@@ -7,6 +7,16 @@ export const runtime = "nodejs";
 
 type Msg = { role: "system" | "user" | "assistant"; content: string };
 
+const OPENROUTER_MODELS = [
+  // 默认：免费模型（用户要求）
+  "nvidia/nemotron-3-super-120b-a12b:free",
+  "qwen/qwen-2.5-72b-instruct:free",
+  "anthropic/claude-sonnet-4.6",
+  "deepseek/deepseek-v3.2",
+  "google/gemini-3-flash-preview",
+  "minimax/minimax-m2.5",
+] as const;
+
 function json(status: number, data: unknown) {
   return NextResponse.json(data, { status, headers: { "cache-control": "no-store" } });
 }
@@ -30,6 +40,18 @@ function parseCreatorJson(s: string) {
   } catch {
     const m = raw.match(/```json\s*([\s\S]*?)```/i);
     if (m) obj = JSON.parse(m[1]);
+    // 兜底：有些模型会在 JSON 前后夹带少量文字，尝试截取第一个 { 到最后一个 }
+    if (!obj) {
+      const i0 = raw.indexOf("{");
+      const i1 = raw.lastIndexOf("}");
+      if (i0 >= 0 && i1 > i0) {
+        try {
+          obj = JSON.parse(raw.slice(i0, i1 + 1));
+        } catch {
+          // ignore
+        }
+      }
+    }
   }
   if (!obj || typeof obj !== "object") throw new Error("NOT_JSON_OBJECT");
   if (typeof obj.assistant !== "string") throw new Error("MISSING_ASSISTANT");
@@ -47,10 +69,8 @@ function parseCreatorJson(s: string) {
 export async function POST(req: Request) {
   const sess = await getSession();
   if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED" });
-  const key = process.env.DEEPSEEK_API_KEY || "";
-  if (!key) return json(500, { ok: false, error: "MISSING_DEEPSEEK_API_KEY" });
 
-  let body: { messages?: Msg[]; model?: string; promptAddon?: string };
+  let body: { messages?: Msg[]; model?: string; provider?: string; promptAddon?: string };
   try {
     body = (await req.json()) as any;
   } catch {
@@ -77,11 +97,44 @@ export async function POST(req: Request) {
   messages = trimmed.reverse();
   if (!messages.length) return json(400, { ok: false, error: "MISSING_MESSAGES" });
 
-  const baseUrl = (process.env.DEEPSEEK_API_BASE || "https://api.deepseek.com").replace(/\/+$/, "");
-  const url = `${baseUrl}/v1/chat/completions`;
-  const picked = (body as any)?.model;
-  const envModel = process.env.DEEPSEEK_MODEL || "deepseek-chat";
-  const model = picked === "deepseek-chat" || picked === "deepseek-reasoner" ? picked : envModel;
+  // 默认优先 OpenRouter：如果用户没指定 provider，则在两者都配置时优先用 OpenRouter
+  const providerRaw = String((body as any)?.provider || "").trim().toLowerCase();
+  const hasOpenRouter = !!(process.env.OPENROUTER_API_KEY || "");
+  const hasDeepSeek = !!(process.env.DEEPSEEK_API_KEY || "");
+  let provider: "openrouter" | "deepseek" = "openrouter";
+  if (providerRaw === "deepseek") provider = "deepseek";
+  else if (providerRaw === "openrouter") provider = "openrouter";
+  else provider = hasOpenRouter ? "openrouter" : "deepseek";
+
+  let url = "";
+  let authKey = "";
+  let model = "";
+  if (provider === "deepseek") {
+    authKey = process.env.DEEPSEEK_API_KEY || "";
+    if (!authKey) {
+      // DeepSeek 未配置时自动回退 OpenRouter
+      if (hasOpenRouter) {
+        provider = "openrouter";
+      } else {
+        return json(500, { ok: false, error: "MISSING_DEEPSEEK_API_KEY" });
+      }
+    }
+  }
+
+  if (provider === "deepseek") {
+    const baseUrl = (process.env.DEEPSEEK_API_BASE || "https://api.deepseek.com").replace(/\/+$/, "");
+    url = `${baseUrl}/v1/chat/completions`;
+    const picked = (body as any)?.model;
+    const envModel = process.env.DEEPSEEK_MODEL || "deepseek-chat";
+    model = picked === "deepseek-chat" || picked === "deepseek-reasoner" ? picked : envModel;
+  } else {
+    authKey = process.env.OPENROUTER_API_KEY || "";
+    if (!authKey) return json(500, { ok: false, error: "MISSING_OPENROUTER_API_KEY" });
+    const baseUrl = (process.env.OPENROUTER_API_BASE || "https://openrouter.ai/api/v1").replace(/\/+$/, "");
+    url = `${baseUrl}/chat/completions`;
+    const picked = String((body as any)?.model || "").trim();
+    model = (OPENROUTER_MODELS as readonly string[]).includes(picked) ? picked : OPENROUTER_MODELS[0];
+  }
 
   const serverBasePrompt = (process.env.CREATOR_SYSTEM_PROMPT || CREATOR_SYSTEM_PROMPT).trim();
   const addon = typeof body.promptAddon === "string" ? body.promptAddon.trim() : "";
@@ -103,34 +156,59 @@ export async function POST(req: Request) {
   // DeepSeek 通常兼容 OpenAI 的 response_format；如果不支持，会返回错误，我们会在下方兜底重试非 json_mode
   payloadBase.response_format = { type: "json_object" };
 
-  async function callDeepSeekStream(payload: any) {
-    return fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify(payload),
-    });
+  function buildHeaders() {
+    const h: Record<string, string> = {
+      "content-type": "application/json",
+      authorization: `Bearer ${authKey}`,
+    };
+    if (provider === "openrouter") {
+      // OpenRouter 推荐带站点信息，便于风控 & 稳定性
+      const origin = req.headers.get("origin") || process.env.APP_ORIGIN || "http://localhost:3000";
+      h["HTTP-Referer"] = origin;
+      // 注意：Node/undici 对 header value 要求 ByteString（0-255）。
+      // 这里确保只发送 ASCII，避免中文导致 “Cannot convert argument to a ByteString … >255”。
+      const rawTitle = process.env.APP_TITLE || "AI Games";
+      const asciiTitle = String(rawTitle).replace(/[^\x20-\x7E]/g, "").trim();
+      if (asciiTitle) h["X-Title"] = asciiTitle;
+    }
+    return h;
   }
 
-  async function callDeepSeekOnce(payload: any) {
+  async function callModelStream(payload: any) {
+    try {
+      return await fetch(url, {
+        method: "POST",
+        headers: buildHeaders(),
+        body: JSON.stringify(payload),
+      });
+    } catch (e: any) {
+      const code = e?.cause?.code || e?.code || "";
+      const msg = String(code || e?.message || e);
+      throw new Error(`FETCH_FAILED:${msg}`);
+    }
+  }
+
+  async function callModelOnce(payload: any) {
     // 尽量也用 json_object，减少模型“解释/思考”导致的超长输出；
     // 如果不兼容，再自动退回普通模式。
     const p0 = { ...payload, stream: false };
     const doReq = async (p: any) => {
-      const r = await fetch(url, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${key}`,
-        },
-        body: JSON.stringify(p),
-      });
+      let r: Response;
+      try {
+        r = await fetch(url, {
+          method: "POST",
+          headers: buildHeaders(),
+          body: JSON.stringify(p),
+        });
+      } catch (e: any) {
+        const code = e?.cause?.code || e?.code || "";
+        const msg = String(code || e?.message || e);
+        throw new Error(`FETCH_FAILED:${msg}`);
+      }
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
         const msg = j?.error?.message || j?.message || r.status;
-        throw new Error(`DEEPSEEK_ERROR:${msg}`);
+        throw new Error(`MODEL_ERROR:${msg}`);
       }
       const content = j?.choices?.[0]?.message?.content;
       if (!content) throw new Error("EMPTY_MODEL_RESPONSE");
@@ -156,6 +234,7 @@ export async function POST(req: Request) {
 
       let full = "";
       const sendStatus = (text: string) => send("status", { text });
+      const sendMeta = (data: any) => send("meta", data);
       // SSE 心跳：避免部分网关/代理在“长时间无数据”时主动断开
       const heartbeat = setInterval(() => {
         try {
@@ -166,19 +245,41 @@ export async function POST(req: Request) {
       let resp: Response | null = null;
       try {
         sendStatus("AI 正在理解你的想法…");
-        resp = await callDeepSeekStream(payloadBase);
+        // 告诉前端当前使用的 provider/model（用于 UI 提示）
+        sendMeta({ provider, model });
+        try {
+          resp = await callModelStream(payloadBase);
+        } catch (e: any) {
+          // 默认优先 OpenRouter，但如果 OpenRouter 网络失败且 DeepSeek 可用，则自动回退一次
+          const em = String(e?.message || e);
+          const canFallback = provider === "openrouter" && !!(process.env.DEEPSEEK_API_KEY || "");
+          if (canFallback && em.toLowerCase().includes("fetch_failed")) {
+            sendStatus("OpenRouter 连接失败，我先切到 DeepSeek 再试一次…");
+            provider = "deepseek";
+            authKey = process.env.DEEPSEEK_API_KEY || "";
+            const baseUrl = (process.env.DEEPSEEK_API_BASE || "https://api.deepseek.com").replace(/\/+$/, "");
+            url = `${baseUrl}/v1/chat/completions`;
+            model = process.env.DEEPSEEK_MODEL || "deepseek-chat";
+            payloadBase.model = model;
+            // 通知前端：已经回退
+            sendMeta({ provider, model, reason: "fallback_openrouter_fetch_failed" });
+            resp = await callModelStream(payloadBase);
+          } else {
+            throw e;
+          }
+        }
         if (!resp.ok) {
           // response_format 可能不兼容，退回普通 stream
           try {
             resp.body?.cancel();
           } catch {}
           delete payloadBase.response_format;
-          resp = await callDeepSeekStream(payloadBase);
+          resp = await callModelStream(payloadBase);
         }
         if (!resp.ok || !resp.body) {
           const j = await resp.json().catch(() => ({}));
           const msg = j?.error?.message || j?.message || resp.status;
-          throw new Error(`DEEPSEEK_ERROR:${msg}`);
+          throw new Error(`MODEL_ERROR:${msg}`);
         }
 
         sendStatus("AI 正在生成代码…");
@@ -217,7 +318,7 @@ export async function POST(req: Request) {
           // 流式传输中断：用非流式再请求一次兜底，尽量给用户结果
           // 流式连接偶尔会中断：这里用一次非流式请求兜底，继续给用户结果
           sendStatus("连接有点不稳定，我换个方式继续生成…");
-          const once = await callDeepSeekOnce({
+          const once = await callModelOnce({
             model,
             messages: [{ role: "system", content: systemPrompt }, ...messages],
             temperature: 0.4,
@@ -239,7 +340,7 @@ export async function POST(req: Request) {
             `你刚才的输出不是严格可解析的 JSON。请只输出一个 JSON 对象（不要任何额外文本），并修复格式。\n` +
             `错误原因：${String(e?.message || e)}\n` +
             `原输出：\n${full}\n`;
-          const repaired = await callDeepSeekOnce({
+          const repaired = await callModelOnce({
             model,
             messages: [
               { role: "system", content: systemPrompt },

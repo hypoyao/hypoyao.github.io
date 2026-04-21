@@ -101,8 +101,22 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [input, setInput] = useState(initialPrompt || "");
-  // 固定使用 reasoner
-  const model: "deepseek-reasoner" = "deepseek-reasoner";
+  // 模型选择：DeepSeek / OpenRouter
+  const [provider, setProvider] = useState<"deepseek" | "openrouter">(() => {
+    try {
+      const raw = window.localStorage.getItem("creatorStudio:modelProvider");
+      if (raw === "deepseek" || raw === "openrouter") return raw;
+    } catch {}
+    // 默认走 OpenRouter（用户要求默认选择 nemotron free）
+    return "openrouter";
+  });
+  const [model, setModel] = useState<string>(() => {
+    try {
+      const raw = window.localStorage.getItem("creatorStudio:modelName");
+      if (raw) return raw;
+    } catch {}
+    return "nvidia/nemotron-3-super-120b-a12b:free";
+  });
   const listRef = useRef<HTMLDivElement | null>(null);
   const [projects, setProjects] = useState<Array<{ gameId: string; title?: string; entry: string; mtimeMs?: number }>>([]);
   const [loggedIn, setLoggedIn] = useState(false);
@@ -119,12 +133,51 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
 
   const publishText = useMemo(() => (published ? "更新" : "发布"), [published]);
 
+  const openrouterModels = useMemo(
+    () => [
+      { id: "nvidia/nemotron-3-super-120b-a12b:free", name: "nvidia/nemotron-3-super-120b-a12b:free（默认）" },
+      { id: "qwen/qwen-2.5-72b-instruct:free", name: "qwen/qwen-2.5-72b-instruct:free" },
+      { id: "anthropic/claude-sonnet-4.6", name: "anthropic/claude-sonnet-4.6" },
+      { id: "deepseek/deepseek-v3.2", name: "deepseek/deepseek-v3.2" },
+      { id: "google/gemini-3-flash-preview", name: "google/gemini-3-flash-preview" },
+      { id: "minimax/minimax-m2.5", name: "minimax/minimax-m2.5" },
+    ],
+    [],
+  );
+
+  const deepseekModels = useMemo(
+    () => [
+      { id: "deepseek-reasoner", name: "deepseek-reasoner（思考更强）" },
+      { id: "deepseek-chat", name: "deepseek-chat（更快）" },
+    ],
+    [],
+  );
+
+  // 修正本地缓存里可能出现的“provider/model 不匹配”
+  useEffect(() => {
+    if (provider === "openrouter") {
+      const ok = openrouterModels.some((x) => x.id === model);
+      if (!ok) setModel("nvidia/nemotron-3-super-120b-a12b:free");
+    } else {
+      const ok = deepseekModels.some((x) => x.id === model);
+      if (!ok) setModel("deepseek-reasoner");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provider]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("creatorStudio:modelProvider", provider);
+      window.localStorage.setItem("creatorStudio:modelName", model);
+    } catch {}
+  }, [provider, model]);
+
   function act(type: "new" | "publish" | "delete") {
     const ok =
       type === "new"
         ? window.confirm("确定新建一个游戏吗？\n\n当前游戏不会丢失，你可以在“我的游戏”里再切回来。")
         : type === "publish"
-          ? window.confirm(`确定${publishText}到首页吗？`)
+          ? window.confirm(`确定${publishText}吗？`)
           : window.confirm("确定删除当前游戏吗？\n\n删除后无法恢复。");
     if (!ok) return;
     if (opMenuRef.current) opMenuRef.current.open = false;
@@ -310,12 +363,14 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
     // 否则：先拉取历史项目；有就默认选最新一个，没有就新建
     (async () => {
       try {
-        const me = await fetch("/api/me", { cache: "no-store" })
+        // 并发请求：me 和 list 不互相依赖，避免串行等待导致首屏变慢
+        const meP = fetch("/api/me", { cache: "no-store" })
           .then((x) => x.json())
           .catch(() => null);
-        setLoggedIn(!!me?.loggedIn);
 
         if (isFromHome) {
+          const me = await meP;
+          setLoggedIn(!!me?.loggedIn);
           // 只在“从其它页面跳转过来且明确带 auto=1”时自动启动；
           // 启动后立刻把 URL 里的 auto=1 去掉，避免用户刷新页面时重复启动。
           try {
@@ -338,8 +393,31 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
           return;
         }
 
-        const r = await fetch("/api/creator/list", { cache: "no-store" });
-        const j = await r.json().catch(() => ({}));
+        // 首屏先用本地缓存把“我的游戏”列表渲染出来（体感更快），再后台拉最新
+        try {
+          const raw = window.localStorage.getItem("creatorStudio:projectsCache");
+          const c = raw ? JSON.parse(raw) : null;
+          const arr0 = Array.isArray(c?.games) ? c.games : [];
+          if (arr0.length) {
+            setProjects(arr0);
+            let pick0 = arr0[0]?.gameId || "";
+            // 优先恢复上次打开的项目
+            try {
+              const rawLast = window.localStorage.getItem(CREATOR_LAST_KEY);
+              const last = rawLast ? JSON.parse(rawLast) : null;
+              const lastId = typeof last?.gameId === "string" ? last.gameId : "";
+              if (lastId && arr0.some((x: any) => x?.gameId === lastId)) pick0 = lastId;
+            } catch {}
+            if (pick0) {
+              setGameId(pick0);
+              setPreviewUrl(`${entryOf(pick0)}?t=${encodeURIComponent(nowId())}`);
+            }
+          }
+        } catch {}
+
+        const listP = fetch("/api/creator/list", { cache: "no-store" }).then((x) => x.json().catch(() => ({})));
+        // 优先把“我的游戏”列表展示出来；me 允许慢一点再更新登录态
+        const j = await listP;
         const arr = Array.isArray(j?.games) ? j.games : [];
         setProjects(arr);
         if (arr.length) {
@@ -358,6 +436,9 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
           }
           return;
         }
+
+        const me = await meP;
+        setLoggedIn(!!me?.loggedIn);
       } catch {}
       try {
         const gid = await newGame();
@@ -460,6 +541,10 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
     const j = await r.json().catch(() => ({}));
     const arr = Array.isArray(j?.games) ? j.games : [];
     setProjects(arr);
+    // 本地缓存一份：让 create 首屏先秒出列表，再后台刷新
+    try {
+      window.localStorage.setItem("creatorStudio:projectsCache", JSON.stringify({ v: 1, at: Date.now(), games: arr }));
+    } catch {}
     return arr as Array<{ gameId: string; title?: string; entry: string; mtimeMs?: number }>;
   }
 
@@ -526,7 +611,7 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
         method: "POST",
         headers: { "content-type": "application/json" },
         // 只传 user/assistant；system 由服务端统一注入
-        body: JSON.stringify({ messages: [...useBase, myMsg], model }),
+        body: JSON.stringify({ messages: [...useBase, myMsg], provider, model }),
         signal: ac.signal,
       });
       if (!r.ok) {
@@ -547,7 +632,8 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
         };
         let draft = "";
         let lastPaint = 0;
-        let statusLine = withTime("AI 正在准备…");
+        let statusRaw = "AI 正在准备…";
+        let statusLine = withTime(statusRaw);
 
         const paintDraft = (force = false) => {
           const now = Date.now();
@@ -571,31 +657,53 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
           });
         };
 
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          const chunk = dec.decode(value, { stream: true });
-          const events = parseSseChunk(sseState, chunk);
-          for (const ev of events) {
-            if (ev.event === "status") {
-              const t = String(ev.data?.text || "AI 思考中…");
-              statusLine = withTime(t);
-              paintDraft(true);
-            } else if (ev.event === "delta") {
-              const t = String(ev.data?.text || "");
-              if (t) {
-                draft += t;
-                paintDraft(false);
+        // 计时器：即使长时间没有 status/delta，也要让 “xxs” 动起来
+        const timeTicker = setInterval(() => {
+          statusLine = withTime(statusRaw);
+          paintDraft(true);
+        }, 500);
+
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            const chunk = dec.decode(value, { stream: true });
+            const events = parseSseChunk(sseState, chunk);
+            for (const ev of events) {
+              if (ev.event === "status") {
+                statusRaw = String(ev.data?.text || "AI 思考中…");
+                statusLine = withTime(statusRaw);
+                paintDraft(true);
+              } else if (ev.event === "meta") {
+                const p = String(ev.data?.provider || "").trim();
+                const m = String(ev.data?.model || "").trim();
+                const reason = String(ev.data?.reason || "").trim();
+                if (reason && p === "deepseek") {
+                  // 明确提醒用户：已回退到 DeepSeek
+                  statusRaw = `已回退到 DeepSeek（${m || "deepseek-chat"}）`;
+                } else if (p && m) {
+                  statusRaw = `当前模型：${p} / ${m}`;
+                }
+                statusLine = withTime(statusRaw);
+                paintDraft(true);
+              } else if (ev.event === "delta") {
+                const t = String(ev.data?.text || "");
+                if (t) {
+                  draft += t;
+                  paintDraft(false);
+                }
+              } else if (ev.event === "final") {
+                finalContent = String(ev.data?.content || "");
+                repaired = !!ev.data?.repaired;
+                // 最后强制刷新一次 draft，确保用户看到完整输出（或至少尾部）
+                if (draft) paintDraft(true);
+              } else if (ev.event === "error") {
+                throw new Error(String(ev.data?.error || "CHAT_STREAM_ERROR"));
               }
-            } else if (ev.event === "final") {
-              finalContent = String(ev.data?.content || "");
-              repaired = !!ev.data?.repaired;
-              // 最后强制刷新一次 draft，确保用户看到完整输出（或至少尾部）
-              if (draft) paintDraft(true);
-            } else if (ev.event === "error") {
-              throw new Error(String(ev.data?.error || "CHAT_STREAM_ERROR"));
             }
           }
+        } finally {
+          clearInterval(timeTicker);
         }
       } else {
         // 兼容非流式（理论上不会走到这里）
@@ -648,9 +756,13 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
       const hint =
         m.toLowerCase().includes("missing_deepseek_api_key")
           ? "（服务端未配置 DEEPSEEK_API_KEY）"
+          : m.toLowerCase().includes("missing_openrouter_api_key")
+            ? "（服务端未配置 OPENROUTER_API_KEY）"
+            : m.toLowerCase().includes("fetch failed")
+              ? "（服务端请求模型失败：常见原因是网络/DNS/代理/TLS/Key 限制；建议重试或切换模型）"
           : m.toLowerCase().includes("terminated")
             ? "（连接被中断：可能是网络/模型超时/Key 无效/服务端被重启，建议重试）"
-            : "（建议重试；如持续失败再检查 DEEPSEEK_API_KEY）";
+            : "（建议重试；如持续失败再检查 OPENROUTER_API_KEY / DEEPSEEK_API_KEY）";
       setMsg(`出错：${m}${hint}`);
       setLastFailedText(text);
       // 把最后的“AI 开始写代码…”替换成更友好的提示
@@ -718,7 +830,11 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
           if (window.confirm("发布/更新需要先登录。现在去登录吗？")) window.location.href = "/login";
           return;
         }
-        window.location.href = `/publish?id=${encodeURIComponent(gameId)}`;
+        setMsg("发布中…正在打开发布页面…");
+        // 让提示先渲染出来再跳转
+        setTimeout(() => {
+          window.location.href = `/publish?id=${encodeURIComponent(gameId)}`;
+        }, 80);
       } else if (type === "delete") {
         if (!gameId) return;
         (async () => {
@@ -792,9 +908,9 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
                 新建游戏
               </button>
               <button className="createMenuItem" type="button" onClick={() => act("publish")} disabled={busy || !gameId}>
-                {publishText}到首页
+                {publishText}
               </button>
-              <button className="createMenuItem danger" type="button" onClick={() => act("delete")} disabled={busy || !gameId}>
+              <button className="createMenuItem" type="button" onClick={() => act("delete")} disabled={busy || !gameId}>
                 删除游戏
               </button>
             </div>
@@ -812,7 +928,13 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
 
         <div className="chatList" ref={listRef}>
           {viewMessages.map((m, idx) => (
-            <div key={idx} className={`chatMsg ${m.role === "user" ? "isUser" : ""}`.trim()}>
+            <div
+              key={idx}
+              className={
+                `chatMsg ${m.role === "user" ? "isUser" : "isAi"} ` +
+                `${m.role === "assistant" && typeof m.content === "string" && m.content.startsWith(THINK_PREFIX) ? "isThinking" : ""}`
+              }
+            >
               <div className="chatRole">{m.role === "user" ? "我" : "AI"}</div>
               {m.role === "assistant" && typeof m.content === "string" && m.content.startsWith(THINK_PREFIX) ? (
                 (() => {
@@ -855,6 +977,39 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
               ) : null}
             </div>
           ) : null}
+          <div className="chatModelRow" aria-label="model select">
+            <div className="chatModelLabel">模型：</div>
+            <select
+              className="chatModelSelect"
+              value={provider}
+              disabled={busy}
+              onChange={(e) => {
+                const p = (e.target.value || "openrouter") as any;
+                if (p !== "deepseek" && p !== "openrouter") return;
+                setProvider(p);
+                // 切换 provider 时给一个合理默认
+                if (p === "openrouter") setModel("nvidia/nemotron-3-super-120b-a12b:free");
+                else setModel("deepseek-reasoner");
+              }}
+            >
+              <option value="openrouter">OpenRouter</option>
+              <option value="deepseek">DeepSeek</option>
+            </select>
+
+            <select
+              className="chatModelSelect"
+              value={model}
+              disabled={busy}
+              onChange={(e) => setModel(e.target.value)}
+            >
+              {(provider === "openrouter" ? openrouterModels : deepseekModels).map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div className="chatRow">
             <textarea
               className="restTextarea"
@@ -907,7 +1062,28 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
                 <span className="simDot green" />
               </div>
               <div className="simTitle"> </div>
-              <div className="simSpacer" />
+              <div className="simActions">
+                <a
+                  className="btn btnGray iconBtn simOpenBtn"
+                  href={previewUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="在新标签页打开预览"
+                  title="在新标签页打开预览"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3Z"
+                      fill="currentColor"
+                    />
+                    <path
+                      d="M5 5h6v2H7v10h10v-4h2v6H5V5Z"
+                      fill="currentColor"
+                      opacity="0.9"
+                    />
+                  </svg>
+                </a>
+              </div>
             </div>
             <div className="simScreen">
               <iframe className="previewFrame" src={previewUrl} title="preview" />
