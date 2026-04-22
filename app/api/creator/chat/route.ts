@@ -262,6 +262,16 @@ function pickOpenRouterModel(prefer: string[]) {
   return OPENROUTER_MODELS[0];
 }
 
+function pickAlternateOpenRouterModel(current: string, prefer: string[]) {
+  const cur = String(current || "").trim();
+  for (const m of prefer) {
+    const mm = String(m || "").trim();
+    if (!mm || mm === cur) continue;
+    if ((OPENROUTER_MODELS as readonly string[]).includes(mm)) return mm;
+  }
+  return "";
+}
+
 function envModelOrEmpty(key: string) {
   return String(process.env[key] || "").trim();
 }
@@ -694,8 +704,9 @@ export async function POST(req: Request) {
               eml.includes("model_not_found") || eml.includes("model not found") || eml.includes("deprecated") || eml.includes("not available");
             const isNetwork = eml.includes("fetch_failed") || eml.includes("network error") || eml.includes("timeout");
             if (canSwapModel && (isRegionBlocked || isModelUnavailable || isNetwork)) {
-              const picked = pickOpenRouterModel(fallbackModels);
-              if (picked && picked !== String(payload?.model || "")) {
+              const curModel = String(payload?.model || "");
+              const picked = pickAlternateOpenRouterModel(curModel, fallbackModels) || pickOpenRouterModel(fallbackModels);
+              if (picked && picked !== curModel) {
                 sendStatus(`当前模型不稳定/不可用，我切换到 ${picked} 再试一次…`);
                 sendMeta({ provider, model: picked, reason: "fallback_model_unstable" });
                 const p2: any = { ...payload, model: picked };
@@ -950,6 +961,53 @@ export async function POST(req: Request) {
             return err;
           };
 
+          // 最小验收（稳定优先）：语法可解析 +（若已拆分）引用关系正确
+          const validateAcceptance = (files: Array<{ path: string; content: string }>) => {
+            const err = [...validateScripts(files)];
+            const index = files.find((f) => f.path === "index.html")?.content || "";
+            const hasCss = !!files.find((f) => f.path === "style.css")?.content;
+            const hasJs = !!files.find((f) => f.path === "game.js")?.content;
+            if (hasCss && !/href\s*=\s*["']\.\/style\.css["']/.test(index)) err.push("index.html 未正确引用 ./style.css");
+            if (hasJs && !/src\s*=\s*["']\.\/game\.js["']/.test(index)) err.push("index.html 未正确引用 ./game.js");
+            return err;
+          };
+
+          // lastGood：稳定交付的关键（任何后续失败都回滚到最近一次通过验收的版本）
+          const readLastGood = async () => {
+            const meta = (await readMetaObj()) || {};
+            const lg = (meta as any)?._gen?.lastGood;
+            if (!lg || typeof lg !== "object") return null;
+            const files = Array.isArray(lg.files) ? lg.files : [];
+            const normalized = files
+              .map((f: any) => ({ path: String(f?.path || "").trim(), content: String(f?.content || "") }))
+              .filter((f: any) => ["index.html", "style.css", "game.js"].includes(f.path) && f.content.trim());
+            return normalized.length ? { meta, lg, files: normalized } : null;
+          };
+
+          const writeMeta = async (metaObj: any) => {
+            await upsertDraftFile("meta.json", JSON.stringify(metaObj || {}, null, 2));
+          };
+
+          const setLastGood = async (files: Array<{ path: string; content: string }>, note: string) => {
+            const metaNow = (await readMetaObj()) || {};
+            const pick = files
+              .filter((f) => ["index.html", "style.css", "game.js"].includes(f.path))
+              .map((f) => ({ path: f.path, content: String(f.content || "") }));
+            const blob = pick.map((f) => `${f.path}\n${f.content}`).join("\n\n");
+            (metaNow as any)._gen = { ...(metaNow as any)._gen, lastGood: { at: Date.now(), hash: hash12(blob), note, files: pick } };
+            await writeMeta(metaNow);
+          };
+
+          const restoreLastGood = async (reason: string) => {
+            const lg = await readLastGood();
+            if (!lg) throw new Error(`NO_LAST_GOOD:${reason}`);
+            sendStatus(`生成遇到问题（${reason}），已回滚到上一次可用版本。`);
+            for (const f of lg.files) {
+              await upsertDraftFile(f.path, f.content);
+            }
+            return lg.files;
+          };
+
           const splitSingleFile = (html: string) => {
             const raw = String(html || "");
             if (!raw.includes("AI_MVP_SINGLE_FILE")) return null;
@@ -1008,7 +1066,11 @@ export async function POST(req: Request) {
               if (provider === "openrouter" && payloadBase.provider) debugPayload.provider = payloadBase.provider;
               const outText = await autoRetry(
                 async () =>
-                  await callStreamRobust(debugPayload, `Debug：修复补丁`, true, ["qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"]),
+                  await callStreamRobust(debugPayload, `Debug：修复补丁`, true, [
+                    "deepseek/deepseek-v3.2",
+                    "minimax/minimax-m2.5",
+                    "qwen/qwen3.6-plus",
+                  ]),
                 "Debug 自动修复",
                 "只输出 JSON，files 里给出修复后的完整文件内容。",
               );
@@ -1063,7 +1125,13 @@ export async function POST(req: Request) {
             };
             if (provider === "openrouter" && payloadBase.provider) payload.provider = payloadBase.provider;
             const outText = await autoRetry(
-              async () => await callStreamRobust(payload, "阶段1：蓝图 JSON", true, ["qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"]),
+              async () =>
+                await callStreamRobust(payload, "阶段1：蓝图 JSON", true, [
+                  // qwen 不稳时，换 deepseek / minimax
+                  "deepseek/deepseek-v3.2",
+                  "minimax/minimax-m2.5",
+                  "qwen/qwen3.6-plus",
+                ]),
               "架构师蓝图",
               "只输出 JSON 对象，包含 meta/protocol/acceptance。",
             );
@@ -1092,7 +1160,11 @@ export async function POST(req: Request) {
               if (provider === "openrouter" && payloadBase.provider) repairPayload.provider = payloadBase.provider;
               const repairedText = await autoRetry(
                 async () =>
-                  await callStreamRobust(repairPayload, "阶段1：修复蓝图 JSON", true, ["qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"]),
+                  await callStreamRobust(repairPayload, "阶段1：修复蓝图 JSON", true, [
+                    "deepseek/deepseek-v3.2",
+                    "minimax/minimax-m2.5",
+                    "qwen/qwen3.6-plus",
+                  ]),
                 "架构师蓝图修复",
                 "只输出严格 JSON 对象（meta/protocol/acceptance）。",
               );
@@ -1164,7 +1236,12 @@ export async function POST(req: Request) {
             };
             if (provider === "openrouter" && payloadBase.provider) payload.provider = payloadBase.provider;
             const outText = await autoRetry(
-              async () => await callStreamRobust(payload, "阶段2：单文件 MVP", true, ["qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"]),
+              async () =>
+                await callStreamRobust(payload, "阶段2：单文件 MVP", true, [
+                  "deepseek/deepseek-v3.2",
+                  "minimax/minimax-m2.5",
+                  "qwen/qwen3.6-plus",
+                ]),
               "单文件 MVP",
               "只输出 JSON，files 里只包含 index.html。",
             );
@@ -1191,9 +1268,19 @@ export async function POST(req: Request) {
           }
 
           // ===== 沙箱静态检查 + 自愈 =====
-          const errs0 = validateScripts(files);
-          if (errs0.length) {
-            files = await selfHeal("沙箱检查", files, errs0.join("\n"), 2);
+          {
+            const errs0 = validateAcceptance(files);
+            if (errs0.length) {
+              try {
+                files = await selfHeal("沙箱检查", files, errs0.join("\n"), 2);
+              } catch (e: any) {
+                // 稳定优先：自愈失败不阻断交付，直接回滚 lastGood（若还没有则继续抛错）
+                files = await restoreLastGood(String(e?.message || e));
+              }
+            }
+            // 只要通过验收，就立刻设置 lastGood（保证后续失败不归零）
+            const ok = !validateAcceptance(files).length;
+            if (ok) await setLastGood(files, "after_sandbox");
           }
 
           // ===== MVP 稳定后：自动拆分（单文件 -> 三文件）=====
@@ -1210,17 +1297,20 @@ export async function POST(req: Request) {
                 { path: "style.css", content: cssNew },
                 { path: "game.js", content: jsNew },
               ];
-              const errs = validateScripts(splitFiles);
-              if (!errs.length) {
+              try {
+                const errs = validateAcceptance(splitFiles);
+                if (errs.length) throw new Error(`SPLIT_ACCEPTANCE_FAILED:${errs.join(" | ")}`);
                 await upsertDraftFile("index.html", indexNew);
                 await upsertDraftFile("style.css", cssNew);
                 await upsertDraftFile("game.js", jsNew);
                 files = splitFiles;
                 const metaNow = (await readMetaObj()) || {};
-                (metaNow as any)._gen = { v: 1, stage: "split_done", splitted: true, updatedAt: Date.now(), lastGood: hash12(indexNew + cssNew + jsNew) };
-                await upsertDraftFile("meta.json", JSON.stringify(metaNow, null, 2));
-              } else {
-                sendStatus("拆分后检测到问题，先保留单文件版本继续运行。");
+                (metaNow as any)._gen = { ...(metaNow as any)._gen, stage: "split_done", splitted: true, updatedAt: Date.now() };
+                await writeMeta(metaNow);
+                await setLastGood(files, "after_split");
+              } catch (e: any) {
+                // 稳定优先：拆分失败不阻断交付，保留单文件 lastGood
+                sendStatus("拆分后检测到问题，已保留单文件版本继续运行。");
               }
             }
           }
@@ -1228,46 +1318,56 @@ export async function POST(req: Request) {
           // ===== 阶段 3：Refine（在活代码上全量替换或多文件补丁）=====
           const isFirstGen = !hasIndex;
           if (!isFirstGen) {
-            sendStatus(`（3/3）根据新指令迭代完善（${provider} / ${refineModel}）…`);
-            if (provider === "openrouter") model = refineModel;
-            sendMeta({ provider, model, phase: "refine" });
-            const payload: any = {
-              model,
-              messages: [
-                { role: "system", content: REFINE_PROMPT },
-                {
-                  role: "user",
-                  content:
-                    `【架构协议】\n${JSON.stringify(blueprint, null, 2)}\n\n` +
-                    `【当前文件】\n${JSON.stringify(files, null, 2)}\n\n` +
-                    `【用户新需求】\n${userIntent}\n\n` +
-                    `请输出修订后的 files（尽量只改必要文件）。`,
-                },
-              ],
-              temperature: 0.3,
-              max_tokens: 2400,
-              response_format: { type: "json_object" },
-            };
-            if (provider === "openrouter" && payloadBase.provider) payload.provider = payloadBase.provider;
-            const outText = await autoRetry(
-              async () => await callStreamRobust(payload, "阶段3：迭代补丁", true, ["qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"]),
-              "迭代补丁",
-              "只输出 JSON，files 里包含修改后的完整文件内容。",
-            );
-            const obj = parseJsonObjectLoose(outText);
-            const outFiles = Array.isArray((obj as any)?.files) ? (obj as any).files : [];
-            // 合并更新（只允许 3 个文件）
-            for (const f of outFiles) {
-              const p = String((f as any)?.path || "").trim();
-              const c = String((f as any)?.content || "");
-              if (!["index.html", "style.css", "game.js"].includes(p) || !c.trim()) continue;
-              const idx = files.findIndex((x) => x.path === p);
-              if (idx >= 0) files[idx] = { path: p, content: c };
-              else files.push({ path: p, content: c });
-              await upsertDraftFile(p, c);
+            try {
+              sendStatus(`（3/3）根据新指令迭代完善（${provider} / ${refineModel}）…`);
+              if (provider === "openrouter") model = refineModel;
+              sendMeta({ provider, model, phase: "refine" });
+              const payload: any = {
+                model,
+                messages: [
+                  { role: "system", content: REFINE_PROMPT },
+                  {
+                    role: "user",
+                    content:
+                      `【架构协议】\n${JSON.stringify(blueprint, null, 2)}\n\n` +
+                      `【当前文件】\n${JSON.stringify(files, null, 2)}\n\n` +
+                      `【用户新需求】\n${userIntent}\n\n` +
+                      `请输出修订后的 files（尽量只改必要文件）。`,
+                  },
+                ],
+                temperature: 0.3,
+                max_tokens: 2400,
+                response_format: { type: "json_object" },
+              };
+              if (provider === "openrouter" && payloadBase.provider) payload.provider = payloadBase.provider;
+              const outText = await autoRetry(
+                async () =>
+                  await callStreamRobust(payload, "阶段3：迭代补丁", true, [
+                    "deepseek/deepseek-v3.2",
+                    "minimax/minimax-m2.5",
+                    "qwen/qwen3.6-plus",
+                  ]),
+                "迭代补丁",
+                "只输出 JSON，files 里包含修改后的完整文件内容。",
+              );
+              const obj = parseJsonObjectLoose(outText);
+              const outFiles = Array.isArray((obj as any)?.files) ? (obj as any).files : [];
+              for (const f of outFiles) {
+                const p = String((f as any)?.path || "").trim();
+                const c = String((f as any)?.content || "");
+                if (!["index.html", "style.css", "game.js"].includes(p) || !c.trim()) continue;
+                const idx = files.findIndex((x) => x.path === p);
+                if (idx >= 0) files[idx] = { path: p, content: c };
+                else files.push({ path: p, content: c });
+                await upsertDraftFile(p, c);
+              }
+              const errs = validateAcceptance(files);
+              if (errs.length) files = await selfHeal("迭代后沙箱检查", files, errs.join("\n"), 2);
+              if (!validateAcceptance(files).length) await setLastGood(files, "after_refine");
+            } catch (e: any) {
+              // 稳定优先：refine 失败不阻断交付，回滚 lastGood
+              files = await restoreLastGood(String(e?.message || e));
             }
-            const errs = validateScripts(files);
-            if (errs.length) files = await selfHeal("迭代后沙箱检查", files, errs.join("\n"), 2);
           }
 
           // 更新 meta.json（标题/简介等）+ 返回给前端写入
