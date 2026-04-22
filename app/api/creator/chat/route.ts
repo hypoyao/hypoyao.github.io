@@ -640,6 +640,9 @@ export async function POST(req: Request) {
           // 若已存在 plan 且 user input 相同，则跳过 planner
           const lastUserInput = String(userMsgs[userMsgs.length - 1]?.content || "").trim();
           let blueprint: any = null;
+          let reusePlan = false;
+          let planObj: any = null;
+          let planDone: Record<string, boolean> = {};
           if (canCheckpoint) {
             const metaRaw = await readDraftFile("meta.json");
             const metaObj = metaRaw ? parseJsonObjectLoose(metaRaw) : null;
@@ -647,6 +650,9 @@ export async function POST(req: Request) {
             if (plan && typeof plan === "object" && String(plan.userInput || "") === lastUserInput && Array.isArray(plan.tasks)) {
               blueprint = { meta: safeMeta(metaObj), tasks: normalizePlannerTasks(plan.tasks) };
               sendStatus(`（${step}/${totalSteps}）架构师：复用已有蓝图（${showModel()}）…`);
+              reusePlan = true;
+              planObj = plan;
+              planDone = (plan && typeof plan.done === "object" ? plan.done : {}) as any;
             }
           }
 
@@ -690,14 +696,18 @@ export async function POST(req: Request) {
             const metaWithPlan = {
               ...blueprint.meta,
                 _plan: {
-                  v: 2,
+                  v: 3,
                   userInput: lastUserInput,
                   tasks: blueprint.tasks,
                   models: { planner: plannerModel, coder: coderModel, reviewer: reviewerModel },
+                  done: {},
                   createdAt: Date.now(),
                 },
             };
             await upsertDraftFile("meta.json", JSON.stringify(metaWithPlan, null, 2));
+              reusePlan = true; // 从这一刻起，同一轮失败重试可复用
+              planObj = metaWithPlan._plan;
+              planDone = {};
           }
           }
 
@@ -706,8 +716,9 @@ export async function POST(req: Request) {
           for (const t of blueprint.tasks) {
             const p = t.path;
             step++;
-            // 若已存在该文件且 plan 未变，则跳过生成
-            if (canCheckpoint) {
+            // 最小重试原则：只在“复用同一份 plan（同一句 userInput）”且标记 done 的情况下跳过。
+            // 避免出现“新需求但因为旧文件存在而全部跳过，预览不变化”的 bug。
+            if (canCheckpoint && reusePlan && planDone && planDone[p]) {
               const ex = await readDraftFile(p);
               if (ex && ex.trim()) {
                 sendStatus(`（${step}/${totalSteps}）程序员：跳过 ${p}（已生成）`);
@@ -738,6 +749,21 @@ export async function POST(req: Request) {
             if (!outContent.trim()) throw new Error(`CODER_EMPTY_CONTENT:${p}`);
             files.push({ path: outPath, content: outContent });
             await upsertDraftFile(outPath, outContent);
+            // 更新 plan.done（用于断点续跑）
+            if (canCheckpoint && reusePlan && planObj && typeof planObj === "object") {
+              try {
+                planObj.done = planObj.done && typeof planObj.done === "object" ? planObj.done : {};
+                (planObj.done as any)[outPath] = true;
+                planDone = planObj.done as any;
+                // 把更新后的 plan 写回 meta.json
+                const metaRaw2 = await readDraftFile("meta.json");
+                const metaObj2 = metaRaw2 ? parseJsonObjectLoose(metaRaw2) : null;
+                if (metaObj2 && typeof metaObj2 === "object") {
+                  (metaObj2 as any)._plan = planObj;
+                  await upsertDraftFile("meta.json", JSON.stringify(metaObj2, null, 2));
+                }
+              } catch {}
+            }
           }
           // meta.json：若已存在 plan 版，则读取；否则写入基础 meta
           if (canCheckpoint) {
