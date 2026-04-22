@@ -471,7 +471,7 @@ export async function POST(req: Request) {
         };
 
         // 对分步生成：每一步也做“流式输出”并把 token 增量推给前端，让用户看到进度
-        const callStreamToString = async (payload: any, stepTag: string) => {
+        const callStreamToString = async (payload: any, stepTag: string, strictJson = false) => {
           // payload.stream 必须为 true
           const p0: any = { ...payload, stream: true };
           const doReq = async (p: any) => {
@@ -523,16 +523,25 @@ export async function POST(req: Request) {
           try {
             return await doReq(p0);
           } catch (e) {
-            // retry without response_format（某些模型/网关不支持）
+            // 对需要“严格 JSON”的阶段：不要直接去掉 response_format（会显著增加非 JSON 概率）。
+            // 改用一次非流式兜底，再返回文本用于解析。
+            if (strictJson) {
+              sendStatus("该步骤需要严格 JSON，我用非流式方式再试一次…");
+              const once = await callModelOnce({ ...payload, stream: false });
+              // 也把结果推给前端，让用户看到发生了什么（不然会像“卡住”）
+              sendDelta(`\n\n（非流式结果）\n${once}\n`);
+              return once;
+            }
+            // 非严格场景：retry without response_format（某些模型/网关不支持）
             const p1: any = { ...p0 };
             delete p1.response_format;
             return await doReq(p1);
           }
         };
 
-        const callStreamRobust = async (payload: any, stepTag: string) => {
+        const callStreamRobust = async (payload: any, stepTag: string, strictJson = false) => {
           try {
-            return await callStreamToString(payload, stepTag);
+            return await callStreamToString(payload, stepTag, strictJson);
           } catch (e: any) {
             const em = String(e?.message || e);
             if (canFallback && em.toLowerCase().includes("fetch_failed")) {
@@ -540,7 +549,7 @@ export async function POST(req: Request) {
               await fallbackToDeepSeek();
               const p2: any = { ...payload };
               delete p2.provider;
-              return await callStreamToString(p2, stepTag);
+              return await callStreamToString(p2, stepTag, strictJson);
             }
             throw e;
           }
@@ -645,9 +654,30 @@ export async function POST(req: Request) {
             response_format: { type: "json_object" },
           };
           if (provider === "openrouter" && payloadBase.provider) plannerPayload.provider = payloadBase.provider;
-          const plannerText = await callStreamRobust(plannerPayload, `步骤 ${step}/${totalSteps}：蓝图 JSON`);
-          const bp0 = parseJsonObjectLoose(plannerText);
-          if (!bp0) throw new Error("PLANNER_NOT_JSON");
+            const plannerText = await callStreamRobust(plannerPayload, `步骤 ${step}/${totalSteps}：蓝图 JSON`, true);
+            let bp0 = parseJsonObjectLoose(plannerText);
+            if (!bp0) {
+              // 兜底：让“修复器”把内容转成严格 JSON
+              sendStatus("蓝图不是严格 JSON，正在修复为 JSON…");
+              const repairPrompt =
+                `请把下面文本修复为严格 JSON，且必须符合 Schema：{meta:{title,shortDesc,rules,creator{name}},tasks:[{path,instruction}...] }。\n` +
+                `只输出 JSON，不要 markdown，不要解释。\n\n` +
+                `原文：\n${plannerText}\n`;
+              const repairPayload: any = {
+                model,
+                messages: [
+                  { role: "system", content: "你是 JSON 修复器。只输出 JSON（json_object）。" },
+                  { role: "user", content: repairPrompt },
+                ],
+                temperature: 0.0,
+                max_tokens: 900,
+                response_format: { type: "json_object" },
+              };
+              if (provider === "openrouter" && payloadBase.provider) repairPayload.provider = payloadBase.provider;
+              const repairedText = await callStreamRobust(repairPayload, `步骤 ${step}/${totalSteps}：修复蓝图 JSON`, true);
+              bp0 = parseJsonObjectLoose(repairedText);
+            }
+            if (!bp0) throw new Error("PLANNER_NOT_JSON");
           blueprint = { meta: safeMeta((bp0 as any).meta), tasks: normalizePlannerTasks((bp0 as any).tasks) };
           if (!blueprint.meta.title) blueprint.meta.title = "未命名作品";
           // 保存 plan 到 meta.json（隐藏字段），用于断点续跑
@@ -695,7 +725,7 @@ export async function POST(req: Request) {
               response_format: { type: "json_object" },
             };
             if (provider === "openrouter" && payloadBase.provider) pld.provider = payloadBase.provider;
-            const outText = await callStreamRobust(pld, `步骤 ${step}/${totalSteps}：生成 ${p}`);
+              const outText = await callStreamRobust(pld, `步骤 ${step}/${totalSteps}：生成 ${p}`, true);
             const obj = parseJsonObjectLoose(outText);
             const outPath = String((obj as any)?.path || "").trim();
             const outContent = String((obj as any)?.content || "");
@@ -744,7 +774,7 @@ export async function POST(req: Request) {
           };
           if (provider === "openrouter" && payloadBase.provider) reviewPayload.provider = payloadBase.provider;
           try {
-            const reviewText = await callStreamRobust(reviewPayload, `步骤 ${step}/${totalSteps}：自检补丁`);
+            const reviewText = await callStreamRobust(reviewPayload, `步骤 ${step}/${totalSteps}：自检补丁`, true);
             const reviewObj = parseJsonObjectLoose(reviewText);
             const patches = Array.isArray((reviewObj as any)?.patches) ? (reviewObj as any).patches : [];
             for (const p of patches) {
