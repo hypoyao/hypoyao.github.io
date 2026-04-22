@@ -1047,7 +1047,51 @@ export async function POST(req: Request) {
               "架构师蓝图",
               "只输出 JSON 对象，包含 meta/protocol/acceptance。",
             );
-            const obj = parseJsonObjectLoose(outText);
+            let obj = parseJsonObjectLoose(outText);
+            if (!obj) {
+              // 兜底 1：先用“JSON 修复器”把输出纯化为严格 JSON（保持结构）
+              sendStatus("蓝图不是严格 JSON，正在自动修复为 JSON…");
+              const fixerModel = provider === "openrouter" ? pickOpenRouterModel(["qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"]) : model;
+              const repairPayload: any = {
+                model: fixerModel,
+                messages: [
+                  { role: "system", content: "你是 JSON 修复器。只输出一个严格 JSON 对象（json_object），不要任何解释或 markdown。" },
+                  {
+                    role: "user",
+                    content:
+                      `请把下面内容修复为严格 JSON，并确保符合 Schema：\n` +
+                      `{\n  "meta":{ "title":string,"shortDesc":string,"rules":string,"creator":{"name":string}},\n` +
+                      `  "protocol":{...},\n  "acceptance":{...}\n}\n\n` +
+                      `原输出：\n${outText}\n`,
+                  },
+                ],
+                temperature: 0.0,
+                max_tokens: 1400,
+                response_format: { type: "json_object" },
+              };
+              if (provider === "openrouter" && payloadBase.provider) repairPayload.provider = payloadBase.provider;
+              const repairedText = await autoRetry(
+                async () =>
+                  await callStreamRobust(repairPayload, "阶段1：修复蓝图 JSON", true, ["qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"]),
+                "架构师蓝图修复",
+                "只输出严格 JSON 对象（meta/protocol/acceptance）。",
+              );
+              obj = parseJsonObjectLoose(repairedText);
+            }
+            if (!obj && provider === "openrouter") {
+              // 兜底 2：修复失败 -> 直接强制换 Qwen 重跑一次 Architect（比继续修复更稳）
+              const qwen = pickOpenRouterModel(["qwen/qwen3.6-plus"]);
+              sendStatus(`修复失败，我改用 ${qwen} 重新生成协议蓝图…`);
+              sendMeta({ provider, model: qwen, phase: "architect", reason: "force_qwen_architect_not_json" });
+              const p2: any = { ...payload, model: qwen, temperature: 0.2, max_tokens: 1400, response_format: { type: "json_object" } };
+              delete p2.provider; // Qwen 不需要 Gemini 的 provider routing
+              const out2 = await autoRetry(
+                async () => await callStreamRobust(p2, "阶段1：蓝图 JSON（Qwen 兜底）", true, []),
+                "架构师蓝图（Qwen兜底）",
+                "只输出严格 JSON 对象（meta/protocol/acceptance）。",
+              );
+              obj = parseJsonObjectLoose(out2);
+            }
             if (!obj) throw new Error("ARCHITECT_NOT_JSON");
             const meta = safeMeta((obj as any).meta);
             blueprint = { v: 1, baseIdea: userIntent, meta, protocol: (obj as any).protocol || {}, acceptance: (obj as any).acceptance || {} };
