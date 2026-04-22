@@ -720,10 +720,21 @@ export async function POST(req: Request) {
               }
             }
 
-            if (canFallback && em.toLowerCase().includes("fetch_failed")) {
-              sendStatus("OpenRouter 连接失败，我先切到 DeepSeek 再试一次…");
+            // OpenRouter 链路级失败：直接切到 DeepSeek 官方 API（不经过 OpenRouter）
+            // 典型：FETCH_FAILED / timeout / gateway / 5xx / region 等。
+            const openrouterDown =
+              eml.includes("fetch_failed") ||
+              eml.includes("network error") ||
+              eml.includes("timeout") ||
+              eml.includes("gateway") ||
+              eml.includes("service unavailable") ||
+              eml.includes("overloaded") ||
+              eml.includes("not available in your region");
+            if (canFallback && provider === "openrouter" && openrouterDown) {
+              sendStatus("OpenRouter 不稳定/不可达，我切到 DeepSeek 官方 API 再试一次…");
               await fallbackToDeepSeek();
-              const p2: any = { ...payload };
+              // 关键：切 provider 后必须同时切 payload.model，否则会把 OpenRouter 的 model id 发给 DeepSeek
+              const p2: any = { ...payload, model };
               delete p2.provider;
               return await callStreamToString(p2, stepTag, strictJson);
             }
