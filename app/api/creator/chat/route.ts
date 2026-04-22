@@ -168,6 +168,28 @@ const DEBUG_PROMPT = `
 4) 最小修复原则：只修报错相关内容，不要大改功能。
 `.trim();
 
+// 单模型单次生成（稳定优先）：直接生成单文件 index.html（内联 CSS/JS），再做最小校验/一次自愈
+const MONOLITH_MVP_PROMPT = `
+你是“前端小游戏生成器”。请根据用户的一句话需求，直接生成一个可运行的单文件小游戏/小应用（MVP）。
+
+【硬性要求】
+1) 只输出合法 JSON（json_object），不要任何解释或 markdown。
+2) 输出结构必须为：
+{
+  "assistant": "一句话说明已生成什么",
+  "meta": { "title": "...", "shortDesc": "...", "rules": "...", "creator": { "name": "..." } },
+  "files": [
+    { "path": "index.html", "content": "..." }
+  ]
+}
+3) files 里必须且只能包含 index.html；index.html 必须包含：
+   - <!-- AI_MVP_SINGLE_FILE v1 -->
+   - 一个 <style>（内联样式）
+   - 一个 <script>（内联逻辑）
+4) 不依赖任何外部库，不要引用外部 CDN。
+5) 目标是“最小可运行版本”：点击开始/重开可玩；保证无明显 JS 语法错误。
+`.trim();
+
 const FIXER_PROMPT = `
 你是“Bug 修复工程师（Fixer）”。你的任务是基于当前项目文件与用户描述的 bug，给出最小改动补丁来修复问题。
 
@@ -477,7 +499,7 @@ export async function POST(req: Request) {
     return h;
   }
 
-  async function callModelStream(payload: any) {
+  async function callModelStream(payload: any, timeoutMs = 180_000) {
     const maxTry = 2;
     for (let k = 1; k <= maxTry; k++) {
       try {
@@ -486,7 +508,7 @@ export async function POST(req: Request) {
           method: "POST",
           headers: buildHeaders(),
           body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(180_000),
+          signal: AbortSignal.timeout(timeoutMs),
         });
       } catch (e: any) {
         const code = String(e?.cause?.code || e?.code || "").toUpperCase();
@@ -503,7 +525,7 @@ export async function POST(req: Request) {
     throw new Error("FETCH_FAILED:UNKNOWN");
   }
 
-  async function callModelOnce(payload: any) {
+  async function callModelOnce(payload: any, timeoutMs = 180_000) {
     // 尽量也用 json_object，减少模型“解释/思考”导致的超长输出；
     // 如果不兼容，再自动退回普通模式。
     const p0 = { ...payload, stream: false };
@@ -514,7 +536,7 @@ export async function POST(req: Request) {
           method: "POST",
           headers: buildHeaders(),
           body: JSON.stringify(p),
-          signal: AbortSignal.timeout(180_000),
+          signal: AbortSignal.timeout(timeoutMs),
         });
       } catch (e: any) {
         const code = e?.cause?.code || e?.code || "";
@@ -598,7 +620,7 @@ export async function POST(req: Request) {
         };
 
         // 对分步生成：每一步也做“流式输出”并把 token 增量推给前端，让用户看到进度
-        const callStreamToString = async (payload: any, stepTag: string, strictJson = false) => {
+        const callStreamToString = async (payload: any, stepTag: string, strictJson = false, timeoutMs = 180_000) => {
           // payload.stream 必须为 true
           const p0: any = { ...payload, stream: true };
           // 在 Vercel 上，服务端“上游再开一条流”更容易卡死/断流；这里强制改为非流式获取结果，
@@ -607,11 +629,11 @@ export async function POST(req: Request) {
 
           const doReq = async (p: any) => {
             if (preferNonStreamUpstream) {
-              return await callModelOnce({ ...p, stream: false });
+              return await callModelOnce({ ...p, stream: false }, timeoutMs);
             }
             let r: Response;
             try {
-              r = await callModelStream(p);
+              r = await callModelStream(p, timeoutMs);
             } catch (e: any) {
               throw e;
             }
@@ -668,7 +690,7 @@ export async function POST(req: Request) {
             // 改用一次非流式兜底，再返回文本用于解析。
             if (strictJson) {
               sendStatus("该步骤需要严格 JSON，我用非流式方式再试一次…");
-              const once = await callModelOnce({ ...payload, stream: false });
+              const once = await callModelOnce({ ...payload, stream: false }, timeoutMs);
               // 也把结果推给前端，让用户看到发生了什么（不然会像“卡住”）
               sendDelta(`\n\n（非流式结果）\n${once}\n`);
               return once;
@@ -685,9 +707,10 @@ export async function POST(req: Request) {
           stepTag: string,
           strictJson = false,
           fallbackModels: string[] = [],
+          timeoutMs = 180_000,
         ) => {
           try {
-            return await callStreamToString(payload, stepTag, strictJson);
+            return await callStreamToString(payload, stepTag, strictJson, timeoutMs);
           } catch (e: any) {
             const em = String(e?.message || e);
             const eml = em.toLowerCase();
@@ -713,7 +736,7 @@ export async function POST(req: Request) {
                 // 对 Gemini 的 provider routing 仅对 gemini 生效；换到 deepseek/qwen 就不需要了
                 if (!String(picked).toLowerCase().startsWith("google/")) delete p2.provider;
                 try {
-                  return await callStreamToString(p2, stepTag, strictJson);
+                  return await callStreamToString(p2, stepTag, strictJson, timeoutMs);
                 } catch (e2: any) {
                   // 继续走下面的 provider fallback
                 }
@@ -736,7 +759,7 @@ export async function POST(req: Request) {
               // 关键：切 provider 后必须同时切 payload.model，否则会把 OpenRouter 的 model id 发给 DeepSeek
               const p2: any = { ...payload, model };
               delete p2.provider;
-              return await callStreamToString(p2, stepTag, strictJson);
+              return await callStreamToString(p2, stepTag, strictJson, timeoutMs);
             }
             throw e;
           }
@@ -747,17 +770,22 @@ export async function POST(req: Request) {
           run: () => Promise<T>,
           label: string,
           retryHint: string,
+          attempts = 2,
         ): Promise<T> => {
-          try {
-            return await run();
-          } catch (e: any) {
-            const em = String(e?.message || e);
-            sendStatus(`${label}失败，自动重试一次…（原因：${em.slice(0, 120)}）`);
-            sendDelta(`\n\n（自动重试提示）${retryHint}\n`);
-            // 给网络/模型一点喘息时间
-            await new Promise((r) => setTimeout(r, 280));
-            return await run();
+          let lastErr: any = null;
+          for (let i = 1; i <= Math.max(1, attempts); i++) {
+            try {
+              return await run();
+            } catch (e: any) {
+              lastErr = e;
+              const em = String(e?.message || e);
+              if (i >= attempts) break;
+              sendStatus(`${label}失败，自动重试一次…（原因：${em.slice(0, 120)}）`);
+              sendDelta(`\n\n（自动重试提示）${retryHint}\n`);
+              await new Promise((r) => setTimeout(r, 280));
+            }
           }
+          throw lastErr;
         };
 
         // ===== Fix 模式：最小补丁修复（不走 Planner/Coder 全流程）=====
@@ -870,6 +898,239 @@ export async function POST(req: Request) {
         }
 
         if (!forceLegacy) {
+          // ===== 稳定模式（默认）：单模型单次生成 + 最小后处理 =====
+          // 目标：减少模型调用次数（失败点），避免阶段3卡住；先交付可运行 MVP，再逐步迭代。
+          const generationMode = (envModelOrEmpty("CREATOR_GENERATION_MODE") || "monolith").toLowerCase(); // monolith | evolve
+          if (generationMode !== "evolve") {
+            const hasOpenRouter = !!(process.env.OPENROUTER_API_KEY || "");
+            if (!safeGameId || !ownerKey) throw new Error("MISSING_GAME_ID");
+
+            await ensureCreatorDraftTables();
+            const owns = await db.execute(sql`
+              select 1
+              from creator_draft_games
+              where id = ${safeGameId} and owner_key = ${ownerKey}
+              limit 1
+            `);
+            const ownRows = Array.isArray((owns as any).rows) ? (owns as any).rows : [];
+            if (!ownRows.length) throw new Error("NOT_YOUR_GAME");
+
+            const upsertDraftFile = async (path: string, content: string) => {
+              await db.execute(sql`
+                insert into creator_draft_files (game_id, path, content)
+                values (${safeGameId}, ${path}, ${content})
+                on conflict (game_id, path)
+                do update set content = excluded.content, updated_at = now()
+              `);
+            };
+            const readDraftFile = async (path: string) => {
+              const rows = await db.execute(sql`
+                select content
+                from creator_draft_files
+                where game_id = ${safeGameId} and path = ${path}
+                limit 1
+              `);
+              const list = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
+              const c = list?.[0]?.content;
+              return typeof c === "string" ? c : "";
+            };
+            const readMetaObj = async () => {
+              const raw = await readDraftFile("meta.json");
+              const obj = raw ? parseJsonObjectLoose(raw) : null;
+              return obj && typeof obj === "object" ? obj : null;
+            };
+            const hash12 = (s: string) => crypto.createHash("sha1").update(String(s || "")).digest("hex").slice(0, 12);
+
+            const validateScripts = (html: string) => {
+              const err: string[] = [];
+              const jsFromHtml = (h: string) => {
+                if (!h) return "";
+                const blocks: string[] = [];
+                const re = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
+                let m: RegExpExecArray | null;
+                while ((m = re.exec(h))) {
+                  const attrs = String(m[1] || "");
+                  if (/src\s*=/.test(attrs)) continue;
+                  blocks.push(String(m[2] || ""));
+                }
+                return blocks.join("\n\n");
+              };
+              try {
+                const js = jsFromHtml(html);
+                if (js.trim()) new Script(js);
+              } catch (e: any) {
+                err.push(`index.html 内联脚本语法错误：${String(e?.message || e)}`);
+              }
+              return err;
+            };
+
+            const readLastGood = async () => {
+              const meta = (await readMetaObj()) || {};
+              const lg = (meta as any)?._gen?.lastGood;
+              if (!lg || typeof lg !== "object") return null;
+              const files = Array.isArray(lg.files) ? lg.files : [];
+              const f0 = files.find((f: any) => String(f?.path || "") === "index.html");
+              const html = String(f0?.content || "");
+              if (!html.trim()) return null;
+              return { meta, html };
+            };
+            const setLastGood = async (metaObj: any, html: string, note: string) => {
+              const m = metaObj && typeof metaObj === "object" ? metaObj : {};
+              const blob = `index.html\n${html}`;
+              (m as any)._gen = {
+                ...(m as any)._gen,
+                stage: "monolith_mvp",
+                updatedAt: Date.now(),
+                lastGood: {
+                  at: Date.now(),
+                  hash: hash12(blob),
+                  note,
+                  files: [{ path: "index.html", content: html }],
+                },
+              };
+              await upsertDraftFile("meta.json", JSON.stringify(m, null, 2));
+            };
+            const restoreLastGood = async (reason: string) => {
+              const lg = await readLastGood();
+              if (!lg) throw new Error(`NO_LAST_GOOD:${reason}`);
+              sendStatus(`生成遇到问题（${reason}），已回滚到上一次可用版本。`);
+              await upsertDraftFile("index.html", lg.html);
+              return lg;
+            };
+
+            // 选择模型：优先 OpenRouter 的 qwen；OpenRouter 链路失败则回退 DeepSeek 官方 API（已在 callStreamRobust 里处理）
+            const mvpOverride = envModelOrEmpty("CREATOR_MVP_MODEL");
+            const mvpModel = hasOpenRouter ? pickOpenRouterModel([mvpOverride, "qwen/qwen3.6-plus"].filter(Boolean) as string[]) : model;
+
+            sendStatus(`（1/1）生成单文件 MVP（${provider} / ${mvpModel}）…`);
+            if (provider === "openrouter") model = mvpModel;
+            sendMeta({ provider, model, phase: "mvp_monolith" });
+
+            const userMsgs = messages.filter((m) => m.role === "user").slice(-2);
+            const userIntent = String(userMsgs[userMsgs.length - 1]?.content || "").trim();
+
+            const payload: any = {
+              model,
+              messages: [
+                { role: "system", content: MONOLITH_MVP_PROMPT },
+                { role: "user", content: userIntent || "请生成一个简单可玩的小游戏。要求可运行、单文件。"},
+              ],
+              temperature: 0.3,
+              max_tokens: 2400,
+              response_format: { type: "json_object" },
+            };
+            if (provider === "openrouter" && payloadBase.provider) payload.provider = payloadBase.provider;
+
+            let outText = "";
+            try {
+              outText = await autoRetry(
+                async () =>
+                  await callStreamRobust(
+                    payload,
+                    "单次生成：单文件 MVP",
+                    true,
+                    // qwen 本身失败时，先在 OpenRouter 内换 deepseek/minimax；OpenRouter 不通时会自动切 DeepSeek 官方 API
+                    ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
+                    120_000,
+                  ),
+                "单文件 MVP",
+                "只输出 JSON，files 仅包含 index.html，且 index.html 必须含 <style> 与 <script>。",
+                2,
+              );
+            } catch (e: any) {
+              // 稳定优先：直接回滚 lastGood（如果存在），否则继续抛错
+              const lg = await restoreLastGood(String(e?.message || e));
+              const metaNow = lg.meta || {};
+              const finalObj = {
+                assistant: "本次生成网络不稳定，已回滚到上一次可用版本。",
+                meta: metaNow,
+                files: [{ path: "index.html", content: lg.html }, { path: "meta.json", content: JSON.stringify(metaNow, null, 2) }],
+              };
+              parseCreatorJson(JSON.stringify(finalObj));
+              send("final", { ok: true, content: JSON.stringify(finalObj), repaired: true });
+              clearInterval(heartbeat);
+              controller.close();
+              return;
+            }
+
+            // 解析输出
+            const obj = parseJsonObjectLoose(outText);
+            if (!obj) throw new Error("MVP_NOT_JSON");
+            const meta = safeMeta((obj as any).meta);
+            const outFiles = Array.isArray((obj as any).files) ? (obj as any).files : [];
+            const html = String(outFiles.find((x: any) => String(x?.path || "") === "index.html")?.content || "");
+            if (!html.trim()) throw new Error("MVP_EMPTY_INDEX");
+
+            await upsertDraftFile("index.html", html);
+            const metaNow = { ...meta, _gen: { v: 1, stage: "monolith_mvp", updatedAt: Date.now() } };
+            await setLastGood(metaNow, html, "after_generate");
+
+            // 最小验收：语法检查；若失败则仅自愈 1 轮，仍失败回滚 lastGood
+            const errs = validateScripts(html);
+            let finalHtml = html;
+            if (errs.length) {
+              try {
+                sendStatus(`检测到语法问题，自动修复一次…`);
+                const debugModel = hasOpenRouter
+                  ? pickOpenRouterModel([envModelOrEmpty("CREATOR_DEBUG_MODEL"), "openai/gpt-4o-mini", "qwen/qwen3.6-plus"].filter(Boolean) as string[])
+                  : model;
+                if (provider === "openrouter") model = debugModel;
+                sendMeta({ provider, model, phase: "debug_once" });
+                const debugPayload: any = {
+                  model,
+                  messages: [
+                    { role: "system", content: DEBUG_PROMPT },
+                    {
+                      role: "user",
+                      content:
+                        `【错误】\n${errs.join("\n")}\n\n` +
+                        `【当前 index.html】\n${finalHtml}\n\n` +
+                        `请输出修复后的 JSON：{assistant, files:[{path:\"index.html\", content:\"...\"}]}（只修语法错误）。`,
+                    },
+                  ],
+                  temperature: 0.1,
+                  max_tokens: 1600,
+                  response_format: { type: "json_object" },
+                };
+                if (provider === "openrouter" && payloadBase.provider) debugPayload.provider = payloadBase.provider;
+                const fixedText = await callStreamRobust(
+                  debugPayload,
+                  "Debug：修复 index.html",
+                  true,
+                  ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
+                  60_000,
+                );
+                const fixedObj = parseJsonObjectLoose(fixedText);
+                const ffiles = Array.isArray((fixedObj as any)?.files) ? (fixedObj as any).files : [];
+                const html2 = String(ffiles.find((x: any) => String(x?.path || "") === "index.html")?.content || "");
+                if (html2.trim() && !validateScripts(html2).length) {
+                  finalHtml = html2;
+                  await upsertDraftFile("index.html", finalHtml);
+                  const meta2 = (await readMetaObj()) || metaNow;
+                  await setLastGood(meta2, finalHtml, "after_debug");
+                } else {
+                  throw new Error("DEBUG_FAILED");
+                }
+              } catch (e: any) {
+                const lg = await restoreLastGood(String(e?.message || e));
+                finalHtml = lg.html;
+              }
+            }
+
+            const metaFinal = (await readMetaObj()) || metaNow;
+            const assistantText = `已生成可运行版本：${String((metaFinal as any)?.title || meta.title || "").trim() || "未命名作品"}。`;
+            const finalObj = {
+              assistant: assistantText,
+              meta: metaFinal,
+              files: [{ path: "index.html", content: finalHtml }, { path: "meta.json", content: JSON.stringify(metaFinal, null, 2) }],
+            };
+            parseCreatorJson(JSON.stringify(finalObj));
+            send("final", { ok: true, content: JSON.stringify(finalObj), repaired: false });
+            clearInterval(heartbeat);
+            controller.close();
+            return;
+          }
+
           // ===== 新方案：Architect -> 单文件 MVP -> （沙箱自愈）-> 拆分 -> 迭代补丁 =====
           const hasOpenRouter = !!(process.env.OPENROUTER_API_KEY || "");
 
@@ -1351,15 +1612,21 @@ export async function POST(req: Request) {
                 response_format: { type: "json_object" },
               };
               if (provider === "openrouter" && payloadBase.provider) payload.provider = payloadBase.provider;
+              // 稳定优先：阶段3 不要无限等待/反复重试。
+              // - 单次调用超时压到 60s
+              // - 不额外重试（attempts=1）
               const outText = await autoRetry(
                 async () =>
-                  await callStreamRobust(payload, "阶段3：迭代补丁", true, [
-                    "deepseek/deepseek-v3.2",
-                    "minimax/minimax-m2.5",
-                    "qwen/qwen3.6-plus",
-                  ]),
+                  await callStreamRobust(
+                    payload,
+                    "阶段3：迭代补丁",
+                    true,
+                    ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
+                    60_000,
+                  ),
                 "迭代补丁",
                 "只输出 JSON，files 里包含修改后的完整文件内容。",
+                1,
               );
               const obj = parseJsonObjectLoose(outText);
               const outFiles = Array.isArray((obj as any)?.files) ? (obj as any).files : [];
