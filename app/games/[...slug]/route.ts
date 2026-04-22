@@ -207,8 +207,9 @@ async function buildShellHtml(gameId: string) {
   const rawIndex = `${rawBase}index.html`;
   const embedIndex = `${embedBase}index.html`;
   const publishHref = `/publish?id=${encodeURIComponent(gameId)}`;
+  const editHref = `/create?id=${encodeURIComponent(gameId)}`;
   const actionHtml = isPublished
-    ? `<a class="iconBtn" href="${escHtml(publishHref)}" title="更新信息" aria-label="更新信息">
+    ? `<a class="iconBtn" href="${escHtml(editHref)}" title="编辑" aria-label="编辑">
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path d="M12 20h9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -231,7 +232,8 @@ async function buildShellHtml(gameId: string) {
     @media (max-width: 980px){
       .wrap{grid-template-columns:1fr}
       .gameCard{grid-template-rows:auto auto}
-      .frame{height:auto;min-height:0}
+      /* 不限制最大高度，但给一个较大的 min-height 作为“加载期兜底”，避免高度测量失败时只剩一行 */
+      .frame{height:auto;min-height:70dvh}
     }
     .gameCard{background:var(--card);border:1px solid var(--line);border-radius:18px;overflow:hidden;min-height:0;display:grid;grid-template-rows:auto 1fr}
     .bar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.92)}
@@ -339,6 +341,35 @@ async function buildShellHtml(gameId: string) {
             var b = doc.body;
             if (de) h = Math.max(h, de.scrollHeight || 0, de.offsetHeight || 0);
             if (b) h = Math.max(h, b.scrollHeight || 0, b.offsetHeight || 0);
+            // 某些旧游戏（例如扫雷）主要内容可能是 absolute/canvas，scrollHeight 会异常偏小。
+            // 兜底：用元素的 boundingClientRect 估算内容“最底部”。
+            if (h > 0 && h < 260 && b) {
+              try {
+                var win = f.contentWindow;
+                var maxBottom = 0;
+                // 优先找常见容器，避免遍历整棵树
+                var sels = ["#board", "canvas", "#app", "main", ".wrap", ".card", ".board", ".gameBoard"];
+                for (var si = 0; si < sels.length; si++) {
+                  var el0 = doc.querySelector(sels[si]);
+                  if (el0 && el0.getBoundingClientRect) {
+                    var r0 = el0.getBoundingClientRect();
+                    maxBottom = Math.max(maxBottom, r0.bottom || 0);
+                  }
+                }
+                // 再取 body 直系子节点的 bottom（数量一般很少）
+                var kids = b.children || [];
+                for (var i = 0; i < kids.length; i++) {
+                  var el = kids[i];
+                  if (!el || !el.getBoundingClientRect) continue;
+                  var r = el.getBoundingClientRect();
+                  maxBottom = Math.max(maxBottom, r.bottom || 0);
+                }
+                // 转换为文档高度（考虑滚动）
+                var y = 0;
+                try { y = (win && win.scrollY) ? win.scrollY : 0; } catch (e) {}
+                if (maxBottom > 0) h = Math.max(h, Math.ceil(maxBottom + y));
+              } catch (e) {}
+            }
             if (h > 0) {
               // 重要：不要固定加 padding，否则遇到 100vh 布局会形成“越撑越高”的正反馈循环
               var cur = 0;

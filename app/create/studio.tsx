@@ -102,7 +102,15 @@ function parseSseChunk(state: { buf: string }, chunk: string) {
   return events;
 }
 
-export default function CreateStudio({ initialPrompt = "", autoStart = false }: { initialPrompt?: string; autoStart?: boolean }) {
+export default function CreateStudio({
+  initialPrompt = "",
+  autoStart = false,
+  initialGameId = "",
+}: {
+  initialPrompt?: string;
+  autoStart?: boolean;
+  initialGameId?: string;
+}) {
   const [gameId, setGameId] = useState<string>("");
   const [previewUrl, setPreviewUrl] = useState<string>("/games/creator-playground/index.html");
   const [busy, setBusy] = useState(false);
@@ -128,7 +136,9 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
   const [creatorName, setCreatorName] = useState<string>("");
   const [gameMeta, setGameMeta] = useState<GameMeta | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
-  const [projects, setProjects] = useState<Array<{ gameId: string; title?: string; entry: string; mtimeMs?: number }>>([]);
+  const [projects, setProjects] = useState<Array<{ gameId: string; title?: string; entry: string; mtimeMs?: number; published?: boolean }>>(
+    [],
+  );
   const [loggedIn, setLoggedIn] = useState(false);
   const [published, setPublished] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(false);
@@ -146,8 +156,8 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
   const openrouterModels = useMemo(
     () => [
       { id: "nvidia/nemotron-3-super-120b-a12b:free", name: "nvidia/nemotron-3-super-120b-a12b:free（默认）" },
+      { id: "qwen/qwen3.6-plus", name: "qwen/qwen3.6-plus（Qwen3.6 Plus）" },
       { id: "qwen/qwen-2.5-72b-instruct:free", name: "qwen/qwen-2.5-72b-instruct:free" },
-      { id: "anthropic/claude-sonnet-4.6", name: "anthropic/claude-sonnet-4.6" },
       { id: "deepseek/deepseek-v3.2", name: "deepseek/deepseek-v3.2" },
       { id: "google/gemini-3-flash", name: "google/gemini-3-flash" },
       { id: "google/gemini-3-flash-preview", name: "google/gemini-3-flash-preview" },
@@ -392,6 +402,7 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
     if (bootRef.current) return;
     bootRef.current = true;
     const isFromHome = !!(autoStart && initialPrompt && initialPrompt.trim());
+    const fixedGameId = String(initialGameId || "").trim();
 
     const baseAssistant: ChatMsg[] = [
       {
@@ -408,6 +419,18 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
         const meP = fetch("/api/me", { cache: "no-store" })
           .then((x) => x.json())
           .catch(() => null);
+
+        // 从游戏页“编辑”跳转过来：固定打开指定项目（优先级最高）
+        if (fixedGameId) {
+          const me = await meP;
+          setLoggedIn(!!me?.loggedIn);
+          if (me?.creator?.name) setCreatorName(String(me.creator.name));
+          setGameId(fixedGameId);
+          setPreviewUrl(`${entryOf(fixedGameId)}?t=${encodeURIComponent(nowId())}`);
+          // 刷新项目列表（避免下拉框里没有该项目）
+          await refreshProjects();
+          return;
+        }
 
         if (isFromHome) {
           const me = await meP;
@@ -502,6 +525,13 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
       setPublished(false);
       return;
     }
+    // 优先用“我的游戏”列表里的标记，避免额外请求导致已发布游戏出现很慢
+    const hit = (projects || []).find((p) => p.gameId === gameId);
+    if (hit && typeof hit.published === "boolean") {
+      setPublished(!!hit.published);
+      return;
+    }
+    // 兜底：老缓存/列表里没有 published 字段时，才请求一次
     (async () => {
       try {
         const r = await fetch(`/api/games/${encodeURIComponent(gameId)}`, { cache: "no-store" });
@@ -510,7 +540,7 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
         setPublished(false);
       }
     })();
-  }, [gameId]);
+  }, [gameId, projects]);
 
   // 语音输入（浏览器 SpeechRecognition，优先给孩子用）
   useEffect(() => {
@@ -559,7 +589,8 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
 
   function toggleSpeech() {
     if (!speechSupported || !speechRef.current) {
-      setMsg("当前浏览器不支持语音输入（建议用 Chrome）。");
+      // 手机端（尤其 iOS Safari）通常不支持 SpeechRecognition：给一个明确替代方案
+      setMsg("当前浏览器暂不支持页面内语音输入。可点击输入框，使用系统键盘自带的语音输入（麦克风）。");
       return;
     }
     if (busy) return;
@@ -588,7 +619,7 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
     try {
       window.localStorage.setItem("creatorStudio:projectsCache", JSON.stringify({ v: 1, at: Date.now(), games: arr }));
     } catch {}
-    return arr as Array<{ gameId: string; title?: string; entry: string; mtimeMs?: number }>;
+    return arr as Array<{ gameId: string; title?: string; entry: string; mtimeMs?: number; published?: boolean }>;
   }
 
   async function writeFiles(files: ModelFile[], gid?: string) {
@@ -687,7 +718,8 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
         method: "POST",
         headers: { "content-type": "application/json" },
         // 只传 user/assistant；system 由服务端统一注入
-        body: JSON.stringify({ messages: [...useBase, myMsg], provider, model }),
+        // 传 gameId：让服务端能做“分步生成断点续跑”（哪一步失败，下次从哪一步开始）
+        body: JSON.stringify({ gameId: useId, messages: [...useBase, myMsg], provider, model }),
         signal: ac.signal,
       });
       if (!r.ok) {
@@ -1011,6 +1043,7 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
               {projects.map((p) => (
                 <option key={p.gameId} value={p.gameId}>
                   {(p.title && p.title.trim()) ? p.title.trim() : p.gameId}
+                  {p.published ? "  · 已发布" : "  · 草稿"}
                 </option>
               ))}
             </select>
@@ -1040,7 +1073,7 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
           <div className="createPanelHeader">
             <div>
               <div className="createPanelTitle">AI 聊天</div>
-              <div className="createPanelSub">{currentModelLabel || `当前模型：${provider} / ${model}`}</div>
+              <div className="createPanelSub">描述玩法、按钮、胜负条件与画面风格</div>
             </div>
           </div>
 
@@ -1079,6 +1112,14 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
                 <>
                   <div className="chatRole">{m.role === "user" ? "我" : "AI"}</div>
                   <div className="chatText">{m.content}</div>
+                  {/* 失败时：在最后一个 AI 气泡后面给“重试”按钮（更符合用户预期） */}
+                  {m.role === "assistant" && idx === viewMessages.length - 1 && lastFailedText && !busy ? (
+                    <div className="chatInlineActions">
+                      <button className="chatInlineRetry" type="button" onClick={() => sendText(lastFailedText)}>
+                        重试
+                      </button>
+                    </div>
+                  ) : null}
                 </>
               )}
             </div>
@@ -1111,7 +1152,8 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
                 className="btn btnGray voiceBtn"
                 type="button"
                 onClick={toggleSpeech}
-                disabled={busy || !speechSupported}
+                // 不因“不支持”而禁用：手机端可点击后给出提示（用键盘语音输入）
+                disabled={busy}
                 aria-label={listening ? "停止语音输入" : "语音输入"}
                 title={listening ? "停止语音输入" : "语音输入"}
               >
@@ -1226,11 +1268,8 @@ export default function CreateStudio({ initialPrompt = "", autoStart = false }: 
             </div>
 
             <aside className="metaPanel" aria-label="meta">
-              <div className="metaTitle">作品信息</div>
-              <div className="metaBlock">
-                <div className="metaLabel">名称</div>
-                <div className="metaValue">{gameMeta?.title || "（等待 AI 生成…）"}</div>
-              </div>
+              {/* 右侧信息栏：标题直接显示作品名称，节省空间 */}
+              <div className="metaTitle">{(gameMeta?.title || "").trim() || "未命名作品"}</div>
               <div className="metaBlock">
                 <div className="metaLabel">简介</div>
                 <div className="metaValue">{gameMeta?.shortDesc || "（待补充）"}</div>

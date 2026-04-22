@@ -5,10 +5,15 @@ import { getSession } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
-export default async function CreatePage({ searchParams }: { searchParams?: Promise<{ prompt?: string; auto?: string }> }) {
+export default async function CreatePage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ prompt?: string; auto?: string; id?: string }>;
+}) {
   const sp = searchParams ? await searchParams : ({} as any);
   const initialPrompt = typeof sp?.prompt === "string" ? sp.prompt.slice(0, 800) : "";
   const autoStart = typeof sp?.auto === "string" && sp.auto === "1";
+  const initialGameId = typeof sp?.id === "string" ? sp.id.trim().slice(0, 80) : "";
 
   // 创作入口必须登录
   const sess = await getSession();
@@ -16,6 +21,7 @@ export default async function CreatePage({ searchParams }: { searchParams?: Prom
     const qs = new URLSearchParams();
     if (initialPrompt) qs.set("prompt", initialPrompt);
     if (autoStart) qs.set("auto", "1");
+    if (initialGameId) qs.set("id", initialGameId);
     const next = `/create${qs.toString() ? `?${qs.toString()}` : ""}`;
     redirect(`/login?next=${encodeURIComponent(next)}`);
   }
@@ -31,7 +37,7 @@ export default async function CreatePage({ searchParams }: { searchParams?: Prom
           </div>
         </header>
 
-        <CreateStudio initialPrompt={initialPrompt} autoStart={autoStart} />
+        <CreateStudio initialPrompt={initialPrompt} autoStart={autoStart} initialGameId={initialGameId} />
       </section>
     </main>
   );

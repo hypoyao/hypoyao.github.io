@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { CREATOR_OUTPUT_FORMAT_ADDON, CREATOR_SYSTEM_PROMPT } from "@/lib/creator/systemPrompt";
 import { getSession } from "@/lib/auth/session";
+import { ownerKeyFromSession } from "@/lib/creator/creatorIndex";
+import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
+import { db } from "@/lib/db";
+import { sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -10,9 +14,15 @@ type Msg = { role: "system" | "user" | "assistant"; content: string };
 const OPENROUTER_MODELS = [
   // 默认：免费模型（用户要求）
   "nvidia/nemotron-3-super-120b-a12b:free",
+  "qwen/qwen3.6-plus",
   "qwen/qwen-2.5-72b-instruct:free",
-  "anthropic/claude-sonnet-4.6",
   "deepseek/deepseek-v3.2",
+  // Planner / Review 阶段（按需自动使用）
+  "openai/gpt-5.4-nano",
+  "openai/gpt-5.4-mini",
+  "openai/gpt-4o-mini",
+  "google/gemini-2.5-flash",
+  "google/gemini-2.5-flash-lite",
   // Gemini：有些地区/本地网络下走官方节点容易被拦，后端会对该类模型加 provider routing（见下方）
   "google/gemini-3-flash",
   "google/gemini-3-flash-preview",
@@ -72,16 +82,124 @@ function parseCreatorJson(s: string) {
   return obj;
 }
 
+// ===== Planner -> Coder（分步生成，默认开启）=====
+// 目的：避免一次性生成过长导致超时/截断/JSON 崩溃
+const PLANNER_PROMPT = `
+你是“架构师（Planner）”。你的任务不是写代码，而是把用户的小游戏需求拆解成一个可执行的开发蓝图。
+
+【输出要求】
+1) 只输出合法 JSON，不要输出任何 Markdown/解释文字。
+2) 必须包含 meta 与 tasks：
+   - meta：用于 meta.json（title/shortDesc/rules/creator{name}）
+   - tasks：按顺序给出需要生成的文件（index.html/style.css/game.js/prompt.md）
+3) 每个文件的生成尽量控制在 200 行左右，优先最小可运行版本，后续可迭代。
+
+【JSON Schema】
+{
+  "meta": { "title": "...", "shortDesc": "...", "rules": "...", "creator": { "name": "..." } },
+  "tasks": [
+    { "path": "index.html", "instruction": "..." },
+    { "path": "style.css", "instruction": "..." },
+    { "path": "game.js", "instruction": "..." },
+    { "path": "prompt.md", "instruction": "..." }
+  ]
+}
+`.trim();
+
+function parseJsonObjectLoose(s: string) {
+  const raw = String(s || "").trim();
+  try {
+    return JSON.parse(raw);
+  } catch {}
+  const m = raw.match(/```json\\s*([\\s\\S]*?)```/i);
+  if (m) {
+    try {
+      return JSON.parse(m[1]);
+    } catch {}
+  }
+  const i0 = raw.indexOf("{");
+  const i1 = raw.lastIndexOf("}");
+  if (i0 >= 0 && i1 > i0) {
+    try {
+      return JSON.parse(raw.slice(i0, i1 + 1));
+    } catch {}
+  }
+  return null;
+}
+
+function safeMeta(meta: any) {
+  const m = meta && typeof meta === "object" ? meta : {};
+  const creator = m.creator && typeof m.creator === "object" ? m.creator : {};
+  return {
+    title: String(m.title || "").trim().slice(0, 80),
+    shortDesc: String(m.shortDesc || "").trim().slice(0, 120),
+    rules: String(m.rules || "").trim().slice(0, 600),
+    creator: { name: String(creator.name || "").trim().slice(0, 24) },
+  };
+}
+
+function normalizePlannerTasks(tasks: any) {
+  const allow = new Set(["index.html", "style.css", "game.js", "prompt.md"]);
+  const arr = Array.isArray(tasks) ? tasks : [];
+  const out: Array<{ path: string; instruction: string }> = [];
+  for (const t of arr) {
+    const p = String(t?.path || "").trim();
+    if (!allow.has(p)) continue;
+    const ins = String(t?.instruction || "").trim().slice(0, 2000);
+    if (!ins) continue;
+    out.push({ path: p, instruction: ins });
+  }
+  const order = ["index.html", "style.css", "game.js", "prompt.md"];
+  out.sort((a, b) => order.indexOf(a.path) - order.indexOf(b.path));
+  const has = new Set(out.map((x) => x.path));
+  for (const p of order) {
+    if (!has.has(p)) out.push({ path: p, instruction: `请生成 ${p}（最小可运行版本，避免输出过长）。` });
+  }
+  return out;
+}
+
+function coderPrompt(blueprint: any, filePath: string) {
+  const bp = JSON.stringify(blueprint || {}, null, 2);
+  return `
+你是“程序员（Coder）”。你将根据架构师给出的蓝图，为小游戏生成指定文件的最终内容。
+
+【通用要求】
+1) 只输出合法 JSON，不要输出 Markdown/解释文字。
+2) 仅生成一个文件，返回格式：{"path":"${filePath}","content":"..."}。
+3) 其它约束：
+   - index.html 必须引入 ./style.css 与 ./game.js
+   - game.js 不依赖第三方库
+   - 优先最小可运行版本，后续可迭代
+
+【蓝图（JSON）】
+${bp}
+`.trim();
+}
+
+function pickOpenRouterModel(prefer: string[]) {
+  for (const m of prefer) {
+    if ((OPENROUTER_MODELS as readonly string[]).includes(m)) return m;
+  }
+  return OPENROUTER_MODELS[0];
+}
+
+function envModelOrEmpty(key: string) {
+  return String(process.env[key] || "").trim();
+}
+
 export async function POST(req: Request) {
   const sess = await getSession();
   if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED" });
+  const ownerKey = ownerKeyFromSession(sess);
 
-  let body: { messages?: Msg[]; model?: string; provider?: string; promptAddon?: string };
+  let body: { messages?: Msg[]; model?: string; provider?: string; promptAddon?: string; gameId?: string };
   try {
     body = (await req.json()) as any;
   } catch {
     return json(400, { ok: false, error: "INVALID_JSON" });
   }
+  const gameId = String((body as any)?.gameId || "").trim();
+  const safeGameId = gameId && /^[a-zA-Z0-9_-]+$/.test(gameId) ? gameId : "";
 
   // 忽略客户端传来的 system message：服务端统一加（保证所有用户都带上）
   // 同时裁剪历史消息，避免 Reasoner 过长输出导致更高的断流概率
@@ -154,12 +272,13 @@ export async function POST(req: Request) {
   // - 会把 Cookie header 一并转发到线上（如线上也需要 session）
   const devProxyOrigin = String(process.env.DEV_OPENROUTER_PROXY_ORIGIN || "").trim().replace(/\/+$/, "");
   if (process.env.NODE_ENV === "development" && devProxyOrigin && provider === "openrouter") {
-    const ml = String(model || "").toLowerCase();
-    const needProxy =
-      (ml.startsWith("google/") && ml.includes("gemini")) ||
-      ml.startsWith("openai/") ||
-      (ml.startsWith("anthropic/") && ml.includes("claude"));
-    if (needProxy) {
+    // 分步生成会在“内部”动态切换模型（Planner/Coder/Review）。
+    // 如果只按“最开始选中的 model”判断，后续切到 OpenAI/Gemini 时就不会走中转，
+    // 从而在本地触发 region 限制。因此：本地开发只要配置了 DEV_OPENROUTER_PROXY_ORIGIN，
+    // 默认对所有 OpenRouter 请求都走线上中转（可通过 promptAddon 包含 no_dev_proxy 关闭）。
+    const addon0 = typeof (body as any)?.promptAddon === "string" ? String((body as any).promptAddon) : "";
+    const disableProxy = addon0.includes("no_dev_proxy");
+    if (!disableProxy) {
       const forwardBody = { ...(body as any), messages };
       const doProxy = async () => {
         const upstream = await fetch(`${devProxyOrigin}/api/creator/chat`, {
@@ -323,6 +442,7 @@ export async function POST(req: Request) {
       let full = "";
       const sendStatus = (text: string) => send("status", { text });
       const sendMeta = (data: any) => send("meta", data);
+      const sendDelta = (text: string) => send("delta", { text });
       // SSE 心跳：避免部分网关/代理在“长时间无数据”时主动断开
       const heartbeat = setInterval(() => {
         try {
@@ -335,24 +455,335 @@ export async function POST(req: Request) {
         sendStatus("AI 正在理解你的想法…");
         // 告诉前端当前使用的 provider/model（用于 UI 提示）
         sendMeta({ provider, model });
+
+        // 默认走分步生成；若用户补充要求里包含 legacy_single_shot 则强制使用旧模式
+        const forceLegacy = safeAddon.includes("legacy_single_shot");
+
+        const canFallback = provider === "openrouter" && !!(process.env.DEEPSEEK_API_KEY || "");
+        const fallbackToDeepSeek = async () => {
+          provider = "deepseek";
+          authKey = process.env.DEEPSEEK_API_KEY || "";
+          const baseUrl = (process.env.DEEPSEEK_API_BASE || "https://api.deepseek.com").replace(/\/+$/, "");
+          url = `${baseUrl}/v1/chat/completions`;
+          model = process.env.DEEPSEEK_MODEL || "deepseek-chat";
+          // 通知前端：已经回退
+          sendMeta({ provider, model, reason: "fallback_openrouter_fetch_failed" });
+        };
+
+        // 对分步生成：每一步也做“流式输出”并把 token 增量推给前端，让用户看到进度
+        const callStreamToString = async (payload: any, stepTag: string) => {
+          // payload.stream 必须为 true
+          const p0: any = { ...payload, stream: true };
+          const doReq = async (p: any) => {
+            let r: Response;
+            try {
+              r = await callModelStream(p);
+            } catch (e: any) {
+              throw e;
+            }
+            if (!r.ok || !r.body) {
+              const j = await r.json().catch(() => ({}));
+              const msg = j?.error?.message || j?.message || r.status;
+              throw new Error(`MODEL_ERROR:${msg}`);
+            }
+            const reader = r.body.getReader();
+            const dec = new TextDecoder();
+            let buf = "";
+            let out = "";
+            while (true) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              buf += dec.decode(value, { stream: true });
+              let idx;
+              while ((idx = buf.indexOf("\n")) >= 0) {
+                const line = buf.slice(0, idx).trim();
+                buf = buf.slice(idx + 1);
+                if (!line) continue;
+                if (!line.startsWith("data:")) continue;
+                const dataStr = line.slice(5).trim();
+                if (dataStr === "[DONE]") break;
+                let j: any = null;
+                try {
+                  j = JSON.parse(dataStr);
+                } catch {
+                  continue;
+                }
+                const delta = j?.choices?.[0]?.delta?.content ?? "";
+                if (typeof delta === "string" && delta) {
+                  out += delta;
+                  sendDelta(delta);
+                }
+              }
+            }
+            if (!out.trim()) throw new Error("EMPTY_MODEL_RESPONSE");
+            return out;
+          };
+          // 在流式输出中插入一个小分隔符，避免用户看不懂现在在做哪一步
+          sendDelta(`\n\n—— ${stepTag} ——\n`);
+          try {
+            return await doReq(p0);
+          } catch (e) {
+            // retry without response_format（某些模型/网关不支持）
+            const p1: any = { ...p0 };
+            delete p1.response_format;
+            return await doReq(p1);
+          }
+        };
+
+        const callStreamRobust = async (payload: any, stepTag: string) => {
+          try {
+            return await callStreamToString(payload, stepTag);
+          } catch (e: any) {
+            const em = String(e?.message || e);
+            if (canFallback && em.toLowerCase().includes("fetch_failed")) {
+              sendStatus("OpenRouter 连接失败，我先切到 DeepSeek 再试一次…");
+              await fallbackToDeepSeek();
+              const p2: any = { ...payload };
+              delete p2.provider;
+              return await callStreamToString(p2, stepTag);
+            }
+            throw e;
+          }
+        };
+
+        if (!forceLegacy) {
+          // ===== Planner -> Coder 分步生成 =====
+          // 分阶段模型策略：
+          // - Planner：优先 OpenAI GPT-5.4 Nano，其次 GPT-5.4 Mini；最后回退到当前选择
+          // - Coder：优先 DeepSeek V3.2（OpenRouter），其次 Qwen3.6 Plus；再回退当前选择
+          // - Review：优先 Gemini 2.5 Flash，其次 GPT-4o-mini，再回退 Gemini 3 Flash Preview（或当前选择）
+          const hasOpenRouter = !!(process.env.OPENROUTER_API_KEY || "");
+
+          // 允许通过环境变量覆盖（便于本地/线上按地区可用性调整）
+          const plannerOverride = envModelOrEmpty("CREATOR_PLANNER_MODEL");
+          const coderOverride = envModelOrEmpty("CREATOR_CODER_MODEL");
+          const reviewOverride = envModelOrEmpty("CREATOR_REVIEW_MODEL");
+
+          const plannerModel = hasOpenRouter
+            ? pickOpenRouterModel([plannerOverride, "openai/gpt-5.4-nano", "openai/gpt-5.4-mini"].filter(Boolean) as string[])
+            : model;
+          const coderModel = hasOpenRouter
+            ? pickOpenRouterModel([coderOverride, "deepseek/deepseek-v3.2", "qwen/qwen3.6-plus"].filter(Boolean) as string[])
+            : model;
+          const reviewerModel = hasOpenRouter
+            ? pickOpenRouterModel(
+                [reviewOverride, "google/gemini-2.5-flash", "openai/gpt-4o-mini", "google/gemini-3-flash-preview"].filter(Boolean) as string[],
+              )
+            : model;
+
+          // 断点续跑：若传了 gameId 且属于当前用户，则把每一步生成的文件写入草稿 DB，
+          // 下次重试会跳过已完成文件，从失败那一步继续。
+          let canCheckpoint = false;
+          if (safeGameId && ownerKey) {
+            try {
+              await ensureCreatorDraftTables();
+              const owns = await db.execute(sql`
+                select 1
+                from creator_draft_games
+                where id = ${safeGameId} and owner_key = ${ownerKey}
+                limit 1
+              `);
+              const ownRows = Array.isArray((owns as any).rows) ? (owns as any).rows : [];
+              canCheckpoint = !!ownRows.length;
+            } catch {
+              canCheckpoint = false;
+            }
+          }
+
+          const upsertDraftFile = async (path: string, content: string) => {
+            if (!canCheckpoint) return;
+            await db.execute(sql`
+              insert into creator_draft_files (game_id, path, content)
+              values (${safeGameId}, ${path}, ${content})
+              on conflict (game_id, path)
+              do update set content = excluded.content, updated_at = now()
+            `);
+          };
+
+          const readDraftFile = async (path: string) => {
+            if (!canCheckpoint) return "";
+            const rows = await db.execute(sql`
+              select content
+              from creator_draft_files
+              where game_id = ${safeGameId} and path = ${path}
+              limit 1
+            `);
+            const list = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
+            const c = list?.[0]?.content;
+            return typeof c === "string" ? c : "";
+          };
+
+          const showModel = () => `${provider} / ${model}`;
+          // 总步骤：1（蓝图）+ 4（四个文件）+ 1（review）
+          const totalSteps = 1 + 4 + 1;
+          let step = 1;
+          // Planner 使用独立模型（OpenRouter/OpenAI）
+          if (provider === "openrouter") model = plannerModel;
+          sendMeta({ provider, model, phase: "planner" });
+          sendStatus(`（${step}/${totalSteps}）架构师：生成蓝图（${showModel()}）…`);
+          const userMsgs = messages.filter((m) => m.role === "user").slice(-4);
+
+          // 若已存在 plan 且 user input 相同，则跳过 planner
+          const lastUserInput = String(userMsgs[userMsgs.length - 1]?.content || "").trim();
+          let blueprint: any = null;
+          if (canCheckpoint) {
+            const metaRaw = await readDraftFile("meta.json");
+            const metaObj = metaRaw ? parseJsonObjectLoose(metaRaw) : null;
+            const plan = metaObj && typeof metaObj === "object" ? (metaObj as any)._plan : null;
+            if (plan && typeof plan === "object" && String(plan.userInput || "") === lastUserInput && Array.isArray(plan.tasks)) {
+              blueprint = { meta: safeMeta(metaObj), tasks: normalizePlannerTasks(plan.tasks) };
+              sendStatus(`（${step}/${totalSteps}）架构师：复用已有蓝图（${showModel()}）…`);
+            }
+          }
+
+          if (!blueprint) {
+          const plannerPayload: any = {
+            model,
+            messages: [{ role: "system", content: PLANNER_PROMPT }, ...userMsgs],
+            temperature: 0.2,
+            max_tokens: 900,
+            response_format: { type: "json_object" },
+          };
+          if (provider === "openrouter" && payloadBase.provider) plannerPayload.provider = payloadBase.provider;
+          const plannerText = await callStreamRobust(plannerPayload, `步骤 ${step}/${totalSteps}：蓝图 JSON`);
+          const bp0 = parseJsonObjectLoose(plannerText);
+          if (!bp0) throw new Error("PLANNER_NOT_JSON");
+          blueprint = { meta: safeMeta((bp0 as any).meta), tasks: normalizePlannerTasks((bp0 as any).tasks) };
+          if (!blueprint.meta.title) blueprint.meta.title = "未命名作品";
+          // 保存 plan 到 meta.json（隐藏字段），用于断点续跑
+          if (canCheckpoint) {
+            const metaWithPlan = {
+              ...blueprint.meta,
+                _plan: {
+                  v: 2,
+                  userInput: lastUserInput,
+                  tasks: blueprint.tasks,
+                  models: { planner: plannerModel, coder: coderModel, reviewer: reviewerModel },
+                  createdAt: Date.now(),
+                },
+            };
+            await upsertDraftFile("meta.json", JSON.stringify(metaWithPlan, null, 2));
+          }
+          }
+
+          const files: Array<{ path: string; content: string }> = [];
+          // 只生成我们允许的 4 个文件（normalizePlannerTasks 已补齐并排序）
+          for (const t of blueprint.tasks) {
+            const p = t.path;
+            step++;
+            // 若已存在该文件且 plan 未变，则跳过生成
+            if (canCheckpoint) {
+              const ex = await readDraftFile(p);
+              if (ex && ex.trim()) {
+                sendStatus(`（${step}/${totalSteps}）程序员：跳过 ${p}（已生成）`);
+                files.push({ path: p, content: ex });
+                continue;
+              }
+            }
+            // Coder 使用独立模型（优先 DeepSeek V3.2 / Qwen3.6 Plus）
+            if (provider === "openrouter") model = coderModel;
+            sendMeta({ provider, model, phase: "coder", file: p });
+            sendStatus(`（${step}/${totalSteps}）程序员：生成 ${p}（${showModel()}）…`);
+            const pld: any = {
+              model,
+              messages: [
+                { role: "system", content: coderPrompt(blueprint, p) },
+                { role: "user", content: t.instruction || `请生成 ${p}` },
+              ],
+              temperature: 0.3,
+              max_tokens: p === "game.js" ? 1400 : p === "index.html" ? 1200 : 900,
+              response_format: { type: "json_object" },
+            };
+            if (provider === "openrouter" && payloadBase.provider) pld.provider = payloadBase.provider;
+            const outText = await callStreamRobust(pld, `步骤 ${step}/${totalSteps}：生成 ${p}`);
+            const obj = parseJsonObjectLoose(outText);
+            const outPath = String((obj as any)?.path || "").trim();
+            const outContent = String((obj as any)?.content || "");
+            if (outPath !== p) throw new Error(`CODER_BAD_PATH:${p}:${outPath || "EMPTY"}`);
+            if (!outContent.trim()) throw new Error(`CODER_EMPTY_CONTENT:${p}`);
+            files.push({ path: outPath, content: outContent });
+            await upsertDraftFile(outPath, outContent);
+          }
+          // meta.json：若已存在 plan 版，则读取；否则写入基础 meta
+          if (canCheckpoint) {
+            const metaFinal = await readDraftFile("meta.json");
+            files.push({ path: "meta.json", content: metaFinal || JSON.stringify(blueprint.meta, null, 2) });
+            if (!metaFinal) await upsertDraftFile("meta.json", JSON.stringify({ ...blueprint.meta, _plan: { v: 1, userInput: lastUserInput, tasks: blueprint.tasks } }, null, 2));
+          } else {
+            files.push({ path: "meta.json", content: JSON.stringify(blueprint.meta, null, 2) });
+          }
+
+          // 3) Integrating/Review：让模型做一次轻量自检（可选但默认开启）
+          step++;
+          if (provider === "openrouter") model = reviewerModel;
+          sendMeta({ provider, model, phase: "review" });
+          sendStatus(`（${step}/${totalSteps}）整合与自检（${showModel()}）…`);
+          const compactFiles = files
+            .filter((f) => ["index.html", "style.css", "game.js"].includes(f.path))
+            .map((f) => {
+              const c = String(f.content || "");
+              // 限制传入长度，避免 review 再次超长
+              const trimmed = c.length > 9000 ? c.slice(0, 9000) + "\n/* ...TRUNCATED... */" : c;
+              return { path: f.path, content: trimmed };
+            });
+          const reviewPrompt =
+            `请快速检查这 3 个文件是否能互相引用并运行（只做最小修正）。\n` +
+            `要求：只输出 JSON：{"patches":[{"path":"index.html|style.css|game.js","content":"..."}]}\n` +
+            `如果无需修改，patches 为空数组。\n` +
+            `注意：不要解释文字，不要 markdown。\n\n` +
+            `文件：\n${JSON.stringify(compactFiles, null, 2)}\n`;
+          const reviewPayload: any = {
+            model,
+            messages: [
+              { role: "system", content: "你是资深前端工程师，擅长快速自检与最小补丁修复。只输出 JSON。" },
+              { role: "user", content: reviewPrompt },
+            ],
+            temperature: 0.2,
+            max_tokens: 900,
+            response_format: { type: "json_object" },
+          };
+          if (provider === "openrouter" && payloadBase.provider) reviewPayload.provider = payloadBase.provider;
+          try {
+            const reviewText = await callStreamRobust(reviewPayload, `步骤 ${step}/${totalSteps}：自检补丁`);
+            const reviewObj = parseJsonObjectLoose(reviewText);
+            const patches = Array.isArray((reviewObj as any)?.patches) ? (reviewObj as any).patches : [];
+            for (const p of patches) {
+              const pp = String(p?.path || "").trim();
+              const cc = String(p?.content || "");
+              if (!["index.html", "style.css", "game.js"].includes(pp)) continue;
+              if (!cc.trim()) continue;
+              // 应用 patch
+              for (let i = 0; i < files.length; i++) {
+                if (files[i].path === pp) files[i] = { path: pp, content: cc };
+              }
+              await upsertDraftFile(pp, cc);
+            }
+          } catch {
+            // review 失败不阻断主流程
+          }
+
+          const assistantText = `已生成最小可运行版本：${blueprint.meta.title}。\n如果你想加功能/换皮肤/加排行榜，继续告诉我即可。`;
+          const finalObj = { assistant: assistantText, meta: blueprint.meta, files };
+
+          sendStatus("AI 正在检查输出格式…");
+          // 复用原校验：确保最终结构符合前端约定
+          parseCreatorJson(JSON.stringify(finalObj));
+          send("final", { ok: true, content: JSON.stringify(finalObj), repaired: false });
+          clearInterval(heartbeat);
+          controller.close();
+          return;
+        }
+
         try {
           resp = await callModelStream(payloadBase);
         } catch (e: any) {
           // 默认优先 OpenRouter，但如果 OpenRouter 网络失败且 DeepSeek 可用，则自动回退一次
           const em = String(e?.message || e);
-          const canFallback = provider === "openrouter" && !!(process.env.DEEPSEEK_API_KEY || "");
           if (canFallback && em.toLowerCase().includes("fetch_failed")) {
             sendStatus("OpenRouter 连接失败，我先切到 DeepSeek 再试一次…");
-            provider = "deepseek";
-            authKey = process.env.DEEPSEEK_API_KEY || "";
-            const baseUrl = (process.env.DEEPSEEK_API_BASE || "https://api.deepseek.com").replace(/\/+$/, "");
-            url = `${baseUrl}/v1/chat/completions`;
-            model = process.env.DEEPSEEK_MODEL || "deepseek-chat";
+            await fallbackToDeepSeek();
             payloadBase.model = model;
-            // DeepSeek API 不支持 OpenRouter 的 provider routing
             delete payloadBase.provider;
-            // 通知前端：已经回退
-            sendMeta({ provider, model, reason: "fallback_openrouter_fetch_failed" });
             resp = await callModelStream(payloadBase);
           } else {
             throw e;

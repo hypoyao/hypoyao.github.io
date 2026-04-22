@@ -104,10 +104,13 @@
   font-weight: 1000;
   font-size: 13px;
   color: rgba(15, 23, 42, 0.88);
+  transition: filter 120ms ease, transform 120ms ease, border-color 120ms ease, background 120ms ease;
 }
-.createMenuItem:hover {
-  filter: brightness(1.02);
-  border-color: rgba(15, 23, 42, 0.16);
+@media (hover: hover) {
+  .createMenuItem:hover {
+    filter: brightness(1.02);
+    border-color: rgba(15, 23, 42, 0.16);
+  }
 }
 .createMenuItem:active {
   transform: scale(0.995);
@@ -253,7 +256,7 @@
   border-radius: 18px;
   position: relative;
   width: fit-content;
-  max-width: min(78%, 560px);
+  max-width: min(90%, 720px);
   /* 在 chatList 的 grid 里：默认靠左 */
   justify-self: start;
   overflow: visible;
@@ -309,8 +312,28 @@
   overflow-wrap: anywhere;
   line-height: 1.55;
   font-size: 14px;
-  font-weight: 850;
+  font-weight: 500;
   color: rgba(15, 23, 42, 0.86);
+}
+
+.chatInlineActions {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+}
+.chatInlineRetry {
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: rgba(248, 250, 252, 1);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 1000;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .chatInlineRetry:hover {
+    filter: brightness(1.02);
+  }
 }
 
 .sendCol {
@@ -485,13 +508,13 @@
 }
 .metaLabel {
   font-size: 12px;
-  font-weight: 1000;
+  font-weight: 500;
   color: rgba(100, 116, 139, 0.92);
   margin-bottom: 4px;
 }
 .metaValue {
   font-size: 13px;
-  font-weight: 900;
+  font-weight: 500;
   color: rgba(15, 23, 42, 0.86);
   line-height: 1.55;
 }
@@ -748,6 +771,12 @@
   border-radius: 16px;
   background: rgba(255, 255, 255, 1);
 }
+@media (hover: hover) {
+  .createBento .createMenuItem:hover {
+    filter: brightness(1.01);
+    border-color: rgba(148, 163, 184, 0.55);
+  }
+}
 
 .createBento .createPanel {
   border-radius: 24px;
@@ -770,6 +799,7 @@
   background: rgba(248, 250, 252, 1);
   box-shadow: none;
   border-radius: 18px;
+  max-width: min(92%, 760px);
 }
 .createBento .chatMsg.isUser {
   /* Bento 主题下也保持“微信绿” */
@@ -800,6 +830,7 @@
 }
 .createBento .chatText {
   color: var(--b-text);
+  font-weight: 500;
 }
 
 .createBento .metaPanel {
@@ -812,9 +843,11 @@
 }
 .createBento .metaLabel {
   color: var(--b-muted);
+  font-weight: 500;
 }
 .createBento .metaValue {
   color: var(--b-text);
+  font-weight: 500;
 }
 
 .createBento .restInput,
