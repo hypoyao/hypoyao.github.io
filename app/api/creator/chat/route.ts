@@ -387,17 +387,29 @@ export async function POST(req: Request) {
   }
 
   async function callModelStream(payload: any) {
-    try {
-      return await fetch(url, {
-        method: "POST",
-        headers: buildHeaders(),
-        body: JSON.stringify(payload),
-      });
-    } catch (e: any) {
-      const code = e?.cause?.code || e?.code || "";
-      const msg = String(code || e?.message || e);
-      throw new Error(`FETCH_FAILED:${msg}`);
+    const maxTry = 2;
+    for (let k = 1; k <= maxTry; k++) {
+      try {
+        // 超时兜底：避免请求永远挂起导致前端表现为“网络错误”
+        return await fetch(url, {
+          method: "POST",
+          headers: buildHeaders(),
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(120_000),
+        });
+      } catch (e: any) {
+        const code = String(e?.cause?.code || e?.code || "").toUpperCase();
+        const msg = String(code || e?.message || e);
+        // 常见可重试：连接重置/超时/网络抖动
+        const retryable = ["ECONNRESET", "ETIMEDOUT", "EAI_AGAIN", "ENOTFOUND", "UND_ERR_CONNECT_TIMEOUT"].some((x) => msg.includes(x));
+        if (k < maxTry && retryable) {
+          await new Promise((r) => setTimeout(r, 220 * k));
+          continue;
+        }
+        throw new Error(`FETCH_FAILED:${msg}`);
+      }
     }
+    throw new Error("FETCH_FAILED:UNKNOWN");
   }
 
   async function callModelOnce(payload: any) {
@@ -411,6 +423,7 @@ export async function POST(req: Request) {
           method: "POST",
           headers: buildHeaders(),
           body: JSON.stringify(p),
+          signal: AbortSignal.timeout(120_000),
         });
       } catch (e: any) {
         const code = e?.cause?.code || e?.code || "";
@@ -428,8 +441,16 @@ export async function POST(req: Request) {
     };
     try {
       return await doReq(p0);
-    } catch (e) {
-      // retry without response_format
+    } catch (e: any) {
+      const em = String(e?.message || e);
+      // 如果是“网络类错误”，先原样重试一次（保留 response_format），避免无谓放开格式导致后续解析失败
+      if (em.includes("FETCH_FAILED")) {
+        try {
+          await new Promise((r) => setTimeout(r, 220));
+          return await doReq(p0);
+        } catch {}
+      }
+      // retry without response_format（仅在非网络原因/确实不兼容时）
       const p1 = { ...p0 };
       delete p1.response_format;
       return await doReq(p1);
@@ -544,11 +565,45 @@ export async function POST(req: Request) {
           }
         };
 
-        const callStreamRobust = async (payload: any, stepTag: string, strictJson = false) => {
+        const callStreamRobust = async (
+          payload: any,
+          stepTag: string,
+          strictJson = false,
+          fallbackModels: string[] = [],
+        ) => {
           try {
             return await callStreamToString(payload, stepTag, strictJson);
           } catch (e: any) {
             const em = String(e?.message || e);
+            const eml = em.toLowerCase();
+
+            // 如果是 OpenAI/Gemini 这类模型在当前网络/地区不稳定，优先“换模型”再试一次
+            // （仍走 OpenRouter，不切 provider），避免一直卡在 region / 网关不稳定上。
+            const canSwapModel = provider === "openrouter" && Array.isArray(fallbackModels) && fallbackModels.length > 0;
+            const isRegionBlocked =
+              eml.includes("not available in your region") ||
+              eml.includes("region") ||
+              eml.includes("country") ||
+              eml.includes("location");
+            const isModelUnavailable =
+              eml.includes("model_not_found") || eml.includes("model not found") || eml.includes("deprecated") || eml.includes("not available");
+            const isNetwork = eml.includes("fetch_failed") || eml.includes("network error") || eml.includes("timeout");
+            if (canSwapModel && (isRegionBlocked || isModelUnavailable || isNetwork)) {
+              const picked = pickOpenRouterModel(fallbackModels);
+              if (picked && picked !== String(payload?.model || "")) {
+                sendStatus(`当前模型不稳定/不可用，我切换到 ${picked} 再试一次…`);
+                sendMeta({ provider, model: picked, reason: "fallback_model_unstable" });
+                const p2: any = { ...payload, model: picked };
+                // 对 Gemini 的 provider routing 仅对 gemini 生效；换到 deepseek/qwen 就不需要了
+                if (!String(picked).toLowerCase().startsWith("google/")) delete p2.provider;
+                try {
+                  return await callStreamToString(p2, stepTag, strictJson);
+                } catch (e2: any) {
+                  // 继续走下面的 provider fallback
+                }
+              }
+            }
+
             if (canFallback && em.toLowerCase().includes("fetch_failed")) {
               sendStatus("OpenRouter 连接失败，我先切到 DeepSeek 再试一次…");
               await fallbackToDeepSeek();
@@ -665,7 +720,13 @@ export async function POST(req: Request) {
             response_format: { type: "json_object" },
           };
           if (provider === "openrouter" && payloadBase.provider) plannerPayload.provider = payloadBase.provider;
-            const plannerText = await callStreamRobust(plannerPayload, `步骤 ${step}/${totalSteps}：蓝图 JSON`, true);
+            const plannerText = await callStreamRobust(
+              plannerPayload,
+              `步骤 ${step}/${totalSteps}：蓝图 JSON`,
+              true,
+              // GPT/Gemini 不稳定时，自动切到 DeepSeek/Qwen
+              ["qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"],
+            );
             let bp0 = parseJsonObjectLoose(plannerText);
             if (!bp0) {
               // 兜底：让“修复器”把内容转成严格 JSON
@@ -685,8 +746,43 @@ export async function POST(req: Request) {
                 response_format: { type: "json_object" },
               };
               if (provider === "openrouter" && payloadBase.provider) repairPayload.provider = payloadBase.provider;
-              const repairedText = await callStreamRobust(repairPayload, `步骤 ${step}/${totalSteps}：修复蓝图 JSON`, true);
+              const repairedText = await callStreamRobust(
+                repairPayload,
+                `步骤 ${step}/${totalSteps}：修复蓝图 JSON`,
+                true,
+                ["qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"],
+              );
               bp0 = parseJsonObjectLoose(repairedText);
+            }
+            if (!bp0 && provider === "openrouter") {
+              // 最后一层：如果仍然不是 JSON，强制切到 Qwen 再跑一次（用户要求）
+              const qwen = pickOpenRouterModel(["qwen/qwen3.6-plus"]);
+              sendStatus(`蓝图仍无法解析为 JSON，强制切换到 ${qwen} 再试一次…`);
+              sendMeta({ provider, model: qwen, phase: "planner", reason: "force_qwen_for_planner_json" });
+              const p3: any = { ...plannerPayload, model: qwen };
+              // Qwen 不需要 Gemini 的 provider routing
+              delete p3.provider;
+              const t3 = await callStreamRobust(p3, `步骤 ${step}/${totalSteps}：蓝图 JSON（Qwen兜底）`, true, []);
+              bp0 = parseJsonObjectLoose(t3);
+              if (!bp0) {
+                // 仍失败就再用修复器（也强制 Qwen）
+                const repairPrompt2 =
+                  `请把下面文本修复为严格 JSON，且必须符合 Schema：{meta:{title,shortDesc,rules,creator{name}},tasks:[{path,instruction}...] }。\n` +
+                  `只输出 JSON，不要 markdown，不要解释。\n\n` +
+                  `原文：\n${t3}\n`;
+                const repairPayload2: any = {
+                  model: qwen,
+                  messages: [
+                    { role: "system", content: "你是 JSON 修复器。只输出 JSON（json_object）。" },
+                    { role: "user", content: repairPrompt2 },
+                  ],
+                  temperature: 0.0,
+                  max_tokens: 900,
+                  response_format: { type: "json_object" },
+                };
+                const t4 = await callStreamRobust(repairPayload2, `步骤 ${step}/${totalSteps}：修复蓝图 JSON（Qwen兜底）`, true, []);
+                bp0 = parseJsonObjectLoose(t4);
+              }
             }
             if (!bp0) throw new Error("PLANNER_NOT_JSON");
           blueprint = { meta: safeMeta((bp0 as any).meta), tasks: normalizePlannerTasks((bp0 as any).tasks) };
@@ -741,7 +837,10 @@ export async function POST(req: Request) {
               response_format: { type: "json_object" },
             };
             if (provider === "openrouter" && payloadBase.provider) pld.provider = payloadBase.provider;
-              const outText = await callStreamRobust(pld, `步骤 ${step}/${totalSteps}：生成 ${p}`, true);
+              const outText = await callStreamRobust(pld, `步骤 ${step}/${totalSteps}：生成 ${p}`, true, [
+                "deepseek/deepseek-v3.2",
+                "qwen/qwen3.6-plus",
+              ]);
             const obj = parseJsonObjectLoose(outText);
             const outPath = String((obj as any)?.path || "").trim();
             const outContent = String((obj as any)?.content || "");
@@ -805,7 +904,10 @@ export async function POST(req: Request) {
           };
           if (provider === "openrouter" && payloadBase.provider) reviewPayload.provider = payloadBase.provider;
           try {
-            const reviewText = await callStreamRobust(reviewPayload, `步骤 ${step}/${totalSteps}：自检补丁`, true);
+            const reviewText = await callStreamRobust(reviewPayload, `步骤 ${step}/${totalSteps}：自检补丁`, true, [
+              "deepseek/deepseek-v3.2",
+              "qwen/qwen3.6-plus",
+            ]);
             const reviewObj = parseJsonObjectLoose(reviewText);
             const patches = Array.isArray((reviewObj as any)?.patches) ? (reviewObj as any).patches : [];
             for (const p of patches) {
