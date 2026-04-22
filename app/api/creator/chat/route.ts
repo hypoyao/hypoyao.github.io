@@ -19,7 +19,7 @@ const OPENROUTER_MODELS = [
   "qwen/qwen3.6-plus",
   "qwen/qwen-2.5-72b-instruct:free",
   "deepseek/deepseek-v3.2",
-  // Architect / Refine（用户选择）
+  // Architect / Refine（优先不用 Claude：地区/链路更容易失败）
   "anthropic/claude-sonnet-4.6",
   // Planner / Review 阶段（按需自动使用）
   "openai/gpt-5.4-nano",
@@ -842,13 +842,17 @@ export async function POST(req: Request) {
           const debugOverride = envModelOrEmpty("CREATOR_DEBUG_MODEL");
 
           const architectModel = hasOpenRouter
-            ? pickOpenRouterModel([architectOverride, "anthropic/claude-sonnet-4.6", "qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"].filter(Boolean) as string[])
+            ? pickOpenRouterModel(
+                [architectOverride, "qwen/qwen3.6-plus", "minimax/minimax-m2.5", "deepseek/deepseek-v3.2"].filter(Boolean) as string[],
+              )
             : model;
           const mvpModel = hasOpenRouter
             ? pickOpenRouterModel([mvpOverride, "qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"].filter(Boolean) as string[])
             : model;
           const refineModel = hasOpenRouter
-            ? pickOpenRouterModel([refineOverride, "anthropic/claude-sonnet-4.6", "qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"].filter(Boolean) as string[])
+            ? pickOpenRouterModel(
+                [refineOverride, "qwen/qwen3.6-plus", "minimax/minimax-m2.5", "deepseek/deepseek-v3.2"].filter(Boolean) as string[],
+              )
             : model;
           const debugModel = hasOpenRouter
             ? pickOpenRouterModel([debugOverride, "openai/gpt-4o-mini", "qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"].filter(Boolean) as string[])

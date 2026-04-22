@@ -11,3 +11,7 @@ out/
 # yarn.lock
 .vercel
 .env*.local
+
+# OS / build cache
+.DS_Store
+tsconfig.tsbuildinfo
