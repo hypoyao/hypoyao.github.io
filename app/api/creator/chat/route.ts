@@ -73,9 +73,14 @@ function parseCreatorJson(s: string) {
   }
   if (obj.files != null) {
     if (!Array.isArray(obj.files)) throw new Error("FILES_NOT_ARRAY");
+    // 允许写入的文件路径（既包含发布文件，也包含草稿元信息）
+    const ALLOWED = new Set(["index.html", "style.css", "game.js", "prompt.md", "meta.json"]);
     for (const f of obj.files) {
       if (!f || typeof f !== "object") throw new Error("BAD_FILE_ITEM");
-      if (!["index.html", "style.css", "game.js"].includes(String(f.path || ""))) throw new Error("BAD_FILE_PATH");
+      const p = String(f.path || "").trim();
+      if (!ALLOWED.has(p)) {
+        throw new Error(`BAD_FILE_PATH:${p || "EMPTY"}:expected=${Array.from(ALLOWED).join(",")}`);
+      }
       if (typeof f.content !== "string") throw new Error("BAD_FILE_CONTENT");
     }
   }
