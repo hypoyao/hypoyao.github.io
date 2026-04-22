@@ -148,6 +148,8 @@ export default function CreateStudio({
   const inputRef = useRef<string>("");
   const bootRef = useRef(false);
   const [lastFailedText, setLastFailedText] = useState<string>("");
+  const [chatMode, setChatMode] = useState<"generate" | "fix">("generate");
+  const [qualityMode, setQualityMode] = useState<"stable" | "quality">("stable");
   const abortRef = useRef<AbortController | null>(null);
   const opMenuRef = useRef<HTMLDetailsElement | null>(null);
 
@@ -719,7 +721,7 @@ export default function CreateStudio({
         headers: { "content-type": "application/json" },
         // 只传 user/assistant；system 由服务端统一注入
         // 传 gameId：让服务端能做“分步生成断点续跑”（哪一步失败，下次从哪一步开始）
-        body: JSON.stringify({ gameId: useId, messages: [...useBase, myMsg], provider, model }),
+        body: JSON.stringify({ gameId: useId, mode: chatMode, quality: qualityMode, messages: [...useBase, myMsg], provider, model }),
         signal: ac.signal,
       });
       if (!r.ok) {
@@ -1146,8 +1148,59 @@ export default function CreateStudio({
               onChange={(e) => setInput(e.target.value)}
               rows={4}
               disabled={busy}
+              placeholder={chatMode === "fix" ? "描述 bug：复现步骤、期望/实际、设备/浏览器、报错信息…" : ""}
             />
             <div className="sendCol">
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  className={`btn btnGray ${chatMode === "generate" ? "isActive" : ""}`}
+                  type="button"
+                  onClick={() => setChatMode("generate")}
+                  disabled={busy}
+                  aria-label="切换到生成模式"
+                  title="生成/加功能"
+                  style={{ padding: "10px 10px", width: 58 }}
+                >
+                  生成
+                </button>
+                <button
+                  className={`btn btnGray ${chatMode === "fix" ? "isActive" : ""}`}
+                  type="button"
+                  onClick={() => setChatMode("fix")}
+                  disabled={busy}
+                  aria-label="切换到修复模式"
+                  title="修复 bug"
+                  style={{ padding: "10px 10px", width: 58 }}
+                >
+                  修复
+                </button>
+              </div>
+              {chatMode === "generate" ? (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className={`btn btnGray ${qualityMode === "stable" ? "isActive" : ""}`}
+                    type="button"
+                    onClick={() => setQualityMode("stable")}
+                    disabled={busy}
+                    aria-label="切换到稳定模式"
+                    title="稳定模式（更少失败）"
+                    style={{ padding: "10px 10px", width: 58 }}
+                  >
+                    稳定
+                  </button>
+                  <button
+                    className={`btn btnGray ${qualityMode === "quality" ? "isActive" : ""}`}
+                    type="button"
+                    onClick={() => setQualityMode("quality")}
+                    disabled={busy}
+                    aria-label="切换到质量模式"
+                    title="质量模式（更精致，但更慢）"
+                    style={{ padding: "10px 10px", width: 58 }}
+                  >
+                    质量
+                  </button>
+                </div>
+              ) : null}
               <button
                 className="btn btnGray voiceBtn"
                 type="button"

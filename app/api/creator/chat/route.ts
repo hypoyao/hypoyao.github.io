@@ -90,18 +90,34 @@ function parseCreatorJson(s: string) {
 // ===== Planner -> Coder（分步生成，默认开启）=====
 // 目的：避免一次性生成过长导致超时/截断/JSON 崩溃
 const PLANNER_PROMPT = `
-你是“架构师（Planner）”。你的任务不是写代码，而是把用户的小游戏需求拆解成一个可执行的开发蓝图。
+你是“架构师（Planner）”。你的任务不是写代码，而是把用户的小游戏需求拆解成一个可执行的开发蓝图，让后续程序员分模块生成代码时更一致、更少返工。
 
 【输出要求】
 1) 只输出合法 JSON，不要输出任何 Markdown/解释文字。
-2) 必须包含 meta 与 tasks：
+2) 必须包含 meta、spec、tasks：
    - meta：用于 meta.json（title/shortDesc/rules/creator{name}）
+   - spec：用于指导各文件保持一致（核心循环、状态机、UI布局、交互、胜负条件、视觉风格）
    - tasks：按顺序给出需要生成的文件（index.html/style.css/game.js/prompt.md）
-3) 每个文件的生成尽量控制在 200 行左右，优先最小可运行版本，后续可迭代。
+3) 颗粒度要可控：每个文件生成尽量控制在 200-300 行；优先最小可运行，但要“结构清晰、可扩展”。
 
-【JSON Schema】
+【JSON Schema（必须符合）】
 {
   "meta": { "title": "...", "shortDesc": "...", "rules": "...", "creator": { "name": "..." } },
+  "spec": {
+    "coreLoop": "一句话描述核心循环",
+    "states": ["start","playing","win","lose"],
+    "controls": ["mouse","touch","keyboard"],
+    "ui": {
+      "layout": "页面结构（上栏/主区域/底栏）",
+      "hud": ["score","time","level"],
+      "screens": ["start","gameover"]
+    },
+    "styleGuide": {
+      "theme": "配色/字体/按钮风格",
+      "animation": "可选动画描述"
+    },
+    "rulesDetail": ["规则要点1","规则要点2"]
+  },
   "tasks": [
     { "path": "index.html", "instruction": "..." },
     { "path": "style.css", "instruction": "..." },
@@ -109,6 +125,22 @@ const PLANNER_PROMPT = `
     { "path": "prompt.md", "instruction": "..." }
   ]
 }
+`.trim();
+
+const FIXER_PROMPT = `
+你是“Bug 修复工程师（Fixer）”。你的任务是基于当前项目文件与用户描述的 bug，给出最小改动补丁来修复问题。
+
+【输出要求】
+1) 只输出合法 JSON，不要输出任何 Markdown/解释文字。
+2) 只允许修改以下文件之一：index.html / style.css / game.js
+3) 返回格式必须为：
+{
+  "assistant": "用 1-2 句话说明修复了什么（中文）",
+  "files": [
+    { "path": "index.html|style.css|game.js", "content": "完整文件内容（修复后）" }
+  ]
+}
+4) 最小修改原则：除修 bug 所需外，不要重写整个项目。
 `.trim();
 
 function parseJsonObjectLoose(s: string) {
@@ -163,7 +195,7 @@ function normalizePlannerTasks(tasks: any) {
   return out;
 }
 
-function coderPrompt(blueprint: any, filePath: string) {
+function coderPrompt(blueprint: any, filePath: string, isQuality: boolean) {
   const bp = JSON.stringify(blueprint || {}, null, 2);
   return `
 你是“程序员（Coder）”。你将根据架构师给出的蓝图，为小游戏生成指定文件的最终内容。
@@ -175,6 +207,7 @@ function coderPrompt(blueprint: any, filePath: string) {
    - index.html 必须引入 ./style.css 与 ./game.js
    - game.js 不依赖第三方库
    - 优先最小可运行版本，后续可迭代
+${isQuality ? "4) 质量模式：在不大幅增加代码量的前提下，做更好的交互反馈、排版、动效/过渡（可选）、更像产品。" : ""}
 
 【蓝图（JSON）】
 ${bp}
@@ -192,12 +225,17 @@ function envModelOrEmpty(key: string) {
   return String(process.env[key] || "").trim();
 }
 
+function envFlag(key: string) {
+  const v = String(process.env[key] || "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
 export async function POST(req: Request) {
   const sess = await getSession();
   if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED" });
   const ownerKey = ownerKeyFromSession(sess);
 
-  let body: { messages?: Msg[]; model?: string; provider?: string; promptAddon?: string; gameId?: string };
+  let body: { messages?: Msg[]; model?: string; provider?: string; promptAddon?: string; gameId?: string; mode?: string; quality?: string };
   try {
     body = (await req.json()) as any;
   } catch {
@@ -205,6 +243,8 @@ export async function POST(req: Request) {
   }
   const gameId = String((body as any)?.gameId || "").trim();
   const safeGameId = gameId && /^[a-zA-Z0-9_-]+$/.test(gameId) ? gameId : "";
+  const mode = String((body as any)?.mode || "generate").trim().toLowerCase();
+  const quality = String((body as any)?.quality || "stable").trim().toLowerCase(); // stable | quality
 
   // 忽略客户端传来的 system message：服务端统一加（保证所有用户都带上）
   // 同时裁剪历史消息，避免 Reasoner 过长输出导致更高的断流概率
@@ -615,6 +655,129 @@ export async function POST(req: Request) {
           }
         };
 
+        // 每一步“自动重试一次”，避免用户手动点重试
+        const autoRetry = async <T>(
+          run: () => Promise<T>,
+          label: string,
+          retryHint: string,
+        ): Promise<T> => {
+          try {
+            return await run();
+          } catch (e: any) {
+            const em = String(e?.message || e);
+            sendStatus(`${label}失败，自动重试一次…（原因：${em.slice(0, 120)}）`);
+            sendDelta(`\n\n（自动重试提示）${retryHint}\n`);
+            // 给网络/模型一点喘息时间
+            await new Promise((r) => setTimeout(r, 280));
+            return await run();
+          }
+        };
+
+        // ===== Fix 模式：最小补丁修复（不走 Planner/Coder 全流程）=====
+        if (mode === "fix") {
+          if (!safeGameId) throw new Error("MISSING_GAME_ID");
+          if (!ownerKey) throw new Error("UNAUTHORIZED");
+          let canCheckpoint = false;
+          const readDraftFile = async (path: string) => {
+            if (!canCheckpoint) return "";
+            const rows = await db.execute(sql`
+              select content
+              from creator_draft_files
+              where game_id = ${safeGameId} and path = ${path}
+              limit 1
+            `);
+            const list = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
+            const c = list?.[0]?.content;
+            return typeof c === "string" ? c : "";
+          };
+          const upsertDraftFile = async (path: string, content: string) => {
+            if (!canCheckpoint) return;
+            await db.execute(sql`
+              insert into creator_draft_files (game_id, path, content)
+              values (${safeGameId}, ${path}, ${content})
+              on conflict (game_id, path)
+              do update set content = excluded.content, updated_at = now()
+            `);
+          };
+
+          try {
+            await ensureCreatorDraftTables();
+            const owns = await db.execute(sql`
+              select 1
+              from creator_draft_games
+              where id = ${safeGameId} and owner_key = ${ownerKey}
+              limit 1
+            `);
+            const ownRows = Array.isArray((owns as any).rows) ? (owns as any).rows : [];
+            canCheckpoint = !!ownRows.length;
+          } catch {
+            canCheckpoint = false;
+          }
+          if (!canCheckpoint) throw new Error("NOT_YOUR_GAME");
+
+          const indexHtml = await readDraftFile("index.html");
+          const styleCss = await readDraftFile("style.css");
+          const gameJs = await readDraftFile("game.js");
+          if (!(indexHtml && styleCss && gameJs)) throw new Error("MISSING_FILES_TO_FIX");
+
+          const lastUser = (messages.filter((m) => m.role === "user").slice(-1)[0]?.content || "").trim();
+          const totalSteps = 1;
+          const step = 1;
+          sendStatus(`（${step}/${totalSteps}）修复 bug：生成最小补丁…`);
+
+          // 默认用 coderModel（DeepSeek/Qwen），但若用户当前选择就是别的，也允许；并在不稳定时自动换到 Qwen/DeepSeek
+          const fixModel = provider === "openrouter" ? pickOpenRouterModel(["deepseek/deepseek-v3.2", "qwen/qwen3.6-plus"]) : model;
+          if (provider === "openrouter") model = fixModel;
+          sendMeta({ provider, model, phase: "fix", gameId: safeGameId });
+
+          const trim = (s: string) => (s.length > 12000 ? s.slice(0, 12000) + "\n<!-- ...TRUNCATED... -->" : s);
+          const fixInput =
+            `【Bug 描述】\n${lastUser || "（用户未提供具体 bug 描述）"}\n\n` +
+            `【当前文件】\n` +
+            `index.html:\n${trim(indexHtml)}\n\n` +
+            `style.css:\n${trim(styleCss)}\n\n` +
+            `game.js:\n${trim(gameJs)}\n`;
+
+          const fixPayload: any = {
+            model,
+            messages: [
+              { role: "system", content: FIXER_PROMPT },
+              { role: "user", content: fixInput },
+            ],
+            temperature: 0.2,
+            max_tokens: 1600,
+            response_format: { type: "json_object" },
+          };
+          if (provider === "openrouter" && payloadBase.provider) fixPayload.provider = payloadBase.provider;
+
+          const outText = await callStreamRobust(fixPayload, `步骤 ${step}/${totalSteps}：生成补丁 JSON`, true, [
+            "qwen/qwen3.6-plus",
+            "deepseek/deepseek-v3.2",
+          ]);
+          const obj = parseJsonObjectLoose(outText);
+          if (!obj) throw new Error("FIXER_NOT_JSON");
+          // 复用 parseCreatorJson 来做路径/结构校验
+          const normalized = {
+            assistant: String((obj as any).assistant || "已修复。").trim(),
+            files: Array.isArray((obj as any).files) ? (obj as any).files : [],
+          };
+          parseCreatorJson(JSON.stringify(normalized));
+
+          // 可选：服务端也写一份，确保断点续跑时立即生效（前端也会再写一次）
+          try {
+            for (const f of normalized.files) {
+              const p = String((f as any)?.path || "").trim();
+              const c = String((f as any)?.content || "");
+              if (["index.html", "style.css", "game.js"].includes(p) && c.trim()) await upsertDraftFile(p, c);
+            }
+          } catch {}
+
+          send("final", { ok: true, content: JSON.stringify(normalized), repaired: false });
+          clearInterval(heartbeat);
+          controller.close();
+          return;
+        }
+
         if (!forceLegacy) {
           // ===== Planner -> Coder 分步生成 =====
           // 分阶段模型策略：
@@ -634,10 +797,9 @@ export async function POST(req: Request) {
           const coderModel = hasOpenRouter
             ? pickOpenRouterModel([coderOverride, "deepseek/deepseek-v3.2", "qwen/qwen3.6-plus"].filter(Boolean) as string[])
             : model;
+          // 第三阶段（整合与 Debug）改为默认使用 DeepSeek（更稳定/便宜），必要时回退 Qwen
           const reviewerModel = hasOpenRouter
-            ? pickOpenRouterModel(
-                [reviewOverride, "google/gemini-2.5-flash", "openai/gpt-4o-mini", "google/gemini-3-flash-preview"].filter(Boolean) as string[],
-              )
+            ? pickOpenRouterModel([reviewOverride, "deepseek/deepseek-v3.2", "qwen/qwen3.6-plus"].filter(Boolean) as string[])
             : model;
 
           // 断点续跑：若传了 gameId 且属于当前用户，则把每一步生成的文件写入草稿 DB，
@@ -683,8 +845,10 @@ export async function POST(req: Request) {
           };
 
           const showModel = () => `${provider} / ${model}`;
-          // 总步骤：1（蓝图）+ 4（四个文件）+ 1（review）
-          const totalSteps = 1 + 4 + 1;
+          // Review 默认关闭：减少一次模型调用，显著降低失败概率
+          const enableReview = quality === "quality" || envFlag("CREATOR_ENABLE_REVIEW") || safeAddon.includes("enable_review");
+          // 总步骤：1（蓝图）+ 4（四个文件）(+ 1 review 可选)
+          const totalSteps = 1 + 4 + (enableReview ? 1 : 0);
           let step = 1;
           // Planner 使用独立模型（OpenRouter/OpenAI）
           if (provider === "openrouter") model = plannerModel;
@@ -712,20 +876,27 @@ export async function POST(req: Request) {
           }
 
           if (!blueprint) {
-          const plannerPayload: any = {
+            const plannerPayload: any = {
             model,
             messages: [{ role: "system", content: PLANNER_PROMPT }, ...userMsgs],
             temperature: 0.2,
-            max_tokens: 900,
+              max_tokens: quality === "quality" ? 1300 : 900,
             response_format: { type: "json_object" },
           };
           if (provider === "openrouter" && payloadBase.provider) plannerPayload.provider = payloadBase.provider;
-            const plannerText = await callStreamRobust(
-              plannerPayload,
-              `步骤 ${step}/${totalSteps}：蓝图 JSON`,
-              true,
-              // GPT/Gemini 不稳定时，自动切到 DeepSeek/Qwen
-              ["qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"],
+            const runPlannerOnce = async () => {
+              return await callStreamRobust(
+                plannerPayload,
+                `步骤 ${step}/${totalSteps}：蓝图 JSON`,
+                true,
+                // GPT/Gemini 不稳定时，自动切到 Qwen/DeepSeek
+                ["qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"],
+              );
+            };
+            const plannerText = await autoRetry(
+              runPlannerOnce,
+              `（${step}/${totalSteps}）架构师：蓝图生成`,
+              "请严格只输出 JSON（不要 markdown/解释），字段必须包含 meta 与 tasks，且 tasks.path 只能是 index.html/style.css/game.js/prompt.md。",
             );
             let bp0 = parseJsonObjectLoose(plannerText);
             if (!bp0) {
@@ -746,11 +917,16 @@ export async function POST(req: Request) {
                 response_format: { type: "json_object" },
               };
               if (provider === "openrouter" && payloadBase.provider) repairPayload.provider = payloadBase.provider;
-              const repairedText = await callStreamRobust(
-                repairPayload,
-                `步骤 ${step}/${totalSteps}：修复蓝图 JSON`,
-                true,
-                ["qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"],
+              const repairedText = await autoRetry(
+                async () =>
+                  await callStreamRobust(
+                    repairPayload,
+                    `步骤 ${step}/${totalSteps}：修复蓝图 JSON`,
+                    true,
+                    ["qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"],
+                  ),
+                `（${step}/${totalSteps}）架构师：蓝图 JSON 修复`,
+                "请把原文修复成严格 JSON 对象，确保是一个对象而不是数组/字符串。",
               );
               bp0 = parseJsonObjectLoose(repairedText);
             }
@@ -762,7 +938,11 @@ export async function POST(req: Request) {
               const p3: any = { ...plannerPayload, model: qwen };
               // Qwen 不需要 Gemini 的 provider routing
               delete p3.provider;
-              const t3 = await callStreamRobust(p3, `步骤 ${step}/${totalSteps}：蓝图 JSON（Qwen兜底）`, true, []);
+              const t3 = await autoRetry(
+                async () => await callStreamRobust(p3, `步骤 ${step}/${totalSteps}：蓝图 JSON（Qwen兜底）`, true, []),
+                `（${step}/${totalSteps}）架构师：蓝图 Qwen 兜底`,
+                "只输出 JSON 对象，包含 meta 与 tasks（4 个文件）。",
+              );
               bp0 = parseJsonObjectLoose(t3);
               if (!bp0) {
                 // 仍失败就再用修复器（也强制 Qwen）
@@ -780,7 +960,12 @@ export async function POST(req: Request) {
                   max_tokens: 900,
                   response_format: { type: "json_object" },
                 };
-                const t4 = await callStreamRobust(repairPayload2, `步骤 ${step}/${totalSteps}：修复蓝图 JSON（Qwen兜底）`, true, []);
+                const t4 = await autoRetry(
+                  async () =>
+                    await callStreamRobust(repairPayload2, `步骤 ${step}/${totalSteps}：修复蓝图 JSON（Qwen兜底）`, true, []),
+                  `（${step}/${totalSteps}）架构师：蓝图修复 Qwen 兜底`,
+                  "只输出 JSON 对象，不要解释。",
+                );
                 bp0 = parseJsonObjectLoose(t4);
               }
             }
@@ -829,18 +1014,38 @@ export async function POST(req: Request) {
             const pld: any = {
               model,
               messages: [
-                { role: "system", content: coderPrompt(blueprint, p) },
-                { role: "user", content: t.instruction || `请生成 ${p}` },
+                { role: "system", content: coderPrompt(blueprint, p, quality === "quality") },
+                {
+                  role: "user",
+                  content:
+                    (t.instruction || `请生成 ${p}`) +
+                    `\n\n【硬性要求】\n- 只输出 JSON：{"path":"${p}","content":"..."}\n- path 必须严格等于 "${p}"\n`,
+                },
               ],
               temperature: 0.3,
-              max_tokens: p === "game.js" ? 1400 : p === "index.html" ? 1200 : 900,
+              max_tokens:
+                quality === "quality"
+                  ? p === "game.js"
+                    ? 2200
+                    : p === "index.html"
+                      ? 1800
+                      : p === "style.css"
+                        ? 1400
+                        : 900
+                  : p === "game.js"
+                    ? 1400
+                    : p === "index.html"
+                      ? 1200
+                      : 900,
               response_format: { type: "json_object" },
             };
             if (provider === "openrouter" && payloadBase.provider) pld.provider = payloadBase.provider;
-              const outText = await callStreamRobust(pld, `步骤 ${step}/${totalSteps}：生成 ${p}`, true, [
-                "deepseek/deepseek-v3.2",
-                "qwen/qwen3.6-plus",
-              ]);
+            const outText = await autoRetry(
+              async () =>
+                await callStreamRobust(pld, `步骤 ${step}/${totalSteps}：生成 ${p}`, true, ["deepseek/deepseek-v3.2", "qwen/qwen3.6-plus"]),
+              `（${step}/${totalSteps}）程序员：生成 ${p}`,
+              `请确保输出严格 JSON，且 path 只能是 "${p}"，content 不能为空。`,
+            );
             const obj = parseJsonObjectLoose(outText);
             const outPath = String((obj as any)?.path || "").trim();
             const outContent = String((obj as any)?.content || "");
@@ -873,56 +1078,61 @@ export async function POST(req: Request) {
             files.push({ path: "meta.json", content: JSON.stringify(blueprint.meta, null, 2) });
           }
 
-          // 3) Integrating/Review：让模型做一次轻量自检（可选但默认开启）
-          step++;
-          if (provider === "openrouter") model = reviewerModel;
-          sendMeta({ provider, model, phase: "review" });
-          sendStatus(`（${step}/${totalSteps}）整合与自检（${showModel()}）…`);
-          const compactFiles = files
-            .filter((f) => ["index.html", "style.css", "game.js"].includes(f.path))
-            .map((f) => {
-              const c = String(f.content || "");
-              // 限制传入长度，避免 review 再次超长
-              const trimmed = c.length > 9000 ? c.slice(0, 9000) + "\n/* ...TRUNCATED... */" : c;
-              return { path: f.path, content: trimmed };
-            });
-          const reviewPrompt =
-            `请快速检查这 3 个文件是否能互相引用并运行（只做最小修正）。\n` +
-            `要求：只输出 JSON：{"patches":[{"path":"index.html|style.css|game.js","content":"..."}]}\n` +
-            `如果无需修改，patches 为空数组。\n` +
-            `注意：不要解释文字，不要 markdown。\n\n` +
-            `文件：\n${JSON.stringify(compactFiles, null, 2)}\n`;
-          const reviewPayload: any = {
-            model,
-            messages: [
-              { role: "system", content: "你是资深前端工程师，擅长快速自检与最小补丁修复。只输出 JSON。" },
-              { role: "user", content: reviewPrompt },
-            ],
-            temperature: 0.2,
-            max_tokens: 900,
-            response_format: { type: "json_object" },
-          };
-          if (provider === "openrouter" && payloadBase.provider) reviewPayload.provider = payloadBase.provider;
-          try {
-            const reviewText = await callStreamRobust(reviewPayload, `步骤 ${step}/${totalSteps}：自检补丁`, true, [
-              "deepseek/deepseek-v3.2",
-              "qwen/qwen3.6-plus",
-            ]);
-            const reviewObj = parseJsonObjectLoose(reviewText);
-            const patches = Array.isArray((reviewObj as any)?.patches) ? (reviewObj as any).patches : [];
-            for (const p of patches) {
-              const pp = String(p?.path || "").trim();
-              const cc = String(p?.content || "");
-              if (!["index.html", "style.css", "game.js"].includes(pp)) continue;
-              if (!cc.trim()) continue;
-              // 应用 patch
-              for (let i = 0; i < files.length; i++) {
-                if (files[i].path === pp) files[i] = { path: pp, content: cc };
+          // 3) Integrating/Review：默认关闭。开启方式：环境变量 CREATOR_ENABLE_REVIEW=1 或 promptAddon 包含 enable_review
+          if (enableReview) {
+            step++;
+            if (provider === "openrouter") model = reviewerModel;
+            sendMeta({ provider, model, phase: "review" });
+            sendStatus(`（${step}/${totalSteps}）整合与自检（${showModel()}）…`);
+            const compactFiles = files
+              .filter((f) => ["index.html", "style.css", "game.js"].includes(f.path))
+              .map((f) => {
+                const c = String(f.content || "");
+                const trimmed = c.length > 9000 ? c.slice(0, 9000) + "\n/* ...TRUNCATED... */" : c;
+                return { path: f.path, content: trimmed };
+              });
+            const reviewPrompt =
+              `请快速检查这 3 个文件是否能互相引用并运行（只做最小修正）。\n` +
+              `要求：只输出 JSON：{"patches":[{"path":"index.html|style.css|game.js","content":"..."}]}\n` +
+              `如果无需修改，patches 为空数组。\n` +
+              `注意：不要解释文字，不要 markdown。\n\n` +
+              `文件：\n${JSON.stringify(compactFiles, null, 2)}\n`;
+            const reviewPayload: any = {
+              model,
+              messages: [
+                { role: "system", content: "你是资深前端工程师，擅长快速自检与最小补丁修复。只输出 JSON。" },
+                { role: "user", content: reviewPrompt },
+              ],
+              temperature: 0.2,
+              max_tokens: quality === "quality" ? 1200 : 900,
+              response_format: { type: "json_object" },
+            };
+            if (provider === "openrouter" && payloadBase.provider) reviewPayload.provider = payloadBase.provider;
+            try {
+              const reviewText = await autoRetry(
+                async () =>
+                  await callStreamRobust(reviewPayload, `步骤 ${step}/${totalSteps}：自检补丁`, true, [
+                    "deepseek/deepseek-v3.2",
+                    "qwen/qwen3.6-plus",
+                  ]),
+                `（${step}/${totalSteps}）整合与自检`,
+                "只输出 JSON，patches 可为空数组。",
+              );
+              const reviewObj = parseJsonObjectLoose(reviewText);
+              const patches = Array.isArray((reviewObj as any)?.patches) ? (reviewObj as any).patches : [];
+              for (const p of patches) {
+                const pp = String(p?.path || "").trim();
+                const cc = String(p?.content || "");
+                if (!["index.html", "style.css", "game.js"].includes(pp)) continue;
+                if (!cc.trim()) continue;
+                for (let i = 0; i < files.length; i++) {
+                  if (files[i].path === pp) files[i] = { path: pp, content: cc };
+                }
+                await upsertDraftFile(pp, cc);
               }
-              await upsertDraftFile(pp, cc);
+            } catch {
+              // review 失败不阻断主流程
             }
-          } catch {
-            // review 失败不阻断主流程
           }
 
           const assistantText = `已生成最小可运行版本：${blueprint.meta.title}。\n如果你想加功能/换皮肤/加排行榜，继续告诉我即可。`;

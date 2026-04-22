@@ -346,6 +346,10 @@
   font-size: 15px;
   font-weight: 1100;
 }
+.btnGray.isActive {
+  border-color: rgba(56, 189, 248, 0.55);
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.12);
+}
 .voiceBtn {
   display: grid;
   place-items: center;
