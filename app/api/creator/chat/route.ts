@@ -190,6 +190,94 @@ const MONOLITH_MVP_PROMPT = `
 5) 目标是“最小可运行版本”：点击开始/重开可玩；保证无明显 JS 语法错误。
 `.trim();
 
+// 需求澄清（第一步）：严禁生成代码，先给出 3 个可选方向 + 3-5 个关键反问。
+// 输出必须是 json_object，便于服务端持久化为“中间变量”。
+const CLARIFY_PROMPT = `
+你现在是一个严谨的游戏架构师/需求分析师。
+
+【铁律】
+1) 当用户输入一个模糊的游戏需求时，严禁直接生成任何代码（包括 HTML/CSS/JS）。
+2) 你必须先分析需求缺失项（如：操作方式、胜负判定、视觉风格、适配端、核心循环），并通过反问用户来补齐。
+3) 你必须给出 3 个可选方案（A/B/C），每个方案都包含“风格/平台/操作/胜负判定”的明确设定，方便用户一键选。
+
+【输出要求：只输出合法 JSON（json_object）】
+Schema：
+{
+  "intent": "用户想做什么（1句）",
+  "missing": ["缺失项1","缺失项2"],
+  "options": [
+    {
+      "id": "A",
+      "title": "方案A标题",
+      "style": "视觉风格",
+      "platform": "适配端（PC/手机/双端）",
+      "controls": "操作方式（键盘/触屏/虚拟按键/重力等）",
+      "winLose": "胜负/结束判定",
+      "notes": "一句话说明特点"
+    }
+  ],
+  "questions": [
+    { "id": "q1", "question": "关键问题？", "choices": ["选项1","选项2","选项3"] }
+  ],
+  "recommend": "A"
+}
+`.trim();
+
+// 配置表生成（第二步）：基于用户选择/回答生成“参数配置表 JSON”，仍然不写代码。
+const CONFIG_PROMPT = `
+你现在是一个严谨的游戏架构师。你必须先输出一份“参数配置表 JSON”，用于后续生成代码。
+
+【铁律】
+1) 你严禁输出任何代码（HTML/CSS/JS），只输出配置 JSON。
+2) 配置必须可落地：包含核心参数（如速度、转向、回正、难度、配色、UI 文案）。
+3) 需要把用户的选择/回答融合进去；如果仍有不确定，用合理默认值。
+
+【输出要求：只输出合法 JSON（json_object）】
+Schema：
+{
+  "meta": { "title": "...", "shortDesc": "...", "rules": "...", "creator": { "name": "..." } },
+  "config": {
+    "platform": "pc|mobile|both",
+    "style": { "theme": "…", "colors": { "bg": "#...", "accent": "#..." } },
+    "controls": {
+      "pc": { "left": "ArrowLeft", "right": "ArrowRight" },
+      "mobile": { "type": "virtual_left", "releaseAutoCenter": true }
+    },
+    "difficulty": {
+      "levelMin": 1,
+      "levelMax": 10,
+      "levelAffects": ["speed","obstacleDensity","autoCenterSpeed"]
+    },
+    "physics": { "speedBase": 7, "speedPerLevel": 0.9, "autoCenterBase": 0.12, "autoCenterPerLevel": -0.007 },
+    "gameplay": { "mode": "endless", "score": ["distance","stars"], "endOnCrash": true },
+    "ui": { "showHud": true, "texts": { "start": "开始", "restart": "重开" } }
+  },
+  "needConfirm": ["列出需要用户确认的点（如有）"]
+}
+`.trim();
+
+// 代码生成（第三步）：必须严格按照 config 生成代码；输出为单文件，服务端可再自动拆分为三文件。
+const CODEGEN_FROM_CONFIG_PROMPT = `
+你是“前端小游戏生成器”。你会收到一份 JSON 配置表（config），你必须严格按其实现一个可运行的小游戏/小应用（MVP）。
+
+【硬性要求】
+1) 只输出合法 JSON（json_object），不要任何解释或 markdown。
+2) 输出结构必须为：
+{
+  "assistant": "一句话说明已生成什么",
+  "meta": { "title": "...", "shortDesc": "...", "rules": "...", "creator": { "name": "..." } },
+  "files": [ { "path": "index.html", "content": "..." } ]
+}
+3) index.html 必须包含：
+   - <!-- AI_MVP_SINGLE_FILE v1 -->
+   - 一个 <style>（内联样式）
+   - 一个 <script>（内联逻辑）
+4) 不依赖外部库/CDN；必须实现：
+   - PC：键盘左右键移动
+   - Mobile：虚拟左键，松开自动回正（回正速度随等级变化）
+   - 顶部等级调节（1-10），并在规则里写清“回正速度随等级变化”
+`.trim();
+
 const FIXER_PROMPT = `
 你是“Bug 修复工程师（Fixer）”。你的任务是基于当前项目文件与用户描述的 bug，给出最小改动补丁来修复问题。
 
@@ -343,10 +431,12 @@ export async function POST(req: Request) {
   const providerRaw = String((body as any)?.provider || "").trim().toLowerCase();
   const hasOpenRouter = !!(process.env.OPENROUTER_API_KEY || "");
   const hasDeepSeek = !!(process.env.DEEPSEEK_API_KEY || "");
-  let provider: "openrouter" | "deepseek" = "openrouter";
+  const hasBailian = !!(process.env.DASHSCOPE_API_KEY || process.env.BAILIAN_API_KEY || "");
+  let provider: "openrouter" | "deepseek" | "bailian" = "openrouter";
   if (providerRaw === "deepseek") provider = "deepseek";
   else if (providerRaw === "openrouter") provider = "openrouter";
-  else provider = hasOpenRouter ? "openrouter" : "deepseek";
+  else if (providerRaw === "bailian" || providerRaw === "dashscope") provider = "bailian";
+  else provider = hasBailian ? "bailian" : hasOpenRouter ? "openrouter" : "deepseek";
 
   let url = "";
   let authKey = "";
@@ -355,7 +445,9 @@ export async function POST(req: Request) {
     authKey = process.env.DEEPSEEK_API_KEY || "";
     if (!authKey) {
       // DeepSeek 未配置时自动回退 OpenRouter
-      if (hasOpenRouter) {
+      if (hasBailian) {
+        provider = "bailian";
+      } else if (hasOpenRouter) {
         provider = "openrouter";
       } else {
         return json(500, { ok: false, error: "MISSING_DEEPSEEK_API_KEY" });
@@ -369,6 +461,23 @@ export async function POST(req: Request) {
     const picked = (body as any)?.model;
     const envModel = process.env.DEEPSEEK_MODEL || "deepseek-chat";
     model = picked === "deepseek-chat" || picked === "deepseek-reasoner" ? picked : envModel;
+  } else if (provider === "bailian") {
+    // 阿里云百炼（DashScope）OpenAI 兼容接口：
+    // base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    // chat completions: POST {base_url}/chat/completions
+    authKey = process.env.DASHSCOPE_API_KEY || process.env.BAILIAN_API_KEY || "";
+    if (!authKey) {
+      if (hasOpenRouter) provider = "openrouter";
+      else if (hasDeepSeek) provider = "deepseek";
+      else return json(500, { ok: false, error: "MISSING_DASHSCOPE_API_KEY" });
+    } else {
+      const baseUrl = (process.env.DASHSCOPE_BASE_URL || process.env.BAILIAN_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        .replace(/\/+$/, "");
+      url = `${baseUrl}/chat/completions`;
+      const picked = String((body as any)?.model || "").trim();
+      // 百炼模型名：例如 qwen3.6-plus / qwen-plus 等
+      model = picked || process.env.BAILIAN_MODEL || process.env.DASHSCOPE_MODEL || "qwen3.6-plus";
+    }
   } else {
     authKey = process.env.OPENROUTER_API_KEY || "";
     if (!authKey) return json(500, { ok: false, error: "MISSING_OPENROUTER_API_KEY" });
@@ -608,7 +717,8 @@ export async function POST(req: Request) {
         // 默认走分步生成；若用户补充要求里包含 legacy_single_shot 则强制使用旧模式
         const forceLegacy = safeAddon.includes("legacy_single_shot");
 
-        const canFallback = provider === "openrouter" && !!(process.env.DEEPSEEK_API_KEY || "");
+        const canFallbackDeepSeek = !!(process.env.DEEPSEEK_API_KEY || "");
+        const canFallbackBailian = !!(process.env.DASHSCOPE_API_KEY || process.env.BAILIAN_API_KEY || "");
         const fallbackToDeepSeek = async () => {
           provider = "deepseek";
           authKey = process.env.DEEPSEEK_API_KEY || "";
@@ -618,6 +728,15 @@ export async function POST(req: Request) {
           // 通知前端：已经回退
           sendMeta({ provider, model, reason: "fallback_openrouter_fetch_failed" });
         };
+        const fallbackToBailian = async () => {
+          provider = "bailian";
+          authKey = process.env.DASHSCOPE_API_KEY || process.env.BAILIAN_API_KEY || "";
+          const baseUrl = (process.env.DASHSCOPE_BASE_URL || process.env.BAILIAN_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1")
+            .replace(/\/+$/, "");
+          url = `${baseUrl}/chat/completions`;
+          model = process.env.BAILIAN_MODEL || process.env.DASHSCOPE_MODEL || "qwen3.6-plus";
+          sendMeta({ provider, model, reason: "fallback_to_bailian" });
+        };
 
         // 对分步生成：每一步也做“流式输出”并把 token 增量推给前端，让用户看到进度
         const callStreamToString = async (payload: any, stepTag: string, strictJson = false, timeoutMs = 180_000) => {
@@ -625,11 +744,34 @@ export async function POST(req: Request) {
           const p0: any = { ...payload, stream: true };
           // 在 Vercel 上，服务端“上游再开一条流”更容易卡死/断流；这里强制改为非流式获取结果，
           // 前端仍通过 SSE status/ping 看到进度，不依赖上游流的稳定性。
-          const preferNonStreamUpstream = !!process.env.VERCEL;
+          // 如确实需要上游也流式（风险更高），可在环境变量设置 CREATOR_UPSTREAM_STREAM=1
+          const preferNonStreamUpstream = !!process.env.VERCEL && !envFlag("CREATOR_UPSTREAM_STREAM");
 
           const doReq = async (p: any) => {
             if (preferNonStreamUpstream) {
-              return await callModelOnce({ ...p, stream: false }, timeoutMs);
+              // “伪流式”：上游非流式时，也要持续给前端 status，让用户知道在干嘛
+              const phases = (() => {
+                const t = String(stepTag || "").toLowerCase();
+                if (t.includes("mvp") || t.includes("单文件")) return ["分析需求", "搭建页面结构", "编写核心逻辑", "收尾检查与输出"];
+                if (t.includes("debug") || t.includes("修复")) return ["定位错误", "生成最小补丁", "复查输出格式"];
+                if (t.includes("蓝图") || t.includes("architect")) return ["理解需求", "定义协议/命名", "输出 JSON 蓝图"];
+                return ["处理中", "生成中", "收尾输出"];
+              })();
+              const startedAt = Date.now();
+              let idx = 0;
+              const ticker = setInterval(() => {
+                try {
+                  const sec = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
+                  const phase = phases[Math.min(idx, phases.length - 1)];
+                  sendStatus(`${stepTag}：${phase}…（已等待 ${sec}s）`);
+                  idx++;
+                } catch {}
+              }, 3500);
+              try {
+                return await callModelOnce({ ...p, stream: false }, timeoutMs);
+              } finally {
+                clearInterval(ticker);
+              }
             }
             let r: Response;
             try {
@@ -753,10 +895,30 @@ export async function POST(req: Request) {
               eml.includes("service unavailable") ||
               eml.includes("overloaded") ||
               eml.includes("not available in your region");
-            if (canFallback && provider === "openrouter" && openrouterDown) {
-              sendStatus("OpenRouter 不稳定/不可达，我切到 DeepSeek 官方 API 再试一次…");
+            if (provider === "openrouter" && openrouterDown) {
+              // 优先回退到百炼（如果配置了），其次直连 DeepSeek
+              if (canFallbackBailian) {
+                sendStatus("OpenRouter 不稳定/不可达，我切到阿里云百炼（DashScope）再试一次…");
+                await fallbackToBailian();
+                const p2: any = { ...payload, model };
+                delete p2.provider;
+                return await callStreamToString(p2, stepTag, strictJson, timeoutMs);
+              }
+              if (canFallbackDeepSeek) {
+                sendStatus("OpenRouter 不稳定/不可达，我切到 DeepSeek 官方 API 再试一次…");
+                await fallbackToDeepSeek();
+                // 关键：切 provider 后必须同时切 payload.model，否则会把 OpenRouter 的 model id 发给 DeepSeek
+                const p2: any = { ...payload, model };
+                delete p2.provider;
+                return await callStreamToString(p2, stepTag, strictJson, timeoutMs);
+              }
+            }
+
+            // 百炼链路失败：回退 DeepSeek
+            const bailianDown = provider === "bailian" && isNetwork;
+            if (bailianDown && canFallbackDeepSeek) {
+              sendStatus("百炼连接不稳定/不可达，我切到 DeepSeek 官方 API 再试一次…");
               await fallbackToDeepSeek();
-              // 关键：切 provider 后必须同时切 payload.model，否则会把 OpenRouter 的 model id 发给 DeepSeek
               const p2: any = { ...payload, model };
               delete p2.provider;
               return await callStreamToString(p2, stepTag, strictJson, timeoutMs);
@@ -941,7 +1103,7 @@ export async function POST(req: Request) {
             };
             const hash12 = (s: string) => crypto.createHash("sha1").update(String(s || "")).digest("hex").slice(0, 12);
 
-            const validateScripts = (html: string) => {
+            const validateScripts = (html: string, jsExtra = "") => {
               const err: string[] = [];
               const jsFromHtml = (h: string) => {
                 if (!h) return "";
@@ -956,7 +1118,7 @@ export async function POST(req: Request) {
                 return blocks.join("\n\n");
               };
               try {
-                const js = jsFromHtml(html);
+                const js = [jsFromHtml(html), String(jsExtra || "")].filter(Boolean).join("\n\n");
                 if (js.trim()) new Script(js);
               } catch (e: any) {
                 err.push(`index.html 内联脚本语法错误：${String(e?.message || e)}`);
@@ -969,14 +1131,18 @@ export async function POST(req: Request) {
               const lg = (meta as any)?._gen?.lastGood;
               if (!lg || typeof lg !== "object") return null;
               const files = Array.isArray(lg.files) ? lg.files : [];
-              const f0 = files.find((f: any) => String(f?.path || "") === "index.html");
-              const html = String(f0?.content || "");
-              if (!html.trim()) return null;
-              return { meta, html };
+              const normalized = files
+                .map((f: any) => ({ path: String(f?.path || "").trim(), content: String(f?.content || "") }))
+                .filter((f: any) => ["index.html", "style.css", "game.js"].includes(f.path) && f.content.trim());
+              if (!normalized.find((f: any) => f.path === "index.html")) return null;
+              return { meta, files: normalized };
             };
-            const setLastGood = async (metaObj: any, html: string, note: string) => {
+            const setLastGood = async (metaObj: any, files: Array<{ path: string; content: string }>, note: string) => {
               const m = metaObj && typeof metaObj === "object" ? metaObj : {};
-              const blob = `index.html\n${html}`;
+              const pick = files
+                .filter((f) => ["index.html", "style.css", "game.js"].includes(f.path))
+                .map((f) => ({ path: f.path, content: String(f.content || "") }));
+              const blob = pick.map((f) => `${f.path}\n${f.content}`).join("\n\n");
               (m as any)._gen = {
                 ...(m as any)._gen,
                 stage: "monolith_mvp",
@@ -985,7 +1151,7 @@ export async function POST(req: Request) {
                   at: Date.now(),
                   hash: hash12(blob),
                   note,
-                  files: [{ path: "index.html", content: html }],
+                  files: pick.length ? pick : [{ path: "index.html", content: "" }],
                 },
               };
               await upsertDraftFile("meta.json", JSON.stringify(m, null, 2));
@@ -994,26 +1160,368 @@ export async function POST(req: Request) {
               const lg = await readLastGood();
               if (!lg) throw new Error(`NO_LAST_GOOD:${reason}`);
               sendStatus(`生成遇到问题（${reason}），已回滚到上一次可用版本。`);
-              await upsertDraftFile("index.html", lg.html);
+              for (const f of lg.files) {
+                await upsertDraftFile(f.path, f.content);
+              }
               return lg;
+            };
+
+            const splitSingleFile = (html: string) => {
+              const raw = String(html || "");
+              // 不强制要求标记，尽量拆；拆不出来就返回 null
+              const styleBlocks: string[] = [];
+              const scriptBlocks: string[] = [];
+              let out = raw;
+              out = out.replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gi, (_m, c) => {
+                styleBlocks.push(String(c || ""));
+                return "";
+              });
+              out = out.replace(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi, (_m, attrs, c) => {
+                const a = String(attrs || "");
+                if (/src\s*=/.test(a)) return _m;
+                scriptBlocks.push(String(c || ""));
+                return "";
+              });
+              const css = styleBlocks.join("\n\n").trim();
+              const js = scriptBlocks.join("\n\n").trim();
+              if (!css || !js) return null;
+              if (!/href\s*=\s*["']\.\/style\.css["']/.test(out)) {
+                out = out.replace(/<\/head>/i, `  <link rel="stylesheet" href="./style.css" />\n</head>`);
+              }
+              if (!/src\s*=\s*["']\.\/game\.js["']/.test(out)) {
+                out = out.replace(/<\/body>/i, `  <script src="./game.js"></script>\n</body>`);
+              }
+              return { index: out.trim() + "\n", css: css + "\n", js: js + "\n" };
             };
 
             // 选择模型：优先 OpenRouter 的 qwen；OpenRouter 链路失败则回退 DeepSeek 官方 API（已在 callStreamRobust 里处理）
             const mvpOverride = envModelOrEmpty("CREATOR_MVP_MODEL");
             const mvpModel = hasOpenRouter ? pickOpenRouterModel([mvpOverride, "qwen/qwen3.6-plus"].filter(Boolean) as string[]) : model;
 
-            sendStatus(`（1/1）生成单文件 MVP（${provider} / ${mvpModel}）…`);
-            if (provider === "openrouter") model = mvpModel;
-            sendMeta({ provider, model, phase: "mvp_monolith" });
-
             const userMsgs = messages.filter((m) => m.role === "user").slice(-2);
             const userIntent = String(userMsgs[userMsgs.length - 1]?.content || "").trim();
+            const prevUser = String(userMsgs[0]?.content || "").trim();
+
+            const readMeta = (await readMetaObj()) || {};
+            const genState = ((readMeta as any)._gen && typeof (readMeta as any)._gen === "object" ? (readMeta as any)._gen : {}) as any;
+            let stage = String(genState.stage || "").trim();
+            const MAX_TURNS = 3;
+
+            const writeMeta = async (obj: any) => {
+              await upsertDraftFile("meta.json", JSON.stringify(obj || {}, null, 2));
+            };
+
+            // ===== 阶段 0：澄清（分析师反问 + 3 方案）=====
+            // 稳定优先：当用户需求缺少关键要素时，先反问，不生成代码。
+            const hasControls = /(键盘|方向键|arrowleft|arrowright|触屏|触控|虚拟|按钮|重力|滑动)/i.test(userIntent);
+            const hasWinLose = /(胜利|失败|终点|过关|闯关|碰撞|撞到|结束|计时|对战)/i.test(userIntent);
+            const hasStyle = /(像素|霓虹|手绘|卡通|写实|酷炫|帅气|赛博|风格|主题|星座)/i.test(userIntent);
+            const hasPlatform = /(手机|移动端|pc|电脑|竖屏|横屏|双端)/i.test(userIntent);
+            const missingCount = [hasControls, hasWinLose, hasStyle, hasPlatform].filter((x) => !x).length;
+            const isVague = userIntent.length < 40 || missingCount >= 2;
+
+            // 如果正在等待用户选择方案/确认配置，则进入对应阶段处理
+            const pickChoice = (s: string) => {
+              const t = String(s || "").trim();
+              const m = t.match(/(?:方案)?\s*([ABCabc])\b/);
+              if (m) return m[1].toUpperCase();
+              const n = t.match(/^\s*([123])\b/);
+              if (n) return n[1] === "1" ? "A" : n[1] === "2" ? "B" : "C";
+              return "";
+            };
+            const isConfirm = (s: string) => /(确认|开始|生成|就这样|ok|好的|可以)/i.test(String(s || ""));
+
+            // 0.1 若需要澄清（且不是已有配置流程中），先让 Qwen 输出澄清 JSON
+            if (!stage && isVague) {
+              sendStatus(`（1/3）需求澄清：给出 3 个方向供你选择（${provider} / ${mvpModel}）…`);
+              if (provider === "openrouter") model = mvpModel;
+              sendMeta({ provider, model, phase: "clarify" });
+              const payloadClarify: any = {
+                model,
+                messages: [
+                  { role: "system", content: CLARIFY_PROMPT },
+                  { role: "user", content: userIntent || "我想做一个小游戏，但需求还不明确。请按要求给出 A/B/C 三个方向并提问。" },
+                ],
+                temperature: 0.2,
+                max_tokens: 1400,
+                response_format: { type: "json_object" },
+              };
+              if (provider === "openrouter" && payloadBase.provider) payloadClarify.provider = payloadBase.provider;
+              const out = await autoRetry(
+                async () =>
+                  await callStreamRobust(
+                    payloadClarify,
+                    "阶段0：需求澄清 JSON",
+                    true,
+                    ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
+                    90_000,
+                  ),
+                "需求澄清",
+                "只输出 JSON（intent/missing/options/questions/recommend）。",
+                2,
+              );
+              const obj = parseJsonObjectLoose(out) || {};
+              const options = Array.isArray((obj as any).options) ? (obj as any).options : [];
+              const qs = Array.isArray((obj as any).questions) ? (obj as any).questions : [];
+              const rec = String((obj as any).recommend || "A").trim() || "A";
+              // 生成友好文案
+              const lines: string[] = [];
+              lines.push(`我先帮你把需求补齐，再开始写代码。你可以直接回复 A/B/C 选择一个方向：`);
+              for (const o of options.slice(0, 3)) {
+                const id = String(o?.id || "").trim() || "?";
+                const title = String(o?.title || "").trim();
+                const style = String(o?.style || "").trim();
+                const plat = String(o?.platform || "").trim();
+                const ctrl = String(o?.controls || "").trim();
+                const wl = String(o?.winLose || "").trim();
+                const notes = String(o?.notes || "").trim();
+                lines.push(`- 方案${id}${id === rec ? "（推荐）" : ""}：${title}`);
+                lines.push(`  - 风格：${style || "（默认）"}；平台：${plat || "（默认）"}；操作：${ctrl || "（默认）"}；胜负：${wl || "（默认）"}${notes ? `；特点：${notes}` : ""}`);
+              }
+              if (qs.length) {
+                lines.push(`\n另外还有几个关键问题（可选回答）：`);
+                for (const q of qs.slice(0, 5)) {
+                  const qid = String(q?.id || "").trim();
+                  const qq = String(q?.question || "").trim();
+                  const ch = Array.isArray(q?.choices) ? q.choices : [];
+                  lines.push(`- ${qid ? `${qid}. ` : ""}${qq}${ch.length ? `（${ch.slice(0, 3).join(" / ")}）` : ""}`);
+                }
+              }
+              lines.push(`\n请回复：A 或 B 或 C（也可以同时补充你的特别要求）。`);
+              lines.push(`\n（调试信息：澄清 JSON）\n\`\`\`json\n${JSON.stringify(obj, null, 2)}\n\`\`\``);
+
+              // 写入 meta.json：记录澄清阶段与澄清 JSON（中间变量）
+              const metaOut = {
+                ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
+                title: (readMeta as any)?.title || String(options.find((x: any) => String(x?.id || "").toUpperCase() === rec)?.title || "") || "未命名作品",
+                _gen: {
+                  ...(genState || {}),
+                  stage: "clarify",
+                  clarify: obj,
+                  turnsUsed: 0,
+                  maxTurns: MAX_TURNS,
+                  answers: {},
+                  updatedAt: Date.now(),
+                },
+              };
+              await writeMeta(metaOut);
+
+              const ui = {
+                type: "clarify",
+                turn: 0,
+                maxTurns: MAX_TURNS,
+                recommend: rec,
+                options: options.slice(0, 3).map((o: any) => ({
+                  id: String(o?.id || "").trim() || "",
+                  label: String(o?.title || "").trim() || String(o?.id || "").trim() || "方案",
+                  desc: String(o?.notes || "").trim() || String(o?.style || "").trim() || "",
+                })),
+                questions: qs.slice(0, 5).map((q: any) => ({
+                  id: String(q?.id || "").trim() || "",
+                  question: String(q?.question || "").trim() || "",
+                  choices: Array.isArray(q?.choices) ? q.choices.slice(0, 4) : [],
+                })),
+                selected: {},
+                actions: [{ id: "confirm", label: "开始生成（直接进入编码）", payload: "确认" }],
+              };
+
+              const finalObj = { assistant: lines.join("\n"), meta: metaOut, files: [] as any[], ui };
+              parseCreatorJson(JSON.stringify(finalObj));
+              send("final", { ok: true, content: JSON.stringify(finalObj), repaired: false });
+              clearInterval(heartbeat);
+              controller.close();
+              return;
+            }
+
+            // 0.2 多轮澄清：用户最多选择/回答 3 次；达到上限或用户点“开始生成”则进入编码模式。
+            if (stage === "clarify") {
+              const clarify = genState.clarify || {};
+              const turnsUsed0 = Number(genState.turnsUsed || 0) || 0;
+              const turnsUsed = turnsUsed0 + 1;
+              const picked = pickChoice(userIntent);
+
+              // 记录用户选择/回答（结构化收集）
+              const answers = (genState.answers && typeof genState.answers === "object" ? genState.answers : {}) as any;
+              if (picked) answers.choice = picked;
+              // 支持 “q1: xxx” 这种回答格式
+              try {
+                const m = String(userIntent || "").match(/^\s*([a-zA-Z0-9_-]{1,16})\s*[:：]\s*(.{1,60})\s*$/);
+                if (m && m[1] && m[2]) answers[m[1]] = m[2].trim();
+              } catch {}
+
+              const metaOut0 = {
+                ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
+                _gen: { ...(genState || {}), stage: "clarify", clarify, turnsUsed, maxTurns: MAX_TURNS, answers, updatedAt: Date.now() },
+              };
+              await writeMeta(metaOut0);
+
+              const shouldStart = isConfirm(userIntent) || turnsUsed >= MAX_TURNS;
+              if (!shouldStart) {
+                const options = Array.isArray((clarify as any)?.options) ? (clarify as any).options : [];
+                const qs = Array.isArray((clarify as any)?.questions) ? (clarify as any).questions : [];
+                const rec = String((clarify as any)?.recommend || "A").trim() || "A";
+                const txt =
+                  `收到，我已记录你的选择（${turnsUsed}/${MAX_TURNS}）。\n` +
+                  `你还可以再选择 ${Math.max(0, MAX_TURNS - turnsUsed)} 次，之后我就会开始写代码。\n\n` +
+                  `当前已选：${answers.choice ? `方案${answers.choice}` : "（未选方案）"}\n` +
+                  `如果你想直接开始生成，请点“开始生成”，或回复“确认”。`;
+                const ui = {
+                  type: "clarify",
+                  turn: turnsUsed,
+                  maxTurns: MAX_TURNS,
+                  recommend: rec,
+                  options: options.slice(0, 3).map((o: any) => ({
+                    id: String(o?.id || "").trim() || "",
+                    label: String(o?.title || "").trim() || String(o?.id || "").trim() || "方案",
+                    desc: String(o?.notes || "").trim() || "",
+                  })),
+                  questions: qs.slice(0, 5).map((q: any) => ({
+                    id: String(q?.id || "").trim() || "",
+                    question: String(q?.question || "").trim() || "",
+                    choices: Array.isArray(q?.choices) ? q.choices.slice(0, 4) : [],
+                  })),
+                  selected: answers,
+                  actions: [{ id: "confirm", label: "开始生成（直接进入编码）", payload: "确认" }],
+                };
+                const finalObj = { assistant: txt, meta: metaOut0, files: [] as any[], ui };
+                parseCreatorJson(JSON.stringify(finalObj));
+                send("final", { ok: true, content: JSON.stringify(finalObj), repaired: false });
+                clearInterval(heartbeat);
+                controller.close();
+                return;
+              }
+
+              // 达到选择上限或用户确认：生成配置表 config，并直接进入编码模式（不再额外等待确认，避免死循环）
+              sendStatus(`（2/3）生成参数配置表 JSON（${provider} / ${mvpModel}）…`);
+              if (provider === "openrouter") model = mvpModel;
+              sendMeta({ provider, model, phase: "config" });
+              const payloadCfg: any = {
+                model,
+                messages: [
+                  { role: "system", content: CONFIG_PROMPT },
+                  {
+                    role: "user",
+                    content:
+                      `【澄清结果 JSON】\n${JSON.stringify(clarify, null, 2)}\n\n` +
+                      `【累计选择/回答】\n${JSON.stringify(answers, null, 2)}\n\n` +
+                      `请输出 config JSON。`,
+                  },
+                ],
+                temperature: 0.2,
+                max_tokens: 1600,
+                response_format: { type: "json_object" },
+              };
+              if (provider === "openrouter" && payloadBase.provider) payloadCfg.provider = payloadBase.provider;
+              const out = await autoRetry(
+                async () =>
+                  await callStreamRobust(
+                    payloadCfg,
+                    "阶段1：配置表 JSON",
+                    true,
+                    ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
+                    90_000,
+                  ),
+                "配置表",
+                "只输出 JSON（meta/config/needConfirm）。",
+                2,
+              );
+              const cfgObj = parseJsonObjectLoose(out);
+              if (!cfgObj) throw new Error("CONFIG_NOT_JSON");
+              const config = (cfgObj as any).config || {};
+              // 直接用于后续 codegen
+              (genState as any).config = config;
+              stage = "monolith_mvp";
+              const metaOut = {
+                ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
+                ...safeMeta((cfgObj as any).meta),
+                _gen: { ...(genState || {}), stage: "monolith_mvp", config, updatedAt: Date.now() },
+              };
+              await writeMeta(metaOut);
+            }
+
+            // 0.3 若在配置确认阶段：确认 -> 进入代码生成；否则更新 config 再次确认
+            if (stage === "confirm_config" && !isConfirm(userIntent)) {
+              const clarify = genState.clarify || {};
+              const oldConfig = genState.config || {};
+              sendStatus(`（2/3）更新参数配置表 JSON（${provider} / ${mvpModel}）…`);
+              if (provider === "openrouter") model = mvpModel;
+              sendMeta({ provider, model, phase: "config_update" });
+              const payloadCfg2: any = {
+                model,
+                messages: [
+                  { role: "system", content: CONFIG_PROMPT },
+                  {
+                    role: "user",
+                    content:
+                      `【澄清 JSON】\n${JSON.stringify(clarify, null, 2)}\n\n` +
+                      `【当前 config】\n${JSON.stringify(oldConfig, null, 2)}\n\n` +
+                      `【用户修改要求】\n${userIntent}\n\n` +
+                      `请输出更新后的 config JSON。`,
+                  },
+                ],
+                temperature: 0.2,
+                max_tokens: 1600,
+                response_format: { type: "json_object" },
+              };
+              if (provider === "openrouter" && payloadBase.provider) payloadCfg2.provider = payloadBase.provider;
+              const out = await autoRetry(
+                async () =>
+                  await callStreamRobust(
+                    payloadCfg2,
+                    "阶段1：更新配置表 JSON",
+                    true,
+                    ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
+                    90_000,
+                  ),
+                "配置表更新",
+                "只输出 JSON（meta/config/needConfirm）。",
+                2,
+              );
+              const cfgObj = parseJsonObjectLoose(out);
+              if (!cfgObj) throw new Error("CONFIG_NOT_JSON");
+              const metaCfg = safeMeta((cfgObj as any).meta);
+              const config = (cfgObj as any).config || {};
+              const needConfirm = Array.isArray((cfgObj as any).needConfirm) ? (cfgObj as any).needConfirm : [];
+
+              const metaOut = {
+                ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
+                ...metaCfg,
+                _gen: { ...(genState || {}), stage: "confirm_config", clarify, config, updatedAt: Date.now() },
+              };
+              await writeMeta(metaOut);
+
+              const txt =
+                `好的，我已更新“参数配置表”。请确认后我再开始写代码：\n\n` +
+                `\`\`\`json\n${JSON.stringify({ meta: metaCfg, config }, null, 2)}\n\`\`\`\n\n` +
+                (needConfirm.length ? `需要你确认的点：\n- ${needConfirm.join("\n- ")}\n\n` : "") +
+                `如果没问题请回复：确认（或“开始生成”）。`;
+
+              const finalObj = { assistant: txt, meta: metaOut, files: [] as any[] };
+              parseCreatorJson(JSON.stringify(finalObj));
+              send("final", { ok: true, content: JSON.stringify(finalObj), repaired: false });
+              clearInterval(heartbeat);
+              controller.close();
+              return;
+            }
+
+            // 到这里：要么需求不模糊（无需澄清），要么用户已确认配置（进入代码生成）。
+            // 如果已在澄清阶段收集到 config（达到选择上限或用户确认），这里会直接复用 config 进入编码。
+            const activeConfig = genState && typeof genState === "object" && (genState as any).config ? (genState as any).config : null;
+
+            sendStatus(`（3/3）生成单文件 MVP（${provider} / ${mvpModel}）…`);
+            if (provider === "openrouter") model = mvpModel;
+            sendMeta({ provider, model, phase: "mvp_monolith" });
 
             const payload: any = {
               model,
               messages: [
-                { role: "system", content: MONOLITH_MVP_PROMPT },
-                { role: "user", content: userIntent || "请生成一个简单可玩的小游戏。要求可运行、单文件。"},
+                { role: "system", content: activeConfig ? CODEGEN_FROM_CONFIG_PROMPT : MONOLITH_MVP_PROMPT },
+                {
+                  role: "user",
+                  content: activeConfig
+                    ? `【用户需求】\n${prevUser || userIntent}\n\n【参数配置表 JSON】\n${JSON.stringify(activeConfig, null, 2)}\n`
+                    : userIntent || "请生成一个简单可玩的小游戏。要求可运行、单文件。",
+                },
               ],
               temperature: 0.3,
               max_tokens: 2400,
@@ -1041,10 +1549,11 @@ export async function POST(req: Request) {
               // 稳定优先：直接回滚 lastGood（如果存在），否则继续抛错
               const lg = await restoreLastGood(String(e?.message || e));
               const metaNow = lg.meta || {};
+              const html0 = String(lg.files.find((f: any) => f.path === "index.html")?.content || "");
               const finalObj = {
                 assistant: "本次生成网络不稳定，已回滚到上一次可用版本。",
                 meta: metaNow,
-                files: [{ path: "index.html", content: lg.html }, { path: "meta.json", content: JSON.stringify(metaNow, null, 2) }],
+                files: [{ path: "index.html", content: html0 }, { path: "meta.json", content: JSON.stringify(metaNow, null, 2) }],
               };
               parseCreatorJson(JSON.stringify(finalObj));
               send("final", { ok: true, content: JSON.stringify(finalObj), repaired: true });
@@ -1062,8 +1571,21 @@ export async function POST(req: Request) {
             if (!html.trim()) throw new Error("MVP_EMPTY_INDEX");
 
             await upsertDraftFile("index.html", html);
-            const metaNow = { ...meta, _gen: { v: 1, stage: "monolith_mvp", updatedAt: Date.now() } };
-            await setLastGood(metaNow, html, "after_generate");
+            // 写入阶段：生成已开始。清理“澄清/配置确认”阶段字段，避免下一轮对话仍停留在确认态。
+            const metaNow = {
+              ...meta,
+              _gen: {
+                ...(genState || {}),
+                v: 1,
+                stage: "monolith_mvp",
+                // 保留已确认的 config（若存在），便于后续迭代复用
+                ...(activeConfig ? { config: activeConfig } : {}),
+                // 清理澄清中间变量
+                clarify: undefined,
+                updatedAt: Date.now(),
+              },
+            };
+            await setLastGood(metaNow, [{ path: "index.html", content: html }], "after_generate");
 
             // 最小验收：语法检查；若失败则仅自愈 1 轮，仍失败回滚 lastGood
             const errs = validateScripts(html);
@@ -1107,22 +1629,38 @@ export async function POST(req: Request) {
                   finalHtml = html2;
                   await upsertDraftFile("index.html", finalHtml);
                   const meta2 = (await readMetaObj()) || metaNow;
-                  await setLastGood(meta2, finalHtml, "after_debug");
+                  await setLastGood(meta2, [{ path: "index.html", content: finalHtml }], "after_debug");
                 } else {
                   throw new Error("DEBUG_FAILED");
                 }
               } catch (e: any) {
                 const lg = await restoreLastGood(String(e?.message || e));
-                finalHtml = lg.html;
+                finalHtml = String(lg.files.find((f: any) => f.path === "index.html")?.content || "");
               }
             }
 
             const metaFinal = (await readMetaObj()) || metaNow;
             const assistantText = `已生成可运行版本：${String((metaFinal as any)?.title || meta.title || "").trim() || "未命名作品"}。`;
+            // 生成完成后再尝试拆分成三文件（用户偏好），拆分失败则保留单文件
+            let finalFiles: Array<{ path: string; content: string }> = [{ path: "index.html", content: finalHtml }];
+            try {
+              const sp = splitSingleFile(finalHtml);
+              if (sp && !validateScripts(sp.index, sp.js).length && /href\s*=\s*["']\.\/style\.css["']/.test(sp.index)) {
+                await upsertDraftFile("index.html", sp.index);
+                await upsertDraftFile("style.css", sp.css);
+                await upsertDraftFile("game.js", sp.js);
+                finalFiles = [
+                  { path: "index.html", content: sp.index },
+                  { path: "style.css", content: sp.css },
+                  { path: "game.js", content: sp.js },
+                ];
+                await setLastGood(metaFinal, finalFiles, "after_split");
+              }
+            } catch {}
             const finalObj = {
               assistant: assistantText,
               meta: metaFinal,
-              files: [{ path: "index.html", content: finalHtml }, { path: "meta.json", content: JSON.stringify(metaFinal, null, 2) }],
+              files: [...finalFiles, { path: "meta.json", content: JSON.stringify(metaFinal, null, 2) }],
             };
             parseCreatorJson(JSON.stringify(finalObj));
             send("final", { ok: true, content: JSON.stringify(finalObj), repaired: false });
@@ -1674,14 +2212,24 @@ export async function POST(req: Request) {
         try {
           resp = await callModelStream(payloadBase);
         } catch (e: any) {
-          // 默认优先 OpenRouter，但如果 OpenRouter 网络失败且 DeepSeek 可用，则自动回退一次
+          // 默认优先 OpenRouter，但如果 OpenRouter 网络失败，则优先回退百炼，其次直连 DeepSeek
           const em = String(e?.message || e);
-          if (canFallback && em.toLowerCase().includes("fetch_failed")) {
-            sendStatus("OpenRouter 连接失败，我先切到 DeepSeek 再试一次…");
-            await fallbackToDeepSeek();
-            payloadBase.model = model;
-            delete payloadBase.provider;
-            resp = await callModelStream(payloadBase);
+          if (em.toLowerCase().includes("fetch_failed")) {
+            if (provider === "openrouter" && canFallbackBailian) {
+              sendStatus("OpenRouter 连接失败，我先切到阿里云百炼再试一次…");
+              await fallbackToBailian();
+              payloadBase.model = model;
+              delete payloadBase.provider;
+              resp = await callModelStream(payloadBase);
+            } else if (provider === "openrouter" && canFallbackDeepSeek) {
+              sendStatus("OpenRouter 连接失败，我先切到 DeepSeek 再试一次…");
+              await fallbackToDeepSeek();
+              payloadBase.model = model;
+              delete payloadBase.provider;
+              resp = await callModelStream(payloadBase);
+            } else {
+              throw e;
+            }
           } else {
             throw e;
           }

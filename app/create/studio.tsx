@@ -117,24 +117,15 @@ export default function CreateStudio({
   const [msg, setMsg] = useState("");
   const [input, setInput] = useState(initialPrompt || "");
   // 模型选择：DeepSeek / OpenRouter
-  const [provider, setProvider] = useState<"deepseek" | "openrouter">(() => {
-    try {
-      const raw = window.localStorage.getItem("creatorStudio:modelProvider");
-      if (raw === "deepseek" || raw === "openrouter") return raw;
-    } catch {}
-    // 默认走 OpenRouter（用户要求默认选择 nemotron free）
-    return "openrouter";
-  });
-  const [model, setModel] = useState<string>(() => {
-    try {
-      const raw = window.localStorage.getItem("creatorStudio:modelName");
-      if (raw) return raw;
-    } catch {}
-    return "nvidia/nemotron-3-super-120b-a12b:free";
-  });
+  // 注意：不要在 useState initializer 读取 localStorage，否则 SSR/CSR 初始值不一致会触发 hydration failed。
+  // 这里先用稳定默认值，等客户端挂载后再从 localStorage 恢复。
+  const [provider, setProvider] = useState<"deepseek" | "openrouter" | "bailian">("openrouter");
+  const [model, setModel] = useState<string>("nvidia/nemotron-3-super-120b-a12b:free");
+  const [hydrated, setHydrated] = useState(false);
   const [currentModelLabel, setCurrentModelLabel] = useState<string>("");
   const [creatorName, setCreatorName] = useState<string>("");
   const [gameMeta, setGameMeta] = useState<GameMeta | null>(null);
+  const [clarifyUi, setClarifyUi] = useState<any>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const [projects, setProjects] = useState<Array<{ gameId: string; title?: string; entry: string; mtimeMs?: number; published?: boolean }>>(
     [],
@@ -166,6 +157,14 @@ export default function CreateStudio({
     [],
   );
 
+  const bailianModels = useMemo(
+    () => [
+      { id: "qwen3.6-plus", name: "qwen3.6-plus（百炼直连）" },
+      { id: "qwen-plus", name: "qwen-plus（百炼）" },
+    ],
+    [],
+  );
+
   const deepseekModels = useMemo(
     () => [
       { id: "deepseek-reasoner", name: "deepseek-reasoner（思考更强）" },
@@ -179,6 +178,9 @@ export default function CreateStudio({
     if (provider === "openrouter") {
       const ok = openrouterModels.some((x) => x.id === model);
       if (!ok) setModel("nvidia/nemotron-3-super-120b-a12b:free");
+    } else if (provider === "bailian") {
+      const ok = bailianModels.some((x) => x.id === model);
+      if (!ok) setModel("qwen3.6-plus");
     } else {
       const ok = deepseekModels.some((x) => x.id === model);
       if (!ok) setModel("deepseek-reasoner");
@@ -186,12 +188,26 @@ export default function CreateStudio({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider]);
 
+  // 客户端挂载后恢复用户上次选择，避免 SSR/CSR hydration mismatch
   useEffect(() => {
+    setHydrated(true);
+    try {
+      const p = window.localStorage.getItem("creatorStudio:modelProvider");
+      const m = window.localStorage.getItem("creatorStudio:modelName");
+      if (p === "deepseek" || p === "openrouter" || p === "bailian") setProvider(p as any);
+      if (m) setModel(m);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
     try {
       window.localStorage.setItem("creatorStudio:modelProvider", provider);
       window.localStorage.setItem("creatorStudio:modelName", model);
     } catch {}
-  }, [provider, model]);
+  }, [provider, model, hydrated]);
 
   // 顶部/聊天区展示当前模型（常驻显示）
   useEffect(() => {
@@ -674,8 +690,18 @@ export default function CreateStudio({
     if (!text || busy) return;
     if (!useId) throw new Error("NO_GAME_ID");
 
+    // 快捷操作：如果用户输入的是一个 http(s) 链接，则直接在预览器打开，不走 AI 生成。
+    // 说明：部分网站会设置 X-Frame-Options/CSP 禁止被 iframe 嵌入；此时可用右上角“新标签页打开”。
+    if (/^https?:\/\/\S+/i.test(text)) {
+      setMsg("已在预览器打开链接。若页面空白，可能该网站禁止 iframe 嵌入，可点右上角在新标签页打开。");
+      setPreviewUrl(text);
+      setInput("");
+      return;
+    }
+
     setLastFailedText("");
     setBusy(true);
+    setClarifyUi(null);
     setMsg("");
     setInput("");
     const startAt = Date.now();
@@ -831,6 +857,10 @@ export default function CreateStudio({
       if (!finalContent) throw new Error("EMPTY_MODEL_RESPONSE");
       const parsed = safeJsonParse(finalContent);
       if (!parsed) throw new Error("AI_OUTPUT_NOT_JSON");
+      // 若服务端返回可点击的澄清 UI（A/B/C 方案、问题选项等），保存在状态里用于渲染
+      const ui = (parsed as any)?.ui;
+      if (ui && typeof ui === "object") setClarifyUi(ui);
+      else setClarifyUi(null);
 
       const assistantText = String(parsed.assistant || "").trim() || (repaired ? "（AI 已自动修复输出格式）" : "（AI 回复为空）");
       // 把占位消息替换为最终文本
@@ -1118,6 +1148,75 @@ export default function CreateStudio({
                 <>
                   <div className="chatRole">{m.role === "user" ? "我" : "AI"}</div>
                   <div className="chatText">{m.content}</div>
+                  {/* 需求澄清：可点击选项（多轮选择，最多 3 次） */}
+                  {m.role === "assistant" && idx === viewMessages.length - 1 && clarifyUi && !busy ? (
+                    <div
+                      className="chatInlineActions"
+                      style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}
+                      aria-label="澄清选项"
+                    >
+                      {Array.isArray(clarifyUi?.options) && clarifyUi.options.length ? (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                          {clarifyUi.options.map((o: any, i: number) => {
+                            const id = String(o?.id || "").trim();
+                            const label = String(o?.label || "").trim() || `方案${id || i + 1}`;
+                            const payload = String(o?.payload || `选择方案: ${id || label}`).trim();
+                            return (
+                              <button key={i} className="btn btnGray" type="button" onClick={() => sendText(payload)} disabled={busy}>
+                                {id ? `方案${id}：` : ""}
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+
+                      {Array.isArray(clarifyUi?.questions) && clarifyUi.questions.length ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                          {clarifyUi.questions.map((q: any, qi: number) => {
+                            const qid = String(q?.id || "").trim() || `q${qi + 1}`;
+                            const qtext = String(q?.question || "").trim();
+                            const choices = Array.isArray(q?.choices) ? q.choices : [];
+                            return (
+                              <div key={qi}>
+                                <div style={{ fontWeight: 900, marginBottom: 6 }}>{qtext || qid}</div>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                                  {choices.map((c: any, ci: number) => {
+                                    const cc = String(c || "").trim();
+                                    const payload = `${qid}: ${cc}`;
+                                    return (
+                                      <button key={ci} className="btn btnGray" type="button" onClick={() => sendText(payload)} disabled={busy}>
+                                        {cc}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+
+                      {Array.isArray(clarifyUi?.actions) && clarifyUi.actions.length ? (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                          {clarifyUi.actions.map((a: any, ai: number) => {
+                            const label = String(a?.label || "").trim() || "确认";
+                            const payload = String(a?.payload || label).trim();
+                            return (
+                              <button key={ai} className="btn" type="button" onClick={() => sendText(payload)} disabled={busy}>
+                                {label}
+                              </button>
+                            );
+                          })}
+                          {typeof clarifyUi?.turn === "number" && typeof clarifyUi?.maxTurns === "number" ? (
+                            <span className="desc" style={{ marginLeft: 6 }}>
+                              已选择 {clarifyUi.turn}/{clarifyUi.maxTurns}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {/* 失败时：在最后一个 AI 气泡后面给“重试”按钮（更符合用户预期） */}
                   {m.role === "assistant" && idx === viewMessages.length - 1 && lastFailedText && !busy ? (
                     <div className="chatInlineActions">
@@ -1202,14 +1301,16 @@ export default function CreateStudio({
                   disabled={busy}
                   onChange={(e) => {
                     const p = (e.target.value || "openrouter") as any;
-                    if (p !== "deepseek" && p !== "openrouter") return;
+                    if (p !== "deepseek" && p !== "openrouter" && p !== "bailian") return;
                     setProvider(p);
                     if (p === "openrouter") setModel("nvidia/nemotron-3-super-120b-a12b:free");
+                    else if (p === "bailian") setModel("qwen3.6-plus");
                     else setModel("deepseek-reasoner");
                   }}
                   aria-label="选择模型平台"
                 >
                   <option value="openrouter">OpenRouter</option>
+                  <option value="bailian">阿里云百炼</option>
                   <option value="deepseek">DeepSeek</option>
                 </select>
               </div>
@@ -1222,7 +1323,7 @@ export default function CreateStudio({
                   onChange={(e) => setModel(e.target.value)}
                   aria-label="选择模型"
                 >
-                  {(provider === "openrouter" ? openrouterModels : deepseekModels).map((m) => (
+                  {(provider === "openrouter" ? openrouterModels : provider === "bailian" ? bailianModels : deepseekModels).map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.name}
                     </option>
