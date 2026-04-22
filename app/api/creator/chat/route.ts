@@ -243,8 +243,8 @@ export async function POST(req: Request) {
   }
   const gameId = String((body as any)?.gameId || "").trim();
   const safeGameId = gameId && /^[a-zA-Z0-9_-]+$/.test(gameId) ? gameId : "";
-  const mode = String((body as any)?.mode || "generate").trim().toLowerCase();
-  const quality = String((body as any)?.quality || "stable").trim().toLowerCase(); // stable | quality
+  const modeRaw = String((body as any)?.mode || "auto").trim().toLowerCase(); // auto | generate | fix
+  const qualityRaw = String((body as any)?.quality || "auto").trim().toLowerCase(); // auto | stable | quality
 
   // 忽略客户端传来的 system message：服务端统一加（保证所有用户都带上）
   // 同时裁剪历史消息，避免 Reasoner 过长输出导致更高的断流概率
@@ -522,6 +522,16 @@ export async function POST(req: Request) {
         // 告诉前端当前使用的 provider/model（用于 UI 提示）
         sendMeta({ provider, model });
 
+        // ===== 自动路由：模型根据用户输入决定走生成还是修复、稳定还是质量 =====
+        const lastUserText = String(messages.filter((m) => m.role === "user").slice(-1)[0]?.content || "").trim();
+        const looksLikeBug =
+          /(^\s*修复[:：]|bug|报错|错误|异常|崩溃|无法|不显示|不生效|没反应|卡住|卡死|白屏|闪退|console|控制台)/i.test(lastUserText);
+        const wantsQuality =
+          /(更精致|更好看|更像|高质量|质量模式|产品级|动效|动画|UI|视觉|排版|美化|duolingo|仿)/i.test(lastUserText);
+        const mode = modeRaw === "fix" || modeRaw === "generate" ? modeRaw : looksLikeBug ? "fix" : "generate";
+        const quality =
+          qualityRaw === "quality" || qualityRaw === "stable" ? qualityRaw : wantsQuality ? "quality" : "stable";
+
         // 默认走分步生成；若用户补充要求里包含 legacy_single_shot 则强制使用旧模式
         const forceLegacy = safeAddon.includes("legacy_single_shot");
 
@@ -718,7 +728,10 @@ export async function POST(req: Request) {
           const indexHtml = await readDraftFile("index.html");
           const styleCss = await readDraftFile("style.css");
           const gameJs = await readDraftFile("game.js");
-          if (!(indexHtml && styleCss && gameJs)) throw new Error("MISSING_FILES_TO_FIX");
+          // 如果用户看起来在报 bug，但草稿里没有完整文件，则自动回退到生成流程
+          if (!(indexHtml && styleCss && gameJs)) {
+            sendStatus("未找到可修复的源文件，我改为走“生成/重建”流程…");
+          } else {
 
           const lastUser = (messages.filter((m) => m.role === "user").slice(-1)[0]?.content || "").trim();
           const totalSteps = 1;
@@ -776,6 +789,7 @@ export async function POST(req: Request) {
           clearInterval(heartbeat);
           controller.close();
           return;
+          }
         }
 
         if (!forceLegacy) {
@@ -1046,9 +1060,78 @@ export async function POST(req: Request) {
               `（${step}/${totalSteps}）程序员：生成 ${p}`,
               `请确保输出严格 JSON，且 path 只能是 "${p}"，content 不能为空。`,
             );
-            const obj = parseJsonObjectLoose(outText);
-            const outPath = String((obj as any)?.path || "").trim();
-            const outContent = String((obj as any)?.content || "");
+            let obj = parseJsonObjectLoose(outText);
+            let outPath = String((obj as any)?.path || "").trim();
+            let outContent = String((obj as any)?.content || "");
+
+            // 二次兜底：模型偶发漏填 path / 填错 path。这里不让用户手动重试，直接让模型“修复为严格 JSON”。
+            if (outPath !== p || !outContent.trim()) {
+              sendStatus(`（${step}/${totalSteps}）${p} 输出格式不合规，正在自动修复…`);
+              const repairPrompt =
+                `你刚才生成的结果不符合要求（path 缺失/不匹配或 content 为空）。\n` +
+                `请把它修复为严格 JSON，并且必须满足：\n` +
+                `- 只输出 JSON，不要 markdown/解释\n` +
+                `- 返回格式必须为 {"path":"${p}","content":"..."}\n` +
+                `- path 必须严格等于 "${p}"\n` +
+                `- content 必须是完整文件内容且非空\n\n` +
+                `原输出：\n${outText}\n`;
+              const repairPayload: any = {
+                model,
+                messages: [
+                  { role: "system", content: "你是 JSON 修复器。只输出 json_object。" },
+                  { role: "user", content: repairPrompt },
+                ],
+                temperature: 0.0,
+                max_tokens: quality === "quality" ? 1800 : 1200,
+                response_format: { type: "json_object" },
+              };
+              if (provider === "openrouter" && payloadBase.provider) repairPayload.provider = payloadBase.provider;
+              const repairedText = await autoRetry(
+                async () =>
+                  await callStreamRobust(repairPayload, `步骤 ${step}/${totalSteps}：修复 ${p} JSON`, true, [
+                    // 优先 Qwen 修复（中文指令 + 结构化输出更稳）
+                    "qwen/qwen3.6-plus",
+                    "deepseek/deepseek-v3.2",
+                  ]),
+                `（${step}/${totalSteps}）程序员：修复 ${p}`,
+                `只输出 {"path":"${p}","content":"..."}，且 content 不能为空。`,
+              );
+              obj = parseJsonObjectLoose(repairedText);
+              outPath = String((obj as any)?.path || "").trim();
+              outContent = String((obj as any)?.content || "");
+            }
+
+            // 三次兜底：如果修复器也没救回来（常见于模型把 json_object 当成“随便输出一段话”），
+            // 则直接“强制换 Qwen 并重新生成该文件”（而不是修复原输出）。
+            if ((outPath !== p || !outContent.trim()) && provider === "openrouter") {
+              const qwen = pickOpenRouterModel(["qwen/qwen3.6-plus"]);
+              sendStatus(`（${step}/${totalSteps}）${p} 仍无法产出有效 JSON，改为用 ${qwen} 重新生成该文件…`);
+              sendMeta({ provider, model: qwen, phase: "coder", file: p, reason: "force_regen_with_qwen" });
+              const regenPayload: any = {
+                model: qwen,
+                messages: [
+                  { role: "system", content: coderPrompt(blueprint, p, quality === "quality") },
+                  {
+                    role: "user",
+                    content:
+                      `请你重新生成文件 ${p}（不要尝试修复前面的输出）。\n` +
+                      `【硬性要求】\n- 只输出 JSON：{"path":"${p}","content":"..."}\n- path 必须严格等于 "${p}"\n- content 必须非空且为完整文件\n`,
+                  },
+                ],
+                temperature: 0.2,
+                max_tokens: Math.max(1200, pld.max_tokens || 1200),
+                response_format: { type: "json_object" },
+              };
+              const regenText = await autoRetry(
+                async () => await callStreamRobust(regenPayload, `步骤 ${step}/${totalSteps}：重新生成 ${p}（Qwen）`, true, []),
+                `（${step}/${totalSteps}）程序员：重写 ${p}`,
+                `只输出 {"path":"${p}","content":"..."}，且 content 不能为空。`,
+              );
+              const obj2 = parseJsonObjectLoose(regenText);
+              outPath = String((obj2 as any)?.path || "").trim();
+              outContent = String((obj2 as any)?.content || "");
+            }
+
             if (outPath !== p) throw new Error(`CODER_BAD_PATH:${p}:${outPath || "EMPTY"}`);
             if (!outContent.trim()) throw new Error(`CODER_EMPTY_CONTENT:${p}`);
             files.push({ path: outPath, content: outContent });

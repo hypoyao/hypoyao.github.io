@@ -148,8 +148,6 @@ export default function CreateStudio({
   const inputRef = useRef<string>("");
   const bootRef = useRef(false);
   const [lastFailedText, setLastFailedText] = useState<string>("");
-  const [chatMode, setChatMode] = useState<"generate" | "fix">("generate");
-  const [qualityMode, setQualityMode] = useState<"stable" | "quality">("stable");
   const abortRef = useRef<AbortController | null>(null);
   const opMenuRef = useRef<HTMLDetailsElement | null>(null);
 
@@ -676,18 +674,6 @@ export default function CreateStudio({
     if (!text || busy) return;
     if (!useId) throw new Error("NO_GAME_ID");
 
-    // 第一句用户输入：把它写到 prompt.md（用于“我的游戏”下拉框显示关键词）
-    // 只在当前对话还没有 user 消息时写入，避免后续不断覆盖
-    const hasUser = useBase.some((m) => m.role === "user");
-    if (!hasUser) {
-      try {
-        await writePrompt(useId, text);
-        // 让下拉框尽快显示关键词
-        await refreshProjects();
-      } catch {
-        // ignore
-      }
-    }
     setLastFailedText("");
     setBusy(true);
     setMsg("");
@@ -704,6 +690,23 @@ export default function CreateStudio({
     const myMsg: ChatMsg = { role: "user", content: text };
     const snap: ChatMsg[] = [...useBase, myMsg, { role: "assistant", content: "AI 开始写代码…" }];
     setMessages(snap);
+
+    // 第一句用户输入：把它写到 prompt.md（用于“我的游戏”下拉框显示关键词）
+    // 性能优化：不要阻塞 UI / 不要阻塞 AI 请求（之前这里 await 会导致“点发送后几秒没反应”）
+    // 只在当前对话还没有 user 消息时写入，避免后续不断覆盖
+    const hasUser = useBase.some((m) => m.role === "user");
+    if (!hasUser) {
+      void (async () => {
+        try {
+          await writePrompt(useId, text);
+          // 让下拉框尽快显示关键词
+          await refreshProjects();
+        } catch {
+          // ignore
+        }
+      })();
+    }
+
     // 只把“用户发给 AI 的内容”存到数据库（失败不影响创作）
     try {
       fetch("/api/creator/chatlog", {
@@ -721,7 +724,8 @@ export default function CreateStudio({
         headers: { "content-type": "application/json" },
         // 只传 user/assistant；system 由服务端统一注入
         // 传 gameId：让服务端能做“分步生成断点续跑”（哪一步失败，下次从哪一步开始）
-        body: JSON.stringify({ gameId: useId, mode: chatMode, quality: qualityMode, messages: [...useBase, myMsg], provider, model }),
+        // mode/quality 由服务端自动判断（根据用户输入与当前工程状态）
+        body: JSON.stringify({ gameId: useId, messages: [...useBase, myMsg], provider, model }),
         signal: ac.signal,
       });
       if (!r.ok) {
@@ -1148,59 +1152,9 @@ export default function CreateStudio({
               onChange={(e) => setInput(e.target.value)}
               rows={4}
               disabled={busy}
-              placeholder={chatMode === "fix" ? "描述 bug：复现步骤、期望/实际、设备/浏览器、报错信息…" : ""}
+              placeholder="描述你的需求或问题：玩法/按钮/胜负条件/画面风格；或直接描述 bug（复现步骤、期望/实际、设备/报错）"
             />
             <div className="sendCol">
-              <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  className={`btn btnGray ${chatMode === "generate" ? "isActive" : ""}`}
-                  type="button"
-                  onClick={() => setChatMode("generate")}
-                  disabled={busy}
-                  aria-label="切换到生成模式"
-                  title="生成/加功能"
-                  style={{ padding: "10px 10px", width: 58 }}
-                >
-                  生成
-                </button>
-                <button
-                  className={`btn btnGray ${chatMode === "fix" ? "isActive" : ""}`}
-                  type="button"
-                  onClick={() => setChatMode("fix")}
-                  disabled={busy}
-                  aria-label="切换到修复模式"
-                  title="修复 bug"
-                  style={{ padding: "10px 10px", width: 58 }}
-                >
-                  修复
-                </button>
-              </div>
-              {chatMode === "generate" ? (
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button
-                    className={`btn btnGray ${qualityMode === "stable" ? "isActive" : ""}`}
-                    type="button"
-                    onClick={() => setQualityMode("stable")}
-                    disabled={busy}
-                    aria-label="切换到稳定模式"
-                    title="稳定模式（更少失败）"
-                    style={{ padding: "10px 10px", width: 58 }}
-                  >
-                    稳定
-                  </button>
-                  <button
-                    className={`btn btnGray ${qualityMode === "quality" ? "isActive" : ""}`}
-                    type="button"
-                    onClick={() => setQualityMode("quality")}
-                    disabled={busy}
-                    aria-label="切换到质量模式"
-                    title="质量模式（更精致，但更慢）"
-                    style={{ padding: "10px 10px", width: 58 }}
-                  >
-                    质量
-                  </button>
-                </div>
-              ) : null}
               <button
                 className="btn btnGray voiceBtn"
                 type="button"
