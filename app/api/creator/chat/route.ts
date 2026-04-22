@@ -10,6 +10,8 @@ import { sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+// Vercel Serverless：给生成留足时间，避免长步骤被平台提前终止导致前端 network error
+export const maxDuration = 300;
 
 type Msg = { role: "system" | "user" | "assistant"; content: string };
 
@@ -474,7 +476,7 @@ export async function POST(req: Request) {
           method: "POST",
           headers: buildHeaders(),
           body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(120_000),
+          signal: AbortSignal.timeout(180_000),
         });
       } catch (e: any) {
         const code = String(e?.cause?.code || e?.code || "").toUpperCase();
@@ -502,7 +504,7 @@ export async function POST(req: Request) {
           method: "POST",
           headers: buildHeaders(),
           body: JSON.stringify(p),
-          signal: AbortSignal.timeout(120_000),
+          signal: AbortSignal.timeout(180_000),
         });
       } catch (e: any) {
         const code = e?.cause?.code || e?.code || "";
@@ -589,7 +591,14 @@ export async function POST(req: Request) {
         const callStreamToString = async (payload: any, stepTag: string, strictJson = false) => {
           // payload.stream 必须为 true
           const p0: any = { ...payload, stream: true };
+          // 在 Vercel 上，服务端“上游再开一条流”更容易卡死/断流；这里强制改为非流式获取结果，
+          // 前端仍通过 SSE status/ping 看到进度，不依赖上游流的稳定性。
+          const preferNonStreamUpstream = !!process.env.VERCEL;
+
           const doReq = async (p: any) => {
+            if (preferNonStreamUpstream) {
+              return await callModelOnce({ ...p, stream: false });
+            }
             let r: Response;
             try {
               r = await callModelStream(p);
@@ -605,10 +614,17 @@ export async function POST(req: Request) {
             const dec = new TextDecoder();
             let buf = "";
             let out = "";
+            let lastChunkAt = Date.now();
+            const IDLE_MS = 25_000; // 上游 25s 无任何数据则认为卡死，转为非流式
             while (true) {
-              const { value, done } = await reader.read();
+              const readPromise = reader.read();
+              const timeoutPromise = new Promise<never>((_, rej) =>
+                setTimeout(() => rej(new Error("STREAM_IDLE_TIMEOUT")), IDLE_MS),
+              );
+              const { value, done } = await Promise.race([readPromise, timeoutPromise]);
               if (done) break;
               buf += dec.decode(value, { stream: true });
+              lastChunkAt = Date.now();
               let idx;
               while ((idx = buf.indexOf("\n")) >= 0) {
                 const line = buf.slice(0, idx).trim();
