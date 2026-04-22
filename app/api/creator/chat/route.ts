@@ -1092,7 +1092,33 @@ export async function POST(req: Request) {
               );
               obj = parseJsonObjectLoose(out2);
             }
-            if (!obj) throw new Error("ARCHITECT_NOT_JSON");
+            if (!obj) {
+              // 最后兜底：不要让用户因为“蓝图不是 JSON”而完全生成失败。
+              // 用一个内置的最小蓝图继续进入 MVP 阶段（保证“至少可运行”）。
+              sendStatus("架构师输出异常（仍非 JSON），我将使用内置最小蓝图继续生成 MVP…");
+              const titleGuess = (() => {
+                const t = String(userIntent || "").replace(/\s+/g, " ").trim();
+                if (!t) return "未命名作品";
+                const s = t.replace(/[，。,.!！?？:：;；"“”'‘’()（）【】\[\]]/g, "").trim();
+                return (s.slice(0, 18) || "未命名作品") + (s.length > 18 ? "…" : "");
+              })();
+              obj = {
+                meta: { title: titleGuess, shortDesc: "一个可运行的最小可行版本（MVP），可继续迭代完善。", rules: "点击开始；完成目标后结束。", creator: { name: "创作者" } },
+                protocol: {
+                  globalState: { stateMachine: ["start", "playing", "win", "lose"], vars: [{ name: "score", type: "number", purpose: "记录得分" }] },
+                  dom: { rootId: "app", canvasId: "gameCanvas", startBtnId: "btnStart", hudIds: ["hudScore", "hudInfo"] },
+                  events: ["startGame", "resetGame", "tick", "render"],
+                  gameLoop: { tickMs: 16, functions: ["init", "reset", "update", "render"] },
+                },
+                acceptance: {
+                  mustHave: [
+                    "index.html 内含一个 <style> 和一个 <script>（单文件 MVP）",
+                    "无 JS 语法错误（可被静态解析）",
+                    "点击开始可进入 playing，结束后可回到 start/over",
+                  ],
+                },
+              };
+            }
             const meta = safeMeta((obj as any).meta);
             blueprint = { v: 1, baseIdea: userIntent, meta, protocol: (obj as any).protocol || {}, acceptance: (obj as any).acceptance || {} };
             const metaOut = { ...meta, _plan: blueprint, _gen: { v: 1, stage: "architect_done", updatedAt: Date.now() } };
