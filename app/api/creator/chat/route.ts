@@ -1038,13 +1038,11 @@ export async function POST(req: Request) {
   // - 会把 Cookie header 一并转发到线上（如线上也需要 session）
   const devProxyOrigin = String(process.env.DEV_OPENROUTER_PROXY_ORIGIN || "").trim().replace(/\/+$/, "");
   if (process.env.NODE_ENV === "development" && devProxyOrigin && provider === "openrouter") {
-    // 分步生成会在“内部”动态切换模型（Planner/Coder/Review）。
-    // 如果只按“最开始选中的 model”判断，后续切到 OpenAI/Gemini 时就不会走中转，
-    // 从而在本地触发 region 限制。因此：本地开发只要配置了 DEV_OPENROUTER_PROXY_ORIGIN，
-    // 默认对所有 OpenRouter 请求都走线上中转（可通过 promptAddon 包含 no_dev_proxy 关闭）。
+    // 本地开发默认优先命中本地代码，避免调试时实际跑到线上旧逻辑。
+    // 只有显式要求 use_dev_proxy 时，才把 OpenRouter 请求转发到线上中转。
     const addon0 = typeof (body as any)?.promptAddon === "string" ? String((body as any).promptAddon) : "";
-    const disableProxy = addon0.includes("no_dev_proxy");
-    if (!disableProxy) {
+    const enableProxy = addon0.includes("use_dev_proxy");
+    if (enableProxy) {
       const forwardBody = { ...(body as any), messages };
       const doProxy = async () => {
         const upstream = await fetch(`${devProxyOrigin}/api/creator/chat`, {
@@ -1396,45 +1394,6 @@ export async function POST(req: Request) {
             const em = String(e?.message || e);
             const eml = em.toLowerCase();
             const isNetwork = eml.includes("fetch_failed") || eml.includes("network error") || eml.includes("timeout");
-
-            // OpenRouter 链路级失败：直接切到 DeepSeek 官方 API（不经过 OpenRouter）
-            // 典型：FETCH_FAILED / timeout / gateway / 5xx / region 等。
-            const openrouterDown =
-              eml.includes("fetch_failed") ||
-              eml.includes("network error") ||
-              eml.includes("timeout") ||
-              eml.includes("gateway") ||
-              eml.includes("service unavailable") ||
-              eml.includes("overloaded") ||
-              eml.includes("not available in your region");
-            if (provider === "openrouter" && openrouterDown) {
-              // 优先回退到百炼（如果配置了），其次直连 DeepSeek
-              if (canFallbackBailian) {
-                sendStatus("OpenRouter 不稳定/不可达，我切到阿里云百炼（DashScope）再试一次…");
-                await fallbackToBailian();
-                const p2: any = { ...payload, model };
-                delete p2.provider;
-                return await callStreamToString(p2, stepTag, strictJson, timeoutMs);
-              }
-              if (canFallbackDeepSeek) {
-                sendStatus("OpenRouter 不稳定/不可达，我切到 DeepSeek 官方 API 再试一次…");
-                await fallbackToDeepSeek();
-                // 关键：切 provider 后必须同时切 payload.model，否则会把 OpenRouter 的 model id 发给 DeepSeek
-                const p2: any = { ...payload, model };
-                delete p2.provider;
-                return await callStreamToString(p2, stepTag, strictJson, timeoutMs);
-              }
-            }
-
-            // 百炼链路失败：回退 DeepSeek
-            const bailianDown = provider === "bailian" && isNetwork;
-            if (bailianDown && canFallbackDeepSeek) {
-              sendStatus("百炼连接不稳定/不可达，我切到 DeepSeek 官方 API 再试一次…");
-              await fallbackToDeepSeek();
-              const p2: any = { ...payload, model };
-              delete p2.provider;
-              return await callStreamToString(p2, stepTag, strictJson, timeoutMs);
-            }
             throw e;
           }
         };
@@ -1500,9 +1459,6 @@ export async function POST(req: Request) {
           const step = 1;
           sendStatus(`（${step}/${totalSteps}）修复 bug：生成最小补丁…`);
 
-          // 默认用 coderModel（DeepSeek/Qwen），但若用户当前选择就是别的，也允许；并在不稳定时自动换到 Qwen/DeepSeek
-          const fixModel = provider === "openrouter" ? pickOpenRouterModel(["deepseek/deepseek-v3.2", "qwen/qwen3.6-plus"]) : model;
-          if (provider === "openrouter") model = fixModel;
           sendMeta({ provider, model, phase: "fix", gameId: safeGameId });
 
           const trim = (s: string) => (s.length > 12000 ? s.slice(0, 12000) + "\n<!-- ...TRUNCATED... -->" : s);
@@ -1702,11 +1658,8 @@ export async function POST(req: Request) {
               return raw.slice(0, max) + tail;
             };
             const repairFilesJson = async (rawText: string) => {
-              const fixerModel = provider === "openrouter"
-                ? pickOpenRouterModel(["qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"])
-                : model;
               const repairPayload: any = {
-                model: fixerModel,
+                model,
                 messages: [
                   { role: "system", content: "你是 JSON 修复器。只输出一个严格 JSON 对象（json_object），不要任何解释或 markdown。" },
                   {
@@ -1732,10 +1685,6 @@ export async function POST(req: Request) {
               return parseJsonObjectLoose(repairedText);
             };
             const healDirectFiles = async (files: Array<{ path: string; content: string }>, errMsg: string) => {
-              const debugModel = hasOpenRouter
-                ? pickOpenRouterModel([envModelOrEmpty("CREATOR_DEBUG_MODEL"), "qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"].filter(Boolean) as string[])
-                : model;
-              if (provider === "openrouter") model = debugModel;
               sendMeta({ provider, model, phase: "direct_refine_debug" });
               const debugPayload: any = {
                 model,
@@ -2373,11 +2322,8 @@ export async function POST(req: Request) {
             let design = (genState as any)?.design && typeof (genState as any).design === "object" ? (genState as any).design : null;
             const templateHint = buildTemplateHintBlock(seedPrompt, userIntent, answers);
             const repairBlueprintJson = async (rawText: string) => {
-              const fixerModel = provider === "openrouter"
-                ? pickOpenRouterModel(["qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"])
-                : model;
               const repairPayload: any = {
-                model: fixerModel,
+                model,
                 messages: [
                   { role: "system", content: "你是 JSON 修复器。只输出一个严格 JSON 对象（json_object），不要任何解释或 markdown。" },
                   {
@@ -2483,13 +2429,11 @@ export async function POST(req: Request) {
             const tryRepairJsonOnce = async (raw: string, why: string, schemaHint: string) => {
               const rawText = String(raw || "");
               if (!rawText.trim()) return null;
-              // 用户要求：修复模型优先 deepseek/deepseek-v3.2（仅 OpenRouter 可用）
-              const repairModel = provider === "openrouter" ? "deepseek/deepseek-v3.2" : model;
               sendStatus(`输出 JSON 有问题，我尝试自动修复一次…（原因：${why}）`);
-              sendMeta({ provider, model: repairModel, phase: "json_repair" });
+              sendMeta({ provider, model, phase: "json_repair" });
               const clipped = rawText.length > 12000 ? rawText.slice(0, 12000) : rawText;
               const repairPayload: any = {
-                model: repairModel,
+                model,
                 messages: [
                   { role: "system", content: `你是 JSON 修复器。\n${schemaHint}` },
                   { role: "user", content: `请把下面“原输出”修复为严格 JSON：\n\n【原输出】\n${clipped}\n` },
@@ -2766,15 +2710,11 @@ export async function POST(req: Request) {
 
           // 模型选择：优先使用前端“彩蛋”里用户选定的 model（请求 body 传入）。
           // 这样 Architect/MVP/Refine 都同源，减少“变量/规则漂移”。
-          // Debug 阶段仍可使用更稳的兜底模型。
-          const debugOverride = envModelOrEmpty("CREATOR_DEBUG_MODEL");
           const chosen = String(model || "").trim() || "qwen/qwen3.6-plus";
           const architectModel = chosen;
           const mvpModel = chosen;
           const refineModel = chosen;
-          const debugModel = hasOpenRouter
-            ? pickOpenRouterModel([debugOverride, "openai/gpt-4o-mini", "qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"].filter(Boolean) as string[])
-            : chosen;
+          const debugModel = chosen;
 
           // 必须有 gameId 才能做“可用成果持久化 + 失败不归零”
           if (!safeGameId || !ownerKey) throw new Error("MISSING_GAME_ID");
@@ -2918,7 +2858,6 @@ export async function POST(req: Request) {
             let files = curFiles.slice();
             for (let i = 0; i < maxRound; i++) {
               sendStatus(`${phaseLabel}：检测到错误，自动修复中（${i + 1}/${maxRound}）…`);
-              if (provider === "openrouter") model = debugModel;
               sendMeta({ provider, model, phase: "debug" });
               const debugPayload: any = {
                 model,
@@ -3012,9 +2951,8 @@ export async function POST(req: Request) {
             if (!obj) {
               // 兜底 1：先用“JSON 修复器”把输出纯化为严格 JSON（保持结构）
               sendStatus("蓝图不是严格 JSON，正在自动修复为 JSON…");
-              const fixerModel = provider === "openrouter" ? pickOpenRouterModel(["qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"]) : model;
               const repairPayload: any = {
-                model: fixerModel,
+                model,
                 messages: [
                   { role: "system", content: "你是 JSON 修复器。只输出一个严格 JSON 对象（json_object），不要任何解释或 markdown。" },
                   {
@@ -3042,20 +2980,6 @@ export async function POST(req: Request) {
                 "只输出严格 JSON 对象（meta/protocol/acceptance）。",
               );
               obj = parseJsonObjectLoose(repairedText);
-            }
-            if (!obj && provider === "openrouter") {
-              // 兜底 2：修复失败 -> 直接强制换 Qwen 重跑一次 Architect（比继续修复更稳）
-              const qwen = pickOpenRouterModel(["qwen/qwen3.6-plus"]);
-              sendStatus(`修复失败，我改用 ${qwen} 重新生成协议蓝图…`);
-              sendMeta({ provider, model: qwen, phase: "architect", reason: "force_qwen_architect_not_json" });
-              const p2: any = { ...payload, model: qwen, temperature: 0.2, max_tokens: 1400, response_format: { type: "json_object" } };
-              delete p2.provider; // Qwen 不需要 Gemini 的 provider routing
-              const out2 = await autoRetry(
-                async () => await callStreamRobust(p2, "阶段1：蓝图 JSON（Qwen 兜底）", true, []),
-                "架构师蓝图（Qwen兜底）",
-                "只输出严格 JSON 对象（meta/protocol/acceptance）。",
-              );
-              obj = parseJsonObjectLoose(out2);
             }
             if (!obj) {
               // 最后兜底：不要让用户因为“蓝图不是 JSON”而完全生成失败。
