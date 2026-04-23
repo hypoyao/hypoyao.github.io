@@ -10,7 +10,7 @@ type GameMeta = {
   title?: string;
   shortDesc?: string;
   rules?: string;
-  creator?: { name?: string };
+  creator?: { name?: string; avatarUrl?: string; profilePath?: string };
 };
 
 function nowId() {
@@ -56,6 +56,15 @@ function safeSaveChat(gid: string, messages: ChatMsg[]) {
       JSON.stringify({ v: CREATOR_STORE_VER, updatedAt: Date.now(), gameId: gid, messages: trimmed }),
     );
     window.localStorage.setItem(CREATOR_LAST_KEY, JSON.stringify({ v: CREATOR_STORE_VER, gameId: gid, updatedAt: Date.now() }));
+  } catch {
+    // ignore
+  }
+}
+
+function safeDeleteChat(gid: string) {
+  try {
+    if (typeof window === "undefined") return;
+    window.localStorage.removeItem(chatKey(gid));
   } catch {
     // ignore
   }
@@ -113,6 +122,7 @@ export default function CreateStudio({
 }) {
   const [gameId, setGameId] = useState<string>("");
   const [previewUrl, setPreviewUrl] = useState<string>("/games/creator-playground/index.html");
+  const [previewEnabled, setPreviewEnabled] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [input, setInput] = useState(initialPrompt || "");
@@ -120,12 +130,17 @@ export default function CreateStudio({
   // 注意：不要在 useState initializer 读取 localStorage，否则 SSR/CSR 初始值不一致会触发 hydration failed。
   // 这里先用稳定默认值，等客户端挂载后再从 localStorage 恢复。
   const [provider, setProvider] = useState<"deepseek" | "openrouter" | "bailian">("openrouter");
+  // 默认模型：保持原先默认（不要在这里强行替用户改模型）
   const [model, setModel] = useState<string>("nvidia/nemotron-3-super-120b-a12b:free");
   const [hydrated, setHydrated] = useState(false);
   const [currentModelLabel, setCurrentModelLabel] = useState<string>("");
   const [creatorName, setCreatorName] = useState<string>("");
+  const [creatorAvatarUrl, setCreatorAvatarUrl] = useState<string>("");
+  const [creatorProfilePath, setCreatorProfilePath] = useState<string>("");
   const [gameMeta, setGameMeta] = useState<GameMeta | null>(null);
   const [clarifyUi, setClarifyUi] = useState<any>(null);
+  const [clarifyLocal, setClarifyLocal] = useState<any>(null);
+  const clarifyAutoSubmittedRef = useRef(false);
   const listRef = useRef<HTMLDivElement | null>(null);
   const [projects, setProjects] = useState<Array<{ gameId: string; title?: string; entry: string; mtimeMs?: number; published?: boolean }>>(
     [],
@@ -150,8 +165,8 @@ export default function CreateStudio({
       { id: "qwen/qwen3.6-plus", name: "qwen/qwen3.6-plus（Qwen3.6 Plus）" },
       { id: "qwen/qwen-2.5-72b-instruct:free", name: "qwen/qwen-2.5-72b-instruct:free" },
       { id: "deepseek/deepseek-v3.2", name: "deepseek/deepseek-v3.2" },
-      { id: "google/gemini-3-flash", name: "google/gemini-3-flash" },
-      { id: "google/gemini-3-flash-preview", name: "google/gemini-3-flash-preview" },
+      { id: "google/gemini-2.5-flash", name: "google/gemini-2.5-flash" },
+      { id: "google/gemini-2.5-flash-lite", name: "google/gemini-2.5-flash-lite" },
       { id: "minimax/minimax-m2.5", name: "minimax/minimax-m2.5" },
     ],
     [],
@@ -174,6 +189,7 @@ export default function CreateStudio({
   );
 
   // 修正本地缓存里可能出现的“provider/model 不匹配”
+  // 注意：hydration 会从 localStorage 恢复 model，所以这里必须同时依赖 model，才能在恢复后再校验一次。
   useEffect(() => {
     if (provider === "openrouter") {
       const ok = openrouterModels.some((x) => x.id === model);
@@ -186,7 +202,7 @@ export default function CreateStudio({
       if (!ok) setModel("deepseek-reasoner");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [provider]);
+  }, [provider, model]);
 
   // 客户端挂载后恢复用户上次选择，避免 SSR/CSR hydration mismatch
   useEffect(() => {
@@ -262,6 +278,10 @@ export default function CreateStudio({
 
   const viewMessages = useMemo(() => messages, [messages]);
 
+  // 防止切换 gameId 时把“旧项目 messages”误保存到“新项目”
+  // 只有当 messages 已确认属于当前 gameId 时，才允许写入 localStorage。
+  const chatOwnerGameIdRef = useRef<string>("");
+
   // “创作过程/创作者想法”：从对话里提取用户发给 AI 的指令（步骤）
   const creatorStepsText = useMemo(() => {
     const userMsgs = (messages || [])
@@ -284,9 +304,12 @@ export default function CreateStudio({
     if (!gameId) return;
     // 从首页模板进来属于“强制新建并自动开始”，不要用旧记录覆盖
     if ((initialPrompt || "").trim() && autoStart) return;
+    // gameId 刚变化时，先标记“未确认归属”，避免 save effect 把旧 messages 写到新 gid
+    chatOwnerGameIdRef.current = "";
     const saved = safeLoadChat(gameId);
     if (saved?.messages?.length) {
       setMessages(saved.messages);
+      chatOwnerGameIdRef.current = gameId;
       return;
     }
     // 本地没有，再从服务器恢复（只包含用户发送内容）
@@ -303,6 +326,7 @@ export default function CreateStudio({
             { role: "assistant", content: "（已从服务器恢复你之前发送的内容。AI 的历史回复未保存。）" },
             ...userMsgs,
           ]);
+          chatOwnerGameIdRef.current = gameId;
         }
       } catch {
         // ignore
@@ -314,6 +338,7 @@ export default function CreateStudio({
   // 2) messages 变化时：保存到 localStorage
   useEffect(() => {
     if (!gameId) return;
+    if (chatOwnerGameIdRef.current !== gameId) return;
     safeSaveChat(gameId, messages);
   }, [gameId, messages]);
 
@@ -328,6 +353,11 @@ export default function CreateStudio({
     return `/games/${gid}/__raw/index.html`;
   }
 
+  function updatePreviewUrl(url: string, options?: { enable?: boolean }) {
+    setPreviewUrl(url);
+    if (options?.enable != null) setPreviewEnabled(!!options.enable);
+  }
+
   async function newGame() {
     const r = await fetch("/api/creator/new", { method: "POST" });
     let j: any = null;
@@ -339,15 +369,17 @@ export default function CreateStudio({
     if (!r.ok || !j?.ok || !j?.gameId) {
       const err = String(j?.error || "").trim();
       if (r.status === 401 || err === "UNAUTHORIZED") {
-        if (window.confirm("新建游戏需要先登录。现在去登录吗？")) {
-          window.location.href = `/login?next=${encodeURIComponent("/create")}`;
-        }
+        // 避免 window.confirm 造成页面“卡住”（尤其是自动化/某些浏览器环境下弹窗不明显）。
+        // 直接跳转登录页即可，减少重复弹窗导致的“无法点击”体验。
+        window.location.href = `/login?next=${encodeURIComponent("/create")}`;
         throw new Error("UNAUTHORIZED");
       }
       // 兜底：把状态码带上，避免只看到 NEW_GAME_FAILED
       throw new Error(err || `NEW_GAME_FAILED(${r.status})`);
     }
     setGameId(j.gameId);
+    // 还没来得及切换/恢复新项目的 messages，先不要让 save effect 误写
+    chatOwnerGameIdRef.current = "";
     return j.gameId as string;
   }
 
@@ -441,8 +473,10 @@ export default function CreateStudio({
           const me = await meP;
           setLoggedIn(!!me?.loggedIn);
           if (me?.creator?.name) setCreatorName(String(me.creator.name));
+          if (me?.creator?.avatarUrl) setCreatorAvatarUrl(String(me.creator.avatarUrl));
+          if (me?.creator?.profilePath) setCreatorProfilePath(String(me.creator.profilePath));
           setGameId(fixedGameId);
-          setPreviewUrl(`${entryOf(fixedGameId)}?t=${encodeURIComponent(nowId())}`);
+          updatePreviewUrl(`${entryOf(fixedGameId)}?t=${encodeURIComponent(nowId())}`, { enable: false });
           // 刷新项目列表（避免下拉框里没有该项目）
           await refreshProjects();
           return;
@@ -452,6 +486,8 @@ export default function CreateStudio({
           const me = await meP;
           setLoggedIn(!!me?.loggedIn);
           if (me?.creator?.name) setCreatorName(String(me.creator.name));
+          if (me?.creator?.avatarUrl) setCreatorAvatarUrl(String(me.creator.avatarUrl));
+          if (me?.creator?.profilePath) setCreatorProfilePath(String(me.creator.profilePath));
           // 只在“从其它页面跳转过来且明确带 auto=1”时自动启动；
           // 启动后立刻把 URL 里的 auto=1 去掉，避免用户刷新页面时重复启动。
           try {
@@ -466,7 +502,7 @@ export default function CreateStudio({
           setMsg("");
           const gid = await newGame();
           await ensureSeed(gid);
-          setPreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`);
+          updatePreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`, { enable: true });
           await refreshProjects();
           await writePrompt(gid, initialPrompt);
           // 自动把首页的 prompt 作为第一句话发给 AI（用户点击“开始创造/模板”即表示要开始）
@@ -491,7 +527,7 @@ export default function CreateStudio({
             } catch {}
             if (pick0) {
               setGameId(pick0);
-              setPreviewUrl(`${entryOf(pick0)}?t=${encodeURIComponent(nowId())}`);
+              updatePreviewUrl(`${entryOf(pick0)}?t=${encodeURIComponent(nowId())}`, { enable: false });
             }
           }
         } catch {}
@@ -512,7 +548,7 @@ export default function CreateStudio({
           } catch {}
           if (pick) {
             setGameId(pick);
-            setPreviewUrl(`${entryOf(pick)}?t=${encodeURIComponent(nowId())}`);
+            updatePreviewUrl(`${entryOf(pick)}?t=${encodeURIComponent(nowId())}`, { enable: false });
             return;
           }
           return;
@@ -521,11 +557,13 @@ export default function CreateStudio({
         const me = await meP;
         setLoggedIn(!!me?.loggedIn);
         if (me?.creator?.name) setCreatorName(String(me.creator.name));
+        if (me?.creator?.avatarUrl) setCreatorAvatarUrl(String(me.creator.avatarUrl));
+        if (me?.creator?.profilePath) setCreatorProfilePath(String(me.creator.profilePath));
       } catch {}
       try {
         const gid = await newGame();
         await ensureSeed(gid);
-        setPreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`);
+        updatePreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`, { enable: true });
         // 刷新项目列表
         const r2 = await fetch("/api/creator/list", { cache: "no-store" });
         const j2 = await r2.json().catch(() => ({}));
@@ -694,7 +732,7 @@ export default function CreateStudio({
     // 说明：部分网站会设置 X-Frame-Options/CSP 禁止被 iframe 嵌入；此时可用右上角“新标签页打开”。
     if (/^https?:\/\/\S+/i.test(text)) {
       setMsg("已在预览器打开链接。若页面空白，可能该网站禁止 iframe 嵌入，可点右上角在新标签页打开。");
-      setPreviewUrl(text);
+      updatePreviewUrl(text, { enable: true });
       setInput("");
       return;
     }
@@ -702,6 +740,7 @@ export default function CreateStudio({
     setLastFailedText("");
     setBusy(true);
     setClarifyUi(null);
+    setClarifyLocal(null);
     setMsg("");
     setInput("");
     const startAt = Date.now();
@@ -715,6 +754,7 @@ export default function CreateStudio({
 
     const myMsg: ChatMsg = { role: "user", content: text };
     const snap: ChatMsg[] = [...useBase, myMsg, { role: "assistant", content: "AI 开始写代码…" }];
+    chatOwnerGameIdRef.current = useId;
     setMessages(snap);
 
     // 第一句用户输入：把它写到 prompt.md（用于“我的游戏”下拉框显示关键词）
@@ -859,8 +899,34 @@ export default function CreateStudio({
       if (!parsed) throw new Error("AI_OUTPUT_NOT_JSON");
       // 若服务端返回可点击的澄清 UI（A/B/C 方案、问题选项等），保存在状态里用于渲染
       const ui = (parsed as any)?.ui;
-      if (ui && typeof ui === "object") setClarifyUi(ui);
-      else setClarifyUi(null);
+      if (ui && typeof ui === "object") {
+        setClarifyUi(ui);
+        // 优化：如果服务端下发了完整 questions 列表，则后续选择在本地完成，避免每一步都再次请求大模型
+        const all = (ui as any)?.all;
+        if (all && typeof all === "object") {
+          const options = Array.isArray(all?.options) ? all.options : [];
+          const questions = Array.isArray(all?.questions) ? all.questions : [];
+          const selected = (ui as any)?.selected && typeof (ui as any).selected === "object" ? { ...(ui as any).selected } : {};
+          const maxTurns = typeof (ui as any)?.maxTurns === "number" ? (ui as any).maxTurns : 3;
+          setClarifyLocal({
+            options,
+            questions,
+            selected,
+            maxTurns,
+            // turn 表示“已回答的问题数”（不包含选 A/B/C）
+            turn: 0,
+            qIndex: 0,
+          });
+          clarifyAutoSubmittedRef.current = false;
+        } else {
+          setClarifyLocal(null);
+          clarifyAutoSubmittedRef.current = false;
+        }
+      } else {
+        setClarifyUi(null);
+        setClarifyLocal(null);
+        clarifyAutoSubmittedRef.current = false;
+      }
 
       const assistantText = String(parsed.assistant || "").trim() || (repaired ? "（AI 已自动修复输出格式）" : "（AI 回复为空）");
       // 把占位消息替换为最终文本
@@ -884,7 +950,11 @@ export default function CreateStudio({
           title: String(metaRaw?.title || "").trim() || String(projects.find((p) => p.gameId === useId)?.title || "").trim() || useId,
           shortDesc: String(metaRaw?.shortDesc || "").trim(),
           rules: String(metaRaw?.rules || "").trim(),
-          creator: { name: String(creator?.name || "").trim() || creatorName || "创作者" },
+          creator: {
+            name: String(creator?.name || "").trim() || creatorName || "创作者",
+            avatarUrl: String(creator?.avatarUrl || "").trim() || creatorAvatarUrl || "",
+            profilePath: String(creator?.profilePath || "").trim() || creatorProfilePath || "",
+          },
         };
         setGameMeta(metaObj);
       }
@@ -894,7 +964,7 @@ export default function CreateStudio({
       if (metaObj) toWrite.push({ path: "meta.json", content: JSON.stringify(metaObj, null, 2) });
       if (toWrite.length) {
         await writeFiles(toWrite, useId);
-        setPreviewUrl(`${entryOf(useId)}?t=${encodeURIComponent(nowId())}`);
+        updatePreviewUrl(`${entryOf(useId)}?t=${encodeURIComponent(nowId())}`, { enable: true });
         // 重新拉一下 meta，确保与 DB 同步（例如被后端裁剪/规范化）
         loadGameMeta(useId);
       }
@@ -951,6 +1021,32 @@ export default function CreateStudio({
     }
   }
 
+  // 本地分步选择：当“已回答问题数”达到上限（默认 3）后，自动提交 @answers 进入编码，
+  // 避免用户还要再点一次“开始生成”，也避免重复弹出下一轮问题导致体感像死循环。
+  useEffect(() => {
+    if (!clarifyLocal || busy) return;
+    const selected: any = clarifyLocal.selected || {};
+    const hasChoice = !!String(selected.choice || "").trim();
+    const maxTurns = Number(clarifyLocal.maxTurns || 3) || 3;
+    const turn = Number(clarifyLocal.turn || 0) || 0;
+    if (!hasChoice) return;
+    // 如果问题已答完（没有未回答的问题）也应立即进入编码，不要再问新问题
+    const questions: any[] = Array.isArray(clarifyLocal.questions) ? clarifyLocal.questions : [];
+    const hasUnanswered = questions.some((q: any) => {
+      const id = String(q?.id || "").trim();
+      if (!id) return false;
+      return !String(selected[id] || "").trim();
+    });
+    if (turn < maxTurns && hasUnanswered) return;
+    if (clarifyAutoSubmittedRef.current) return;
+    clarifyAutoSubmittedRef.current = true;
+    try {
+      sendText(`@answers ${JSON.stringify(selected)}`);
+    } catch {
+      // ignore
+    }
+  }, [clarifyLocal, busy]);
+
   async function send() {
     return sendText(input);
   }
@@ -987,7 +1083,7 @@ export default function CreateStudio({
           try {
             const gid = await newGame();
             await ensureSeed(gid);
-            setPreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`);
+            updatePreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`, { enable: true });
             await refreshProjects();
           } catch (err: any) {
             setMsg(`新建游戏失败：${err?.message || "未知错误"}`);
@@ -1025,28 +1121,34 @@ export default function CreateStudio({
         (async () => {
           try {
             setMsg("");
+            const deletingId = gameId;
             const r = await fetch("/api/creator/delete", {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ gameId }),
+              body: JSON.stringify({ gameId: deletingId }),
             });
             const j = await r.json().catch(() => ({}));
             if (!r.ok || !j?.ok) throw new Error(j?.error || "DELETE_FAILED");
 
+            // 清理本地缓存，避免以后“误恢复”被删项目的对话
+            safeDeleteChat(deletingId);
+
             const arr = await refreshProjects();
             if (arr.length && arr[0]?.gameId) {
               setGameId(arr[0].gameId);
-              setPreviewUrl(`${entryOf(arr[0].gameId)}?t=${encodeURIComponent(nowId())}`);
-              setMessages([{ role: "assistant", content: "这个游戏已删除。我们继续修改其它游戏，或者新建一个吧～" }]);
+              updatePreviewUrl(`${entryOf(arr[0].gameId)}?t=${encodeURIComponent(nowId())}`, { enable: false });
+              // 不要覆盖新项目的聊天记录（否则看起来像“把另一个游戏的对话弄丢了”）
+              setMsg("已删除当前游戏。已切换到其它游戏。");
               return;
             }
 
             // 没有任何历史游戏了：自动新建一个
             const gid = await newGame();
             await ensureSeed(gid);
-            setPreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`);
+            updatePreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`, { enable: true });
             await refreshProjects();
-            setMessages([{ role: "assistant", content: "这个游戏已删除。已为你新建一个空白小游戏～你想做什么？" }]);
+            chatOwnerGameIdRef.current = gid;
+            setMessages([{ role: "assistant", content: "我帮你新建了一个空白小游戏～你想做什么？" }]);
           } catch (err: any) {
             setMsg(`删除失败：${err?.message || "未知错误"}`);
           }
@@ -1069,7 +1171,7 @@ export default function CreateStudio({
               onChange={(e) => {
                 const gid = e.target.value;
                 setGameId(gid);
-                if (gid) setPreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`);
+                if (gid) updatePreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`, { enable: false });
               }}
               disabled={busy}
               aria-label="选择历史游戏"
@@ -1155,12 +1257,119 @@ export default function CreateStudio({
                       style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}
                       aria-label="澄清选项"
                     >
-                      {Array.isArray(clarifyUi?.options) && clarifyUi.options.length ? (
+                      {/* 本地分步选择模式：选完一个立刻出现下一个，不用再请求大模型 */}
+                      {clarifyLocal && Array.isArray(clarifyLocal?.options) ? (
+                        (() => {
+                          const selected: any = clarifyLocal.selected || {};
+                          const maxTurns = Number(clarifyLocal.maxTurns || 3) || 3;
+                          const turn = Number(clarifyLocal.turn || 0) || 0;
+                          const qIndex = Number(clarifyLocal.qIndex || 0) || 0;
+                          const questions: any[] = Array.isArray(clarifyLocal.questions) ? clarifyLocal.questions : [];
+                          const hasChoice = !!String(selected.choice || "").trim();
+
+                          const nextUnanswered = () => {
+                            for (let i = qIndex; i < questions.length; i++) {
+                              const q = questions[i] || {};
+                              const id = String(q.id || "").trim();
+                              if (!id) continue;
+                              if (!String(selected[id] || "").trim()) return i;
+                            }
+                            return -1;
+                          };
+                          const nextIdx = nextUnanswered();
+
+                          const applyChoice = (id: string) => {
+                            setClarifyLocal((prev: any) => {
+                              const p = prev || {};
+                              const sel = { ...(p.selected || {}), choice: id };
+                              // 选方向不计入“问题次数”
+                              return { ...p, selected: sel, qIndex: 0 };
+                            });
+                          };
+                          const applyAnswer = (qid: string, val: string) => {
+                            setClarifyLocal((prev: any) => {
+                              const p = prev || {};
+                              const sel = { ...(p.selected || {}), [qid]: val };
+                              const t = Math.min(maxTurns, (Number(p.turn || 0) || 0) + 1);
+                              const qi = Math.max(0, (Number(p.qIndex || 0) || 0) + 1);
+                              return { ...p, selected: sel, turn: t, qIndex: qi };
+                            });
+                          };
+                          const startCoding = () => {
+                            const sel = clarifyLocal?.selected || {};
+                            sendText(`@answers ${JSON.stringify(sel)}`);
+                          };
+                          const skipToCoding = () => {
+                            const sel = clarifyLocal?.selected || {};
+                            sendText(`@answers ${JSON.stringify(sel)}`);
+                          };
+
+                          return (
+                            <>
+                              {!hasChoice ? (
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                                  {(clarifyLocal.options || []).slice(0, 3).map((o: any, i: number) => {
+                                    const id = String(o?.id || "").trim() || String(["A", "B", "C"][i] || "A");
+                                    const label = String(o?.title || o?.label || "").trim() || `方案${id}`;
+                                    return (
+                                      <button key={i} className="btn btnGray" type="button" onClick={() => applyChoice(id)} disabled={busy}>
+                                        方案{id}：{label}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              ) : null}
+
+                              {hasChoice && turn < maxTurns && nextIdx >= 0 ? (
+                                (() => {
+                                  const q: any = questions[nextIdx] || {};
+                                  const qid = String(q.id || "").trim() || `q${nextIdx + 1}`;
+                                  const qtext = String(q.question || "").trim() || qid;
+                                  const choices = Array.isArray(q.choices) ? q.choices : [];
+                                  return (
+                                    <div>
+                                      <div style={{ fontWeight: 900, marginBottom: 6 }}>{qtext}</div>
+                                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                                        {choices.slice(0, 4).map((c: any, ci: number) => {
+                                          const cc = String(c || "").trim();
+                                          return (
+                                            <button key={ci} className="btn btnGray" type="button" onClick={() => applyAnswer(qid, cc)} disabled={busy}>
+                                              {cc}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  );
+                                })()
+                              ) : null}
+
+                              {hasChoice ? (
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                                  <button className="btn" type="button" onClick={skipToCoding} disabled={busy}>
+                                    开始生成（跳过剩余选择）
+                                  </button>
+                                  {(turn >= maxTurns || nextIdx < 0) ? (
+                                    <button className="btn" type="button" onClick={startCoding} disabled={busy}>
+                                      开始生成
+                                    </button>
+                                  ) : null}
+                                  <span className="desc" style={{ marginLeft: 6 }}>
+                                    已回答问题 {turn}/{maxTurns}
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="desc">已回答问题 {turn}/{maxTurns}</span>
+                              )}
+                            </>
+                          );
+                        })()
+                      ) : Array.isArray(clarifyUi?.options) && clarifyUi.options.length ? (
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                           {clarifyUi.options.map((o: any, i: number) => {
                             const id = String(o?.id || "").trim();
                             const label = String(o?.label || "").trim() || `方案${id || i + 1}`;
-                            const payload = String(o?.payload || `选择方案: ${id || label}`).trim();
+                            const payload = String(o?.payload || (id ? `@choice ${id}` : `@choice A`)).trim();
                             return (
                               <button key={i} className="btn btnGray" type="button" onClick={() => sendText(payload)} disabled={busy}>
                                 {id ? `方案${id}：` : ""}
@@ -1171,7 +1380,7 @@ export default function CreateStudio({
                         </div>
                       ) : null}
 
-                      {Array.isArray(clarifyUi?.questions) && clarifyUi.questions.length ? (
+                      {!clarifyLocal && Array.isArray(clarifyUi?.questions) && clarifyUi.questions.length ? (
                         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                           {clarifyUi.questions.map((q: any, qi: number) => {
                             const qid = String(q?.id || "").trim() || `q${qi + 1}`;
@@ -1183,7 +1392,7 @@ export default function CreateStudio({
                                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                                   {choices.map((c: any, ci: number) => {
                                     const cc = String(c || "").trim();
-                                    const payload = `${qid}: ${cc}`;
+                                    const payload = `@answer ${qid} ${cc}`;
                                     return (
                                       <button key={ci} className="btn btnGray" type="button" onClick={() => sendText(payload)} disabled={busy}>
                                         {cc}
@@ -1197,7 +1406,7 @@ export default function CreateStudio({
                         </div>
                       ) : null}
 
-                      {Array.isArray(clarifyUi?.actions) && clarifyUi.actions.length ? (
+                      {!clarifyLocal && Array.isArray(clarifyUi?.actions) && clarifyUi.actions.length ? (
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                           {clarifyUi.actions.map((a: any, ai: number) => {
                             const label = String(a?.label || "").trim() || "确认";
@@ -1370,7 +1579,36 @@ export default function CreateStudio({
                   </div>
                 </div>
                 <div className="simScreen">
-                  <iframe className="previewFrame" src={previewUrl} title="preview" />
+                  {previewEnabled ? (
+                    <iframe className="previewFrame" src={previewUrl} title="preview" />
+                  ) : (
+                    <div
+                      style={{
+                        height: "100%",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        flexDirection: "column",
+                        gap: 12,
+                        padding: 20,
+                        textAlign: "center",
+                        color: "#5a6472",
+                      }}
+                    >
+                      <div>当前预览已暂停加载，避免坏掉的游戏脚本把创作页卡死。</div>
+                      <button
+                        className="btn"
+                        type="button"
+                        onClick={() => {
+                          if (!gameId) return;
+                          updatePreviewUrl(`${entryOf(gameId)}?t=${encodeURIComponent(nowId())}`, { enable: true });
+                        }}
+                        disabled={!gameId}
+                      >
+                        加载预览
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1388,7 +1626,23 @@ export default function CreateStudio({
               </div>
               <div className="metaBlock">
                 <div className="metaLabel">创作者</div>
-                <div className="metaValue">{gameMeta?.creator?.name || creatorName || "创作者"}</div>
+                <div className="metaValue" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {(gameMeta?.creator?.avatarUrl || creatorAvatarUrl) ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={String(gameMeta?.creator?.avatarUrl || creatorAvatarUrl)}
+                      alt="创作者头像"
+                      style={{ width: 22, height: 22, borderRadius: 999, objectFit: "cover" }}
+                    />
+                  ) : null}
+                  {gameMeta?.creator?.profilePath || creatorProfilePath ? (
+                    <a href={String(gameMeta?.creator?.profilePath || creatorProfilePath)} className="metaLink">
+                      {gameMeta?.creator?.name || creatorName || "创作者"}
+                    </a>
+                  ) : (
+                    <span>{gameMeta?.creator?.name || creatorName || "创作者"}</span>
+                  )}
+                </div>
               </div>
               <div className="metaBlock">
                 <div className="metaLabel">创作过程</div>

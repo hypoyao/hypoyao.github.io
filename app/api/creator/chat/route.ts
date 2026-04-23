@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { Script } from "node:vm";
-import { CREATOR_OUTPUT_FORMAT_ADDON, CREATOR_SYSTEM_PROMPT } from "@/lib/creator/systemPrompt";
+import { CREATOR_GAME_TYPE_LIBRARY_ADDON, CREATOR_OUTPUT_FORMAT_ADDON, CREATOR_SYSTEM_PROMPT } from "@/lib/creator/systemPrompt";
 import { getSession } from "@/lib/auth/session";
 import { ownerKeyFromSession } from "@/lib/creator/creatorIndex";
 import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
@@ -30,8 +30,7 @@ const OPENROUTER_MODELS = [
   "google/gemini-2.5-flash",
   "google/gemini-2.5-flash-lite",
   // Gemini：有些地区/本地网络下走官方节点容易被拦，后端会对该类模型加 provider routing（见下方）
-  "google/gemini-3-flash",
-  "google/gemini-3-flash-preview",
+  // 注：部分“gemini-3-*”在 OpenRouter 可能不可用，易触发 not a valid model ID；这里不作为默认候选
   "minimax/minimax-m2.5",
 ] as const;
 
@@ -93,6 +92,24 @@ function parseCreatorJson(s: string) {
   return obj;
 }
 
+function stripDangerousLocalBehaviorArtifacts(path: string, content: string) {
+  const rel = String(path || "").trim();
+  const raw = String(content || "");
+  if (!raw) return raw;
+  if (rel === "index.html") {
+    return raw
+      .replace(/\n?\s*<style\b[^>]*data-ai-local-behavior=["']1["'][^>]*>[\s\S]*?<\/style>/gi, "")
+      .replace(/\n?\s*<script\b[^>]*data-ai-local-behavior=["']1["'][^>]*>[\s\S]*?<\/script>/gi, "");
+  }
+  if (rel === "game.js" && /__aiLocalBehaviorPatched|aiCurrentSentence|aiHideStart/.test(raw)) {
+    return raw
+      .replace(/.*__aiLocalBehaviorPatched.*\n?/g, "")
+      .replace(/.*aiCurrentSentence.*\n?/g, "")
+      .replace(/.*aiHideStart.*\n?/g, "");
+  }
+  return raw;
+}
+
 // ===== “骨架增长 + 迭代补丁”生成架构（默认开启）=====
 // 核心目标：先拿到单文件可运行 MVP（闭环），再迭代补丁；避免多文件分步“上下文漂移”导致不可用。
 const ARCHITECT_PROMPT = `
@@ -151,10 +168,23 @@ const REFINE_PROMPT = `
 
 【硬性要求】
 1) 只输出合法 JSON，不要输出 markdown/解释。
-2) 输出结构必须是：
+2) 输出结构优先使用轻量补丁：
+{ "assistant": "...", "ops": [ ... ] }
+如果确实需要返回完整文件，也可以用：
 { "assistant": "...", "files": [ { "path": "...", "content": "..." } ] }
-3) 只允许改这些文件：index.html / style.css / game.js
-4) 最小改动原则：不要无意义重写；保持原有结构与命名协议。
+3) ops 仅允许使用这些类型：
+   - replace_in_file: { "type":"replace_in_file", "path":"index.html|style.css|game.js", "find":"原片段", "replace":"新片段" }
+   - remove_in_file: { "type":"remove_in_file", "path":"...", "find":"要删除的片段" }
+   - insert_before: { "type":"insert_before", "path":"...", "find":"锚点片段", "content":"插入内容" }
+   - insert_after: { "type":"insert_after", "path":"...", "find":"锚点片段", "content":"插入内容" }
+   - append_in_file: { "type":"append_in_file", "path":"...", "content":"追加内容" }
+   - prepend_in_file: { "type":"prepend_in_file", "path":"...", "content":"前置内容" }
+4) 只允许改这些文件：index.html / style.css / game.js
+5) 最小改动原则：不要无意义重写；保持原有结构与命名协议。
+6) 严禁通过“额外注入一个兜底脚本”来偷改行为。
+   - 不要输出带 data-ai-local-behavior 的 style/script
+   - 不要用 MutationObserver + setInterval 轮询 DOM 的方式强行修页面
+   - 优先直接改现有按钮、状态流、事件绑定和文案
 `.trim();
 
 const DEBUG_PROMPT = `
@@ -168,9 +198,13 @@ const DEBUG_PROMPT = `
 4) 最小修复原则：只修报错相关内容，不要大改功能。
 `.trim();
 
-// 单模型单次生成（稳定优先）：直接生成单文件 index.html（内联 CSS/JS），再做最小校验/一次自愈
+// 单模型单次生成（稳定优先）：一次性输出“蓝图 + 代码”（仍为单文件），再做最小校验/一次自愈
+// 注意：不要求/不输出“内心独白”，而是输出可读的“蓝图/伪代码/资源方案”，避免泄露推理过程且更稳定。
 const MONOLITH_MVP_PROMPT = `
-你是“前端小游戏生成器”。请根据用户的一句话需求，直接生成一个可运行的单文件小游戏/小应用（MVP）。
+你是“前端小游戏生成器”。请根据用户的一句话需求，在一次输出中同时给出：
+1) 游戏蓝图（可读的结构化说明 + 伪代码）
+2) 资源/渲染方案（Canvas 或 SVG，说明理由与关键资产）
+3) 最终可运行代码（单文件 index.html，内联 CSS/JS）
 
 【硬性要求】
 1) 只输出合法 JSON（json_object），不要任何解释或 markdown。
@@ -178,6 +212,18 @@ const MONOLITH_MVP_PROMPT = `
 {
   "assistant": "一句话说明已生成什么",
   "meta": { "title": "...", "shortDesc": "...", "rules": "...", "creator": { "name": "..." } },
+  "blueprint": {
+    "coreLoop": "一句话描述核心循环",
+    "states": ["start","playing","gameover"],
+    "pseudocode": ["步骤1 ...", "步骤2 ..."],
+    "controls": ["..."],
+    "winLose": "结束判定"
+  },
+  "assets": {
+    "renderer": "canvas|svg",
+    "reasons": ["为什么选它"],
+    "sprites": ["需要的图形元素列表（用程序绘制即可）"]
+  },
   "files": [
     { "path": "index.html", "content": "..." }
   ]
@@ -188,49 +234,74 @@ const MONOLITH_MVP_PROMPT = `
    - 一个 <script>（内联逻辑）
 4) 不依赖任何外部库，不要引用外部 CDN。
 5) 目标是“最小可运行版本”：点击开始/重开可玩；保证无明显 JS 语法错误。
+6) 为避免输出过长导致 JSON 被截断：blueprint / assets 必须简短：
+   - blueprint.pseudocode 最多 8 条
+   - assets.reasons 最多 3 条
+   - assets.sprites 最多 8 条
+7) 如果脚本里存在开始/重开/句子展示等核心动作，请尽量暴露：
+   window.gameHooks = {
+     start(){},
+     restart(){},
+     setAutoStart(enabled){},
+     setCurrentSentence(text){},
+     showCurrentSentence(enabled){}
+   }
+   没有对应能力时可以是空实现，但名字必须稳定，方便后续小改动复用。
+8) 严禁输出 data-ai-local-behavior 之类的注入脚本；不要用 MutationObserver + 轮询去“外挂式”修改页面。
 `.trim();
 
 // 需求澄清（第一步）：严禁生成代码，先给出 3 个可选方向 + 3-5 个关键反问。
 // 输出必须是 json_object，便于服务端持久化为“中间变量”。
 const CLARIFY_PROMPT = `
-你现在是一个严谨的游戏架构师/需求分析师。
+你现在是“青少年友好”的小游戏需求小助手（面向小学/初中）。
 
 【铁律】
-1) 当用户输入一个模糊的游戏需求时，严禁直接生成任何代码（包括 HTML/CSS/JS）。
-2) 你必须先分析需求缺失项（如：操作方式、胜负判定、视觉风格、适配端、核心循环），并通过反问用户来补齐。
-3) 你必须给出 3 个可选方案（A/B/C），每个方案都包含“风格/平台/操作/胜负判定”的明确设定，方便用户一键选。
+1) 当用户的需求还不够明确时，严禁直接生成任何代码（包括 HTML/CSS/JS）。
+2) 你要用非常简单、孩子也能懂的语言来反问；每个问题必须是“选择题”，不要让用户写长篇。
+3) 你必须给出 3 个可选方案（A/B/C），让用户一键选方向。
+4) 你最多问 3-5 个问题（后端会限制轮次），问题要围绕：怎么玩、在哪玩、怎么操作、画风。
+5) 绝对不要出现“状态机/渲染方案/胜负判定/物理参数”等专业词。
+6) 你提出的方案和问题必须紧扣“用户最早的主题/目标”（例如：学英语口语、背单词、练听力等），不能跑题成通用小游戏。
+7) 你可以参考【参考案例类型库】来保持方向一致；如果你不确定应该参考哪种类型，就一定要问用户选 A-F（选择题形式）。
 
 【输出要求：只输出合法 JSON（json_object）】
 Schema：
 {
-  "intent": "用户想做什么（1句）",
-  "missing": ["缺失项1","缺失项2"],
+  "intent": "用户想做什么（1句，儿童能懂）",
+  "missing": ["还没说清楚的点1","点2"],
   "options": [
     {
       "id": "A",
-      "title": "方案A标题",
-      "style": "视觉风格",
-      "platform": "适配端（PC/手机/双端）",
-      "controls": "操作方式（键盘/触屏/虚拟按键/重力等）",
-      "winLose": "胜负/结束判定",
-      "notes": "一句话说明特点"
+      "title": "方案A（短标题）",
+      "style": "画风（例如：卡通/像素/霓虹）",
+      "platform": "在哪玩（手机/电脑/都可以）",
+      "controls": "怎么玩（左右键/点按钮/滑动）",
+      "winLose": "输了会怎样/什么时候结束（例如：撞到就结束/时间到结束）",
+      "notes": "一句话特点（简单有趣）"
     }
   ],
   "questions": [
-    { "id": "q1", "question": "关键问题？", "choices": ["选项1","选项2","选项3"] }
+    { "id": "q1", "question": "问题（用儿童能懂的话）", "choices": ["选项1","选项2","选项3","选项4"] }
   ],
   "recommend": "A"
 }
+
+【示例问题风格（照这个口吻写）】
+- 你更想在手机玩还是电脑玩？
+- 你想用哪种操作？（左右键 / 点屏幕按钮 / 手指左右滑）
+- 你喜欢哪种画风？（卡通 / 像素 / 霓虹酷炫）
 `.trim();
 
 // 配置表生成（第二步）：基于用户选择/回答生成“参数配置表 JSON”，仍然不写代码。
 const CONFIG_PROMPT = `
-你现在是一个严谨的游戏架构师。你必须先输出一份“参数配置表 JSON”，用于后续生成代码。
+你现在是“青少年友好”的小游戏配置生成器（面向小学/初中）。
+你要把用户刚才点选的答案，变成一份“游戏配置表 JSON”，方便下一步写代码。
 
 【铁律】
-1) 你严禁输出任何代码（HTML/CSS/JS），只输出配置 JSON。
-2) 配置必须可落地：包含核心参数（如速度、转向、回正、难度、配色、UI 文案）。
-3) 需要把用户的选择/回答融合进去；如果仍有不确定，用合理默认值。
+1) 严禁输出任何代码（HTML/CSS/JS），只输出 JSON。
+2) 配置要简单、可理解：不要出现专业术语；用“速度/难度/颜色/按钮文字”这种词。
+3) 如果用户没选某个点，用合理默认值（更偏简单、好上手）。
+4) 规则文字 rules 必须用青少年能读懂的话说明“怎么玩、怎么得分、什么时候结束”。
 
 【输出要求：只输出合法 JSON（json_object）】
 Schema：
@@ -238,27 +309,73 @@ Schema：
   "meta": { "title": "...", "shortDesc": "...", "rules": "...", "creator": { "name": "..." } },
   "config": {
     "platform": "pc|mobile|both",
-    "style": { "theme": "…", "colors": { "bg": "#...", "accent": "#..." } },
+    "style": {
+      "theme": "卡通|像素|霓虹",
+      "colors": { "bg": "#...", "accent": "#..." }
+    },
     "controls": {
       "pc": { "left": "ArrowLeft", "right": "ArrowRight" },
       "mobile": { "type": "virtual_left", "releaseAutoCenter": true }
     },
-    "difficulty": {
-      "levelMin": 1,
-      "levelMax": 10,
-      "levelAffects": ["speed","obstacleDensity","autoCenterSpeed"]
+    "level": {
+      "min": 1,
+      "max": 10,
+      "meaning": "等级越高越难（更快/障碍更多/回正更慢）"
     },
-    "physics": { "speedBase": 7, "speedPerLevel": 0.9, "autoCenterBase": 0.12, "autoCenterPerLevel": -0.007 },
-    "gameplay": { "mode": "endless", "score": ["distance","stars"], "endOnCrash": true },
-    "ui": { "showHud": true, "texts": { "start": "开始", "restart": "重开" } }
+    "numbers": {
+      "speedBase": 7,
+      "speedPerLevel": 0.9,
+      "autoCenterBase": 0.12,
+      "autoCenterPerLevel": -0.007
+    },
+    "gameplay": {
+      "mode": "endless|levels|time",
+      "score": ["distance","stars"],
+      "endOnCrash": true
+    },
+    "ui": {
+      "texts": { "start": "开始", "restart": "重开", "pause": "暂停" },
+      "showHud": true
+    }
   },
-  "needConfirm": ["列出需要用户确认的点（如有）"]
+  "needConfirm": ["如果还有必须确认的点，用很简单的句子列出来；没有就给空数组"]
 }
 `.trim();
 
-// 代码生成（第三步）：必须严格按照 config 生成代码；输出为单文件，服务端可再自动拆分为三文件。
+// 蓝图阶段（新）：一次输出“同源蓝图 + 协议/命名 + config”，但严禁输出任何代码。
+// 这一步输出短 JSON，稳定落盘；下一步代码生成必须严格按此 JSON 实现，避免变量/规则漂移。
+const BLUEPRINT_PROMPT = `
+你现在是“青少年友好”的小游戏设计师（面向小学/初中）。你要先做设计蓝图，再写代码（代码在下一步做）。
+
+【铁律】
+1) 严禁输出任何代码（HTML/CSS/JS），只输出 JSON（json_object）。
+2) 你必须先把“关键命名/协议”定下来，后续写代码必须一模一样（比如：canvasId、按钮id、全局对象名、关键变量名）。
+3) 蓝图要短、清楚、孩子能读懂；不要写长篇。
+4) 必须紧扣【用户最早的主题】，不能跑题。
+
+【输出要求：只输出合法 JSON（json_object）】
+Schema：
+{
+  "meta": { "title": "...", "shortDesc": "...", "rules": "...", "creator": { "name": "..." } },
+  "config": { ...（沿用 CONFIG_PROMPT 的 config 结构，缺啥就用默认值）... },
+  "protocol": {
+    "dom": { "rootId": "app", "canvasId": "game", "btnStartId": "btnStart", "btnRestartId": "btnRestart", "btnLeftId": "btnLeft" },
+    "state": { "name": "G", "vars": ["level","score","state","speed","autoCenter"] }
+  },
+  "blueprint": {
+    "type": "A|B|C|D|E|F",
+    "coreLoop": "一句话核心循环",
+    "steps": ["1 ...","2 ...","3 ..."],
+    "winLose": "什么时候结束/怎么算赢"
+  },
+  "assetsPlan": { "renderer": "canvas", "sprites": ["元素1","元素2","元素3"] }
+}
+`.trim();
+
+// 代码生成（第三步）：一次性输出“蓝图 + 代码”，并严格按照 config 实现（服务端仍可拆分为三文件）。
 const CODEGEN_FROM_CONFIG_PROMPT = `
-你是“前端小游戏生成器”。你会收到一份 JSON 配置表（config），你必须严格按其实现一个可运行的小游戏/小应用（MVP）。
+你是“前端小游戏生成器”。你会收到一份已经确认好的蓝图 JSON（其中包含 meta/config/protocol/blueprint/assetsPlan）。
+你的任务是严格按照这份蓝图生成最终可运行代码。
 
 【硬性要求】
 1) 只输出合法 JSON（json_object），不要任何解释或 markdown。
@@ -272,10 +389,42 @@ const CODEGEN_FROM_CONFIG_PROMPT = `
    - <!-- AI_MVP_SINGLE_FILE v1 -->
    - 一个 <style>（内联样式）
    - 一个 <script>（内联逻辑）
-4) 不依赖外部库/CDN；必须实现：
-   - PC：键盘左右键移动
-   - Mobile：虚拟左键，松开自动回正（回正速度随等级变化）
-   - 顶部等级调节（1-10），并在规则里写清“回正速度随等级变化”
+4) 不依赖外部库/CDN。
+5) 必须严格遵守蓝图中的命名、DOM id、状态字段、玩法规则、控制方式和渲染方案，不要擅自改协议。
+6) 优先复用成熟玩法骨架，不要每次从零发明结构；但如果模板建议与用户需求冲突，以用户需求和蓝图为准。
+7) 目标是“最小但完整的高质量版本”：能开始、能重开、反馈清楚、按钮清晰、手机和桌面至少有一种适配正确。
+8) 严禁再次输出 blueprint/protocol/assetsPlan 字段，它们已经在上一步生成并落盘。
+9) 如果输出包含 game.js，必须暴露统一接口：
+   window.gameHooks = {
+     start(){},
+     restart(){},
+     setAutoStart(enabled){},
+     setCurrentSentence(text){},
+     showCurrentSentence(enabled){}
+   }
+   这些接口可以是薄封装，但名字必须稳定，供后续增量编辑复用。
+10) 严禁在 index.html 里额外注入“本地行为补丁脚本”去劫持开始按钮、轮询句子或观察整个 DOM。
+`.trim();
+
+const CODEGEN_HTML_CSS_PROMPT = `
+你是“前端小游戏页面生成器”。你会收到一份已经确认好的蓝图 JSON（其中包含 meta/config/protocol/blueprint/assetsPlan）。
+你的任务是先生成稳定的页面结构和样式，只输出 index.html 与 style.css。
+
+【硬性要求】
+1) 只输出合法 JSON（json_object），不要任何解释或 markdown。
+2) 输出结构必须为：
+{
+  "assistant": "一句话说明已生成什么",
+  "meta": { "title": "...", "shortDesc": "...", "rules": "...", "creator": { "name": "..." } },
+  "files": [
+    { "path": "index.html", "content": "..." },
+    { "path": "style.css", "content": "..." }
+  ]
+}
+3) index.html 必须正确引用 ./style.css 和 ./game.js，但不要内联大段脚本逻辑。
+4) style.css 负责主要布局和视觉表现；先保证结构清楚、DOM id 稳定。
+5) 严禁输出 game.js。
+6) 严禁输出 data-ai-local-behavior 之类的注入脚本；不要用 MutationObserver + 轮询去外挂式修改页面。
 `.trim();
 
 const FIXER_PROMPT = `
@@ -344,6 +493,396 @@ function normalizePlannerTasks(tasks: any) {
     if (!has.has(p)) out.push({ path: p, instruction: `请生成 ${p}（最小可运行版本，避免输出过长）。` });
   }
   return out;
+}
+
+type TemplateProfile = {
+  id: string;
+  label: string;
+  hint: string;
+};
+
+function pickTemplateProfile(text: string): TemplateProfile {
+  const t = String(text || "").toLowerCase();
+  if (/(英语|英文|单词|词汇|拼写|口语|听力|跟读|quiz|word|vocab|spell|memory card)/i.test(t)) {
+    return {
+      id: "quiz_words",
+      label: "问答闯关模板",
+      hint:
+        "优先采用“题目卡片 + 选项按钮/输入区 + 进度条 + 连对/生命值”的成熟结构。每回合只做一件事，反馈要立刻、清楚、鼓励式。",
+    };
+  }
+  if (/(打地鼠|whack|点击目标|反应|手速|点点点|敲)/i.test(t)) {
+    return {
+      id: "whack_reaction",
+      label: "反应点击模板",
+      hint:
+        "优先采用“目标出现 -> 点击得分 -> 倒计时结束”的成熟结构。目标数量、出现节奏、得分反馈要清晰，按钮和点击区域要偏大，适合触屏。",
+    };
+  }
+  if (/(跑酷|躲避|避开|障碍|小球|跳跃|runner|dodge|接物|吃豆|snake|贪吃蛇)/i.test(t)) {
+    return {
+      id: "dodge_runner",
+      label: "动作躲避模板",
+      hint:
+        "优先采用“开始页 -> 游戏中 -> 结束页”的连续动作结构。核心循环要简单：移动、碰撞、得分、重开；先保证手感和碰撞反馈，再考虑花哨效果。",
+    };
+  }
+  if (/(井字棋|五子棋|象棋|国际象棋|棋|对战|回合制|落子)/i.test(t)) {
+    return {
+      id: "board_turn_based",
+      label: "棋盘回合模板",
+      hint:
+        "优先采用“棋盘格 + 当前回合提示 + 合法落子 + 胜负检测”的成熟结构。规则显示清楚，状态切换稳定，回合与重开逻辑优先保证正确。",
+    };
+  }
+  if (/(记忆|翻牌|配对|match|memory|消消乐|连连看)/i.test(t)) {
+    return {
+      id: "memory_match",
+      label: "配对记忆模板",
+      hint:
+        "优先采用“翻开两张 -> 判定匹配 -> 全部完成过关”的成熟结构。动画轻一点，翻牌锁定逻辑清楚，避免一次放太多特殊规则。",
+    };
+  }
+  return {
+    id: "generic_arcade",
+    label: "通用轻量模板",
+    hint:
+      "优先采用一个主玩法循环、一个核心操作、一个明确结束条件的轻量结构。先做出可玩的闭环，不要同时堆太多系统。",
+  };
+}
+
+function buildTemplateHintBlock(seedPrompt: string, latestPrompt: string, answers: any) {
+  const summary = [seedPrompt, latestPrompt, JSON.stringify(answers || {})].filter(Boolean).join("\n");
+  const profile = pickTemplateProfile(summary);
+  return (
+    `【优先模板】\n` +
+    `- 模板ID：${profile.id}\n` +
+    `- 模板名称：${profile.label}\n` +
+    `- 模板提示：${profile.hint}\n` +
+    `- 规则：优先复用这类成熟结构，不要每次从零发明页面层级、状态切换和输入系统；但如果与用户要求冲突，以用户要求为准。\n`
+  );
+}
+
+type IncrementalEditProfile = {
+  kind: "content" | "layout" | "visual" | "behavior" | "bugfix" | "feature";
+  confidence: number;
+  hint: string;
+};
+
+function classifyIncrementalEdit(text: string): IncrementalEditProfile | null {
+  const t = String(text || "").trim();
+  if (!t) return null;
+  if (/^(做|生成|创建|写|帮我做一个|给我做一个)/.test(t)) return null;
+  const giantFeatureSignals =
+    /(从头|重做|重新做|整个游戏|完全重写|做一个新|换成另一个游戏|新增一个模式|加入排行榜系统|联机|多人|存档|关卡编辑器)/i.test(t);
+  if (giantFeatureSignals || t.length > 160) return null;
+
+  if (/(bug|报错|错误|异常|崩溃|无法|不显示|不生效|没反应|白屏|卡住|修复|修一下|修一修)/i.test(t)) {
+    return {
+      kind: "bugfix",
+      confidence: 0.95,
+      hint: "优先定位并修复当前行为问题，不改主题，不新增无关功能。",
+    };
+  }
+  if (/(去掉|删除|隐藏|显示|保留|按钮|标题|文案|文字|提示语|开始游戏|重新开始|得分文案|分数文案)/i.test(t)) {
+    return {
+      kind: "content",
+      confidence: 0.92,
+      hint: "这是界面文案或显隐层的小改动。优先保留结构，只改文字、按钮、显示状态和少量关联逻辑。",
+    };
+  }
+  if (/(挪到|移到|放到|放在|居中|左对齐|右对齐|排列|布局|位置|浮到|置顶|底部|右上角|左上角|中间)/i.test(t)) {
+    return {
+      kind: "layout",
+      confidence: 0.9,
+      hint: "这是布局调整。优先改 HTML 结构和 CSS 布局，不碰核心玩法逻辑。",
+    };
+  }
+  if (/(颜色|字体|圆角|阴影|背景|主题色|样式|美化|更好看|更精致|动画|动效|图标|边框|透明度)/i.test(t)) {
+    return {
+      kind: "visual",
+      confidence: 0.88,
+      hint: "这是视觉优化。优先改样式和少量交互反馈，不重写玩法流程。",
+    };
+  }
+  if (/(更快|更慢|速度|难度|灵敏|手感|碰撞|倒计时|分数|得分|判定|自动开始|直接开始|跳过|去掉开始页|重开逻辑)/i.test(t)) {
+    return {
+      kind: "behavior",
+      confidence: 0.86,
+      hint: "这是玩法行为微调。优先只改相关状态流转、参数和事件，不改整体结构。",
+    };
+  }
+  if (/(增加|加上|新增|加入|再来一个|支持|加个|多个|增加一个按钮|增加一个开关)/i.test(t)) {
+    return {
+      kind: "feature",
+      confidence: 0.8,
+      hint: "这是小功能增强。优先在现有结构上增量添加，不要重做全局架构。",
+    };
+  }
+  if (/(优化|调整|修改|改成|改为|换成|换成更|完善|增强|不要|只要)/i.test(t)) {
+    return {
+      kind: "content",
+      confidence: 0.65,
+      hint: "这是泛化的小改动请求。优先最小修改，只动和用户这句话直接相关的部分。",
+    };
+  }
+  return null;
+}
+
+function looksLikeIncrementalEdit(text: string) {
+  return !!classifyIncrementalEdit(text);
+}
+
+function pickDirectRefinePaths(kind: IncrementalEditProfile["kind"], hasSplit: boolean, userIntent = "") {
+  const intent = String(userIntent || "");
+  if (!hasSplit) return ["index.html"];
+  if (kind === "visual") return ["index.html", "style.css"];
+  if (kind === "layout") return ["index.html", "style.css"];
+  if (kind === "content") return ["index.html", "game.js"];
+  if (kind === "behavior") {
+    // 行为类小改动默认只改 game.js，避免把页面结构和玩法逻辑一起塞给模型。
+    // 对“自动开始/跳过开始页/按进度显示句子”这类请求，单文件补丁更快也更稳。
+    if (/(自动开始|直接开始|跳过开始|去掉开始页|开始页|开始按钮|不用点击开始|按进度显示|当前句子|当前文本|句子)/i.test(intent)) {
+      return ["game.js"];
+    }
+    return ["game.js"];
+  }
+  if (kind === "bugfix") return ["index.html", "style.css", "game.js"];
+  return ["index.html", "style.css", "game.js"];
+}
+
+function extractQuotedText(text: string) {
+  const s = String(text || "");
+  const m = s.match(/[“"'‘「『](.+?)[”"'’」』]/);
+  return m ? String(m[1] || "").trim() : "";
+}
+
+function stripHtmlTags(s: string) {
+  return String(s || "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tryLocalButtonEdit(userIntent: string, html: string) {
+  const label = extractQuotedText(userIntent);
+  if (!label) return null;
+  const wantsRemove = /(去掉|删除|移除)/.test(userIntent);
+  const wantsHide = /(隐藏|不显示)/.test(userIntent);
+  if (!wantsRemove && !wantsHide) return null;
+
+  const candidates = [
+    /<button\b[^>]*>[\s\S]*?<\/button>/gi,
+    /<a\b[^>]*>[\s\S]*?<\/a>/gi,
+    /<input\b[^>]*type=["']?(?:button|submit)["']?[^>]*>/gi,
+  ];
+  let changed = false;
+  let out = String(html || "");
+
+  const hideElement = (raw: string) => {
+    if (/style=/.test(raw)) {
+      return raw.replace(
+        /style=(["'])(.*?)\1/i,
+        (_m, q, css) =>
+          `style=${q}${css};display:none !important;visibility:hidden !important;pointer-events:none !important;${q}`,
+      );
+    }
+    return raw.replace(
+      /^(<\w+\b)/i,
+      `$1 style="display:none !important;visibility:hidden !important;pointer-events:none !important;" aria-hidden="true"`,
+    );
+  };
+
+  const handleMatch = (raw: string) => {
+    const text = stripHtmlTags(raw);
+    if (!text.includes(label) && !new RegExp(`value=["'][^"']*${label}[^"']*["']`, "i").test(raw)) return raw;
+    changed = true;
+    // 稳定优先：即使用户说“删除”，本地极速通道也只做“隐藏”。
+    // 这样可以保留节点/id/事件绑定，减少把游戏脚本弄进反复重建状态的风险。
+    if (wantsHide || wantsRemove) return hideElement(raw);
+    return raw;
+  };
+
+  for (const re of candidates) {
+    out = out.replace(re, (m) => handleMatch(m));
+  }
+  if (!changed || out === html) return null;
+  return {
+    content: out,
+    assistant: `已隐藏“${label}”按钮。`,
+  };
+}
+
+type PatchOp = {
+  type: "replace_in_file" | "remove_in_file" | "insert_before" | "insert_after" | "append_in_file" | "prepend_in_file";
+  path?: string;
+  find?: string;
+  replace?: string;
+  content?: string;
+};
+
+function applyPatchOpsToFiles(
+  files: Array<{ path: string; content: string }>,
+  ops: PatchOp[],
+  allowedPaths: string[],
+) {
+  const allow = new Set(allowedPaths);
+  const merged = files.map((f) => ({ ...f }));
+  let changed = 0;
+  const getIdx = (path: string) => merged.findIndex((f) => f.path === path);
+  const ensurePath = (path: string) => {
+    const idx = getIdx(path);
+    if (idx >= 0) return idx;
+    merged.push({ path, content: "" });
+    return merged.length - 1;
+  };
+
+  for (const rawOp of Array.isArray(ops) ? ops : []) {
+    const op = rawOp && typeof rawOp === "object" ? rawOp : null;
+    if (!op) continue;
+    const type = String(op.type || "").trim() as PatchOp["type"];
+    const path = String(op.path || "").trim();
+    if (!allow.has(path)) continue;
+    const idx = ensurePath(path);
+    const before = String(merged[idx]?.content || "");
+    let after = before;
+
+    if (type === "replace_in_file") {
+      const find = String(op.find || "");
+      if (!find || !before.includes(find)) continue;
+      after = before.replace(find, String(op.replace || ""));
+    } else if (type === "remove_in_file") {
+      const find = String(op.find || "");
+      if (!find || !before.includes(find)) continue;
+      after = before.replace(find, "");
+    } else if (type === "insert_before") {
+      const find = String(op.find || "");
+      if (!find || !before.includes(find)) continue;
+      after = before.replace(find, `${String(op.content || "")}${find}`);
+    } else if (type === "insert_after") {
+      const find = String(op.find || "");
+      if (!find || !before.includes(find)) continue;
+      after = before.replace(find, `${find}${String(op.content || "")}`);
+    } else if (type === "append_in_file") {
+      const content = String(op.content || "");
+      if (!content) continue;
+      after = before + content;
+    } else if (type === "prepend_in_file") {
+      const content = String(op.content || "");
+      if (!content) continue;
+      after = content + before;
+    } else {
+      continue;
+    }
+
+    if (after !== before) {
+      merged[idx] = { path, content: after };
+      changed += 1;
+    }
+  }
+
+  return { files: merged, changed };
+}
+
+function createDraftStore(gameId: string, options?: { enabled?: boolean }) {
+  const enabled = options?.enabled !== false;
+
+  const readFileOnce = async (path: string) => {
+    const rows = await db.execute(sql`
+      select content
+      from creator_draft_files
+      where game_id = ${gameId} and path = ${path}
+      limit 1
+    `);
+    const list = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
+    const c = list?.[0]?.content;
+    return typeof c === "string" ? c : "";
+  };
+
+  const readFile = async (path: string) => {
+    if (!enabled) return "";
+    try {
+      return await readFileOnce(path);
+    } catch (e1: any) {
+      // Neon/网络抖动时这里偶发 Drizzle "Failed query"；强制 ensure 一次后再轻量重试。
+      try {
+        await ensureCreatorDraftTables(true);
+      } catch {}
+      try {
+        return await readFileOnce(path);
+      } catch {
+        return "";
+      }
+    }
+  };
+
+  const readFiles = async (paths: string[]) => {
+    const out: Record<string, string> = {};
+    for (const path of paths) out[path] = await readFile(path);
+    return out;
+  };
+
+  const writeFile = async (path: string, content: string) => {
+    if (!enabled) return;
+    const safeContent = stripDangerousLocalBehaviorArtifacts(path, content);
+    const writeOnce = async () =>
+      await db.execute(sql`
+        insert into creator_draft_files (game_id, path, content)
+        values (${gameId}, ${path}, ${safeContent})
+        on conflict (game_id, path)
+        do update set content = excluded.content, updated_at = now()
+      `);
+    try {
+      await writeOnce();
+    } catch (e1: any) {
+      try {
+        await ensureCreatorDraftTables(true);
+      } catch {}
+      await writeOnce();
+    }
+  };
+
+  const writeFiles = async (files: Array<{ path: string; content: string }>) => {
+    for (const f of files) {
+      const path = String(f?.path || "").trim();
+      if (!path) continue;
+      await writeFile(path, String(f?.content || ""));
+    }
+  };
+
+  const writeFilesDetailed = async (files: Array<{ path: string; content: string }>) => {
+    const written: string[] = [];
+    const failed: Array<{ path: string; error: string }> = [];
+    for (const f of files) {
+      const path = String(f?.path || "").trim();
+      if (!path) continue;
+      try {
+        await writeFile(path, String(f?.content || ""));
+        written.push(path);
+      } catch (e: any) {
+        failed.push({ path, error: String(e?.message || e || "WRITE_FAILED") });
+      }
+    }
+    return {
+      ok: failed.length === 0,
+      written,
+      failed,
+      updatedAt: Date.now(),
+    };
+  };
+
+  const readMeta = async () => {
+    const raw = await readFile("meta.json");
+    const obj = raw ? parseJsonObjectLoose(raw) : null;
+    return obj && typeof obj === "object" ? obj : null;
+  };
+
+  const writeMeta = async (metaObj: any) => {
+    await writeFile("meta.json", JSON.stringify(metaObj || {}, null, 2));
+  };
+
+  return { readFile, readFiles, writeFile, writeFiles, writeFilesDetailed, readMeta, writeMeta };
 }
 
 function coderPrompt(blueprint: any, filePath: string, isQuality: boolean) {
@@ -856,34 +1395,7 @@ export async function POST(req: Request) {
           } catch (e: any) {
             const em = String(e?.message || e);
             const eml = em.toLowerCase();
-
-            // 如果是 OpenAI/Gemini 这类模型在当前网络/地区不稳定，优先“换模型”再试一次
-            // （仍走 OpenRouter，不切 provider），避免一直卡在 region / 网关不稳定上。
-            const canSwapModel = provider === "openrouter" && Array.isArray(fallbackModels) && fallbackModels.length > 0;
-            const isRegionBlocked =
-              eml.includes("not available in your region") ||
-              eml.includes("region") ||
-              eml.includes("country") ||
-              eml.includes("location");
-            const isModelUnavailable =
-              eml.includes("model_not_found") || eml.includes("model not found") || eml.includes("deprecated") || eml.includes("not available");
             const isNetwork = eml.includes("fetch_failed") || eml.includes("network error") || eml.includes("timeout");
-            if (canSwapModel && (isRegionBlocked || isModelUnavailable || isNetwork)) {
-              const curModel = String(payload?.model || "");
-              const picked = pickAlternateOpenRouterModel(curModel, fallbackModels) || pickOpenRouterModel(fallbackModels);
-              if (picked && picked !== curModel) {
-                sendStatus(`当前模型不稳定/不可用，我切换到 ${picked} 再试一次…`);
-                sendMeta({ provider, model: picked, reason: "fallback_model_unstable" });
-                const p2: any = { ...payload, model: picked };
-                // 对 Gemini 的 provider routing 仅对 gemini 生效；换到 deepseek/qwen 就不需要了
-                if (!String(picked).toLowerCase().startsWith("google/")) delete p2.provider;
-                try {
-                  return await callStreamToString(p2, stepTag, strictJson, timeoutMs);
-                } catch (e2: any) {
-                  // 继续走下面的 provider fallback
-                }
-              }
-            }
 
             // OpenRouter 链路级失败：直接切到 DeepSeek 官方 API（不经过 OpenRouter）
             // 典型：FETCH_FAILED / timeout / gateway / 5xx / region 等。
@@ -955,27 +1467,9 @@ export async function POST(req: Request) {
           if (!safeGameId) throw new Error("MISSING_GAME_ID");
           if (!ownerKey) throw new Error("UNAUTHORIZED");
           let canCheckpoint = false;
-          const readDraftFile = async (path: string) => {
-            if (!canCheckpoint) return "";
-            const rows = await db.execute(sql`
-              select content
-              from creator_draft_files
-              where game_id = ${safeGameId} and path = ${path}
-              limit 1
-            `);
-            const list = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
-            const c = list?.[0]?.content;
-            return typeof c === "string" ? c : "";
-          };
-          const upsertDraftFile = async (path: string, content: string) => {
-            if (!canCheckpoint) return;
-            await db.execute(sql`
-              insert into creator_draft_files (game_id, path, content)
-              values (${safeGameId}, ${path}, ${content})
-              on conflict (game_id, path)
-              do update set content = excluded.content, updated_at = now()
-            `);
-          };
+          let fixDraftStore = createDraftStore(safeGameId, { enabled: false });
+          const readDraftFile = async (path: string) => await fixDraftStore.readFile(path);
+          const upsertDraftFile = async (path: string, content: string) => await fixDraftStore.writeFile(path, content);
 
           try {
             await ensureCreatorDraftTables();
@@ -987,6 +1481,7 @@ export async function POST(req: Request) {
             `);
             const ownRows = Array.isArray((owns as any).rows) ? (owns as any).rows : [];
             canCheckpoint = !!ownRows.length;
+            fixDraftStore = createDraftStore(safeGameId, { enabled: canCheckpoint });
           } catch {
             canCheckpoint = false;
           }
@@ -1062,7 +1557,7 @@ export async function POST(req: Request) {
         if (!forceLegacy) {
           // ===== 稳定模式（默认）：单模型单次生成 + 最小后处理 =====
           // 目标：减少模型调用次数（失败点），避免阶段3卡住；先交付可运行 MVP，再逐步迭代。
-          const generationMode = (envModelOrEmpty("CREATOR_GENERATION_MODE") || "monolith").toLowerCase(); // monolith | evolve
+          const generationMode = (envModelOrEmpty("CREATOR_GENERATION_MODE") || "evolve").toLowerCase(); // monolith | evolve
           if (generationMode !== "evolve") {
             const hasOpenRouter = !!(process.env.OPENROUTER_API_KEY || "");
             if (!safeGameId || !ownerKey) throw new Error("MISSING_GAME_ID");
@@ -1077,31 +1572,29 @@ export async function POST(req: Request) {
             const ownRows = Array.isArray((owns as any).rows) ? (owns as any).rows : [];
             if (!ownRows.length) throw new Error("NOT_YOUR_GAME");
 
-            const upsertDraftFile = async (path: string, content: string) => {
-              await db.execute(sql`
-                insert into creator_draft_files (game_id, path, content)
-                values (${safeGameId}, ${path}, ${content})
-                on conflict (game_id, path)
-                do update set content = excluded.content, updated_at = now()
-              `);
-            };
-            const readDraftFile = async (path: string) => {
-              const rows = await db.execute(sql`
-                select content
-                from creator_draft_files
-                where game_id = ${safeGameId} and path = ${path}
-                limit 1
-              `);
-              const list = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
-              const c = list?.[0]?.content;
-              return typeof c === "string" ? c : "";
-            };
-            const readMetaObj = async () => {
-              const raw = await readDraftFile("meta.json");
-              const obj = raw ? parseJsonObjectLoose(raw) : null;
-              return obj && typeof obj === "object" ? obj : null;
-            };
+            const draftStore = createDraftStore(safeGameId);
+            const upsertDraftFile = async (path: string, content: string) => await draftStore.writeFile(path, content);
+            const writeDraftFiles = async (files: Array<{ path: string; content: string }>) => await draftStore.writeFiles(files);
+            const writeDraftFilesDetailed = async (files: Array<{ path: string; content: string }>) => await draftStore.writeFilesDetailed(files);
+            const readDraftFile = async (path: string) => await draftStore.readFile(path);
+            const readDraftFiles = async (paths: string[]) => await draftStore.readFiles(paths);
+            const readMetaObj = async () => await draftStore.readMeta();
+            const writeMetaObj = async (metaObj: any) => await draftStore.writeMeta(metaObj);
             const hash12 = (s: string) => crypto.createHash("sha1").update(String(s || "")).digest("hex").slice(0, 12);
+            const applyPersistStatus = (metaObj: any, step: string, result: { ok: boolean; written: string[]; failed: Array<{ path: string; error: string }>; updatedAt: number }, expected?: string[]) => ({
+              ...(metaObj && typeof metaObj === "object" ? metaObj : {}),
+              _gen: {
+                ...((metaObj && typeof metaObj === "object" ? metaObj : {})._gen || {}),
+                persist: {
+                  step,
+                  ok: !!result.ok,
+                  expected: Array.isArray(expected) ? expected : result.written.concat(result.failed.map((x) => x.path)),
+                  written: result.written,
+                  failed: result.failed,
+                  updatedAt: result.updatedAt,
+                },
+              },
+            });
 
             const validateScripts = (html: string, jsExtra = "") => {
               const err: string[] = [];
@@ -1154,15 +1647,13 @@ export async function POST(req: Request) {
                   files: pick.length ? pick : [{ path: "index.html", content: "" }],
                 },
               };
-              await upsertDraftFile("meta.json", JSON.stringify(m, null, 2));
+              await writeMetaObj(m);
             };
             const restoreLastGood = async (reason: string) => {
               const lg = await readLastGood();
               if (!lg) throw new Error(`NO_LAST_GOOD:${reason}`);
               sendStatus(`生成遇到问题（${reason}），已回滚到上一次可用版本。`);
-              for (const f of lg.files) {
-                await upsertDraftFile(f.path, f.content);
-              }
+              await writeDraftFiles(lg.files);
               return lg;
             };
 
@@ -1193,19 +1684,305 @@ export async function POST(req: Request) {
               }
               return { index: out.trim() + "\n", css: css + "\n", js: js + "\n" };
             };
+            const validateAcceptanceSimple = (files: Array<{ path: string; content: string }>) => {
+              const index = files.find((f) => f.path === "index.html")?.content || "";
+              const js = files.find((f) => f.path === "game.js")?.content || "";
+              const errs = validateScripts(index, js);
+              const hasCss = !!files.find((f) => f.path === "style.css")?.content;
+              const hasJs = !!js.trim();
+              if (hasCss && !/href\s*=\s*["']\.\/style\.css["']/.test(index)) errs.push("index.html 未正确引用 ./style.css");
+              if (hasJs && !/src\s*=\s*["']\.\/game\.js["']/.test(index)) errs.push("index.html 未正确引用 ./game.js");
+              return errs;
+            };
+            const trimRefineFile = (path: string, content: string) => {
+              const raw = String(content || "");
+              const max = path === "index.html" ? 18000 : path === "game.js" ? 12000 : 8000;
+              if (raw.length <= max) return raw;
+              const tail = path === "index.html" ? "\n<!-- ...TRUNCATED... -->" : "\n/* ...TRUNCATED... */";
+              return raw.slice(0, max) + tail;
+            };
+            const repairFilesJson = async (rawText: string) => {
+              const fixerModel = provider === "openrouter"
+                ? pickOpenRouterModel(["qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"])
+                : model;
+              const repairPayload: any = {
+                model: fixerModel,
+                messages: [
+                  { role: "system", content: "你是 JSON 修复器。只输出一个严格 JSON 对象（json_object），不要任何解释或 markdown。" },
+                  {
+                    role: "user",
+                    content:
+                      `请把下面内容修复为严格 JSON，并确保符合 Schema：\n` +
+                      `{\n  "assistant": string,\n  "ops"?: [\n    {\n      "type":"replace_in_file|remove_in_file|insert_before|insert_after|append_in_file|prepend_in_file",\n      "path":"index.html|style.css|game.js"\n    }\n  ],\n  "files"?: [ { "path": "index.html|style.css|game.js", "content": string } ]\n}\n\n` +
+                      `原输出：\n${String(rawText || "").slice(0, 24000)}\n`,
+                  },
+                ],
+                temperature: 0,
+                max_tokens: 2200,
+                response_format: { type: "json_object" },
+              };
+              if (provider === "openrouter" && payloadBase.provider) repairPayload.provider = payloadBase.provider;
+              const repairedText = await callStreamRobust(
+                repairPayload,
+                "直接补丁：修复 JSON",
+                true,
+                ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
+                60_000,
+              );
+              return parseJsonObjectLoose(repairedText);
+            };
+            const healDirectFiles = async (files: Array<{ path: string; content: string }>, errMsg: string) => {
+              const debugModel = hasOpenRouter
+                ? pickOpenRouterModel([envModelOrEmpty("CREATOR_DEBUG_MODEL"), "qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"].filter(Boolean) as string[])
+                : model;
+              if (provider === "openrouter") model = debugModel;
+              sendMeta({ provider, model, phase: "direct_refine_debug" });
+              const debugPayload: any = {
+                model,
+                messages: [
+                  { role: "system", content: DEBUG_PROMPT },
+                  {
+                    role: "user",
+                    content:
+                      `【错误】\n${errMsg}\n\n` +
+                      `【当前文件】\n${JSON.stringify(files, null, 2)}\n\n` +
+                      `请输出修复后的 files（保持最小改动）。`,
+                  },
+                ],
+                temperature: 0.1,
+                max_tokens: 1800,
+                response_format: { type: "json_object" },
+              };
+              if (provider === "openrouter" && payloadBase.provider) debugPayload.provider = payloadBase.provider;
+              const debugText = await callStreamRobust(
+                debugPayload,
+                "直接补丁：修复校验问题",
+                true,
+                ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
+                60_000,
+              );
+              const debugObj = parseJsonObjectLoose(debugText);
+              const outFiles = Array.isArray((debugObj as any)?.files) ? (debugObj as any).files : [];
+              const merged = files.slice();
+              for (const f of outFiles) {
+                const p = String((f as any)?.path || "").trim();
+                const c = String((f as any)?.content || "");
+                if (!["index.html", "style.css", "game.js"].includes(p) || !c.trim()) continue;
+                const idx = merged.findIndex((x) => x.path === p);
+                if (idx >= 0) merged[idx] = { path: p, content: c };
+                else merged.push({ path: p, content: c });
+              }
+              return merged;
+            };
 
-            // 选择模型：优先 OpenRouter 的 qwen；OpenRouter 链路失败则回退 DeepSeek 官方 API（已在 callStreamRobust 里处理）
-            const mvpOverride = envModelOrEmpty("CREATOR_MVP_MODEL");
-            const mvpModel = hasOpenRouter ? pickOpenRouterModel([mvpOverride, "qwen/qwen3.6-plus"].filter(Boolean) as string[]) : model;
+            // 选择模型：优先使用前端“彩蛋”中用户选择的 provider/model（请求 body 传入的 model）。
+            // 仅当模型不稳定/不可用时，callStreamRobust 才会在 fallbackModels 中自动切换。
+            const mvpModel = String(model || "").trim() || (hasOpenRouter ? "qwen/qwen3.6-plus" : model);
+            const refineModel = mvpModel;
 
             const userMsgs = messages.filter((m) => m.role === "user").slice(-2);
             const userIntent = String(userMsgs[userMsgs.length - 1]?.content || "").trim();
-            const prevUser = String(userMsgs[0]?.content || "").trim();
+            const currentDraft = await readDraftFiles(["index.html", "style.css", "game.js"]);
+            const indexExisting = currentDraft["index.html"] || "";
+            const styleExisting = currentDraft["style.css"] || "";
+            const gameExisting = currentDraft["game.js"] || "";
+            const hasExistingGame = !!(indexExisting.trim() || styleExisting.trim() || gameExisting.trim());
+            const hasCompleteSplitGame = !!(indexExisting.trim() && styleExisting.trim() && gameExisting.trim());
+            const directEditProfile = classifyIncrementalEdit(userIntent);
+            const shouldUseDirectRefine = hasExistingGame && !!directEditProfile;
 
             const readMeta = (await readMetaObj()) || {};
             const genState = ((readMeta as any)._gen && typeof (readMeta as any)._gen === "object" ? (readMeta as any)._gen : {}) as any;
             let stage = String(genState.stage || "").trim();
+            // 最多让用户回答 3 个“问题”（不包含选 A/B/C 方向）
             const MAX_TURNS = 3;
+            // 容错：有时 stage 字段可能丢失，但 clarify/answers 仍在，避免又回到“阶段0”循环
+            if (!stage && genState && typeof genState === "object") {
+              if ((genState as any).clarify || (genState as any).answers) stage = "clarify";
+            }
+            // 固化“最早的用户主题”，避免后续点击选项导致上下文跑偏
+            const seedPromptFromMeta = String((genState as any)?.seedPrompt || "").trim();
+            const firstNonCommandUser = (() => {
+              for (const mm of messages) {
+                if (mm.role !== "user") continue;
+                const t = String(mm.content || "").trim();
+                if (!t) continue;
+                // 跳过本地选择指令/控制指令
+                if (t.startsWith("@")) continue;
+                // 跳过纯链接输入
+                if (/^https?:\/\/\S+/i.test(t)) continue;
+                return t;
+              }
+              return "";
+            })();
+            const seedPrompt = seedPromptFromMeta || firstNonCommandUser || userIntent;
+
+            if (shouldUseDirectRefine) {
+              const editProfile = directEditProfile as IncrementalEditProfile;
+              sendStatus(`（1/1）根据现有游戏直接做小改动（${provider} / ${refineModel}）…`);
+              if (provider === "openrouter") model = refineModel;
+              sendMeta({ provider, model, phase: `direct_refine_${editProfile.kind}` });
+
+              const currentFilesRaw = hasCompleteSplitGame
+                ? [
+                    { path: "index.html", content: indexExisting },
+                    { path: "style.css", content: styleExisting },
+                    { path: "game.js", content: gameExisting },
+                  ]
+                : [{ path: "index.html", content: indexExisting }];
+
+              const localButtonEdit = tryLocalButtonEdit(userIntent, indexExisting);
+              if (localButtonEdit) {
+                const files = currentFilesRaw.map((f) =>
+                  f.path === "index.html" ? { path: "index.html", content: localButtonEdit.content } : f,
+                );
+                await upsertDraftFile("index.html", localButtonEdit.content);
+                const metaNow = (await readMetaObj()) || readMeta || {};
+                if (!validateAcceptanceSimple(files).length) await setLastGood(metaNow, files, "after_local_direct_edit");
+                const finalObj = {
+                  assistant: localButtonEdit.assistant,
+                  meta: metaNow,
+                  files: [...files, { path: "meta.json", content: JSON.stringify(metaNow, null, 2) }],
+                };
+                parseCreatorJson(JSON.stringify(finalObj));
+                send("final", { ok: true, content: JSON.stringify(finalObj), repaired: false, local: true });
+                clearInterval(heartbeat);
+                controller.close();
+                return;
+              }
+
+              const directPaths = pickDirectRefinePaths(editProfile.kind, hasCompleteSplitGame, userIntent);
+              const currentFiles = currentFilesRaw
+                .filter((f) => directPaths.includes(f.path))
+                .map((f) => ({ path: f.path, content: trimRefineFile(f.path, f.content) }));
+              const refineTaskHint =
+                editProfile.kind === "content"
+                  ? "这是单点内容/显隐修改。优先删掉、隐藏、改文案，不要重写整页。"
+                  : editProfile.kind === "layout"
+                    ? "这是布局位置调整。优先改 CSS 或少量 DOM 结构，不要动玩法逻辑。"
+                    : editProfile.kind === "visual"
+                      ? "这是视觉样式优化。优先改样式，不要改玩法和状态流。"
+                      : editProfile.kind === "behavior"
+                      ? "这是轻量行为修改。优先只改 game.js 里的事件、状态流转和显示同步，不要改主题，不要重构页面，不要注入整套新脚本。"
+                        : editProfile.kind === "bugfix"
+                          ? "这是行为修复。优先修问题本身，不要额外设计新玩法。"
+                          : "这是已有游戏上的小增强。优先增量添加，不要重写大结构。";
+              const refineExtraRules =
+                editProfile.kind === "behavior"
+                  ? `- 这次是已有游戏上的“行为小改动”，优先只修改 game.js。\n` +
+                    `- 不要新增独立的开始页逻辑，不要重写 index.html，不要通过注入大段兜底脚本来绕过现有代码。\n` +
+                    `- 如果要“自动开始”，请直接复用现有 start/init 流程；如果要“按进度显示当前句子”，请在现有状态更新里同步文案。\n`
+                  : "";
+
+              const refinePayload: any = {
+                model,
+                messages: [
+                  {
+                    role: "system",
+                    content:
+                      `${REFINE_PROMPT}\n\n` +
+                      `【额外要求】\n` +
+                      `- 这是“已有游戏上的小改动/小优化”，不是从零创建新游戏。\n` +
+                      `- 不要反问，不要改主题，不要重做整体结构。\n` +
+                      `- 只改和用户这句话直接相关的内容，能少改就少改。\n` +
+                      refineExtraRules,
+                  },
+                  {
+                    role: "user",
+                    content:
+                      `【最早主题】\n${seedPrompt}\n\n` +
+                      `【增量编辑类型】\nkind=${editProfile.kind}\nconfidence=${editProfile.confidence}\nhint=${editProfile.hint}\n\n` +
+                      `【本次任务提示】\n${refineTaskHint}\n\n` +
+                      `【本次可修改文件】\n${directPaths.join(", ")}\n\n` +
+                      `【当前文件】\n${JSON.stringify(currentFiles, null, 2)}\n\n` +
+                      `【本次修改指令】\n${userIntent}\n\n` +
+                      `优先输出 ops；只有在确实无法用 ops 表达时，再输出修改后的 files。若这句话只是“去掉/隐藏/调整位置/改文案/改样式”，不要生成额外玩法方案，不要重写无关文件。`,
+                  },
+                ],
+                temperature: editProfile.kind === "bugfix" ? 0.1 : editProfile.kind === "feature" ? 0.25 : 0.15,
+                max_tokens: directPaths.length === 1 ? (editProfile.kind === "behavior" ? 1200 : 1600) : 2200,
+                response_format: { type: "json_object" },
+              };
+              if (provider === "openrouter" && payloadBase.provider) refinePayload.provider = payloadBase.provider;
+
+              const refineText = await autoRetry(
+                async () =>
+                  await callStreamRobust(
+                    refinePayload,
+                    "直接补丁：小改动",
+                    true,
+                    ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
+                    directPaths.length === 1 ? (editProfile.kind === "behavior" ? 20_000 : 25_000) : 45_000,
+                  ),
+                "小改动补丁",
+                "这是已有游戏上的小改动，只输出 JSON 和必要文件。",
+                1,
+              );
+              let refineObj = parseJsonObjectLoose(refineText);
+              if (!refineObj) refineObj = await repairFilesJson(refineText);
+              if (!refineObj) throw new Error("DIRECT_REFINE_NOT_JSON");
+              const outOps = Array.isArray((refineObj as any)?.ops) ? ((refineObj as any).ops as PatchOp[]) : [];
+              const outFiles = Array.isArray((refineObj as any)?.files) ? (refineObj as any).files : [];
+              let files = currentFilesRaw.slice();
+              let appliedOpsChanged = 0;
+              if (outOps.length) {
+                const applied = applyPatchOpsToFiles(files, outOps, directPaths);
+                files = applied.files;
+                appliedOpsChanged = applied.changed;
+              }
+              if (!outFiles.length && outOps.length && !appliedOpsChanged) throw new Error("DIRECT_REFINE_OPS_NO_MATCH");
+              for (const f of outFiles) {
+                const p = String((f as any)?.path || "").trim();
+                const c = String((f as any)?.content || "");
+                if (!["index.html", "style.css", "game.js"].includes(p) || !c.trim()) continue;
+                const idx = files.findIndex((x) => x.path === p);
+                if (idx >= 0) files[idx] = { path: p, content: c };
+                else files.push({ path: p, content: c });
+              }
+              for (const f of files) {
+                if (!["index.html", "style.css", "game.js"].includes(f.path)) continue;
+                await upsertDraftFile(f.path, f.content);
+              }
+              const acceptanceErrs = validateAcceptanceSimple(
+                files.filter((f) => ["index.html", "style.css", "game.js"].includes(f.path)),
+              );
+              if (acceptanceErrs.length) {
+                files = await healDirectFiles(
+                  files.filter((f) => ["index.html", "style.css", "game.js"].includes(f.path)),
+                  acceptanceErrs.join("\n"),
+                );
+              }
+              const metaNow = (await readMetaObj()) || readMeta || {};
+              if (!validateAcceptanceSimple(files).length) await setLastGood(metaNow, files, "after_direct_refine");
+              const finalObj = {
+                assistant: String((refineObj as any)?.assistant || "已按你的要求完成这次小改动。").trim(),
+                meta: metaNow,
+                files: [...files, { path: "meta.json", content: JSON.stringify(metaNow, null, 2) }],
+              };
+              parseCreatorJson(JSON.stringify(finalObj));
+              send("final", { ok: true, content: JSON.stringify(finalObj), repaired: false });
+              clearInterval(heartbeat);
+              controller.close();
+              return;
+            }
+
+            // 如果用户当前发的是点击指令，但我们还没有“最早主题”，就不要进入澄清/反问（否则必然跑题）
+            if (!seedPromptFromMeta && !firstNonCommandUser && userIntent.startsWith("@")) {
+              const finalObj = {
+                assistant:
+                  "我还不知道你想做什么小游戏。请先用一句话告诉我主题，例如：\n" +
+                  "- 做一个学英语口语的小游戏（跟读/闯关）\n" +
+                  "- 做一个背单词闯关小游戏\n" +
+                  "- 做一个数学口算小游戏\n",
+                meta: readMeta,
+                files: [] as any[],
+              };
+              parseCreatorJson(JSON.stringify(finalObj));
+              send("final", { ok: true, content: JSON.stringify(finalObj), repaired: false });
+              clearInterval(heartbeat);
+              controller.close();
+              return;
+            }
 
             const writeMeta = async (obj: any) => {
               await upsertDraftFile("meta.json", JSON.stringify(obj || {}, null, 2));
@@ -1213,34 +1990,86 @@ export async function POST(req: Request) {
 
             // ===== 阶段 0：澄清（分析师反问 + 3 方案）=====
             // 稳定优先：当用户需求缺少关键要素时，先反问，不生成代码。
-            const hasControls = /(键盘|方向键|arrowleft|arrowright|触屏|触控|虚拟|按钮|重力|滑动)/i.test(userIntent);
-            const hasWinLose = /(胜利|失败|终点|过关|闯关|碰撞|撞到|结束|计时|对战)/i.test(userIntent);
-            const hasStyle = /(像素|霓虹|手绘|卡通|写实|酷炫|帅气|赛博|风格|主题|星座)/i.test(userIntent);
-            const hasPlatform = /(手机|移动端|pc|电脑|竖屏|横屏|双端)/i.test(userIntent);
+            const hasControls = /(键盘|方向键|arrowleft|arrowright|触屏|触控|虚拟|按钮|点击|轻点|滑动|拖动|wasd|空格)/i.test(userIntent);
+            const hasWinLose = /(胜利|失败|终点|过关|闯关|碰撞|撞到|结束|计时|倒计时|对战|得分|积分|排行榜)/i.test(userIntent);
+            const hasStyle = /(像素|霓虹|手绘|卡通|写实|酷炫|帅气|赛博|风格|主题|星空|森林|海洋|校园)/i.test(userIntent);
+            const hasPlatform = /(手机|移动端|pc|电脑|竖屏|横屏|双端|网页|浏览器|ipad)/i.test(userIntent);
             const missingCount = [hasControls, hasWinLose, hasStyle, hasPlatform].filter((x) => !x).length;
-            const isVague = userIntent.length < 40 || missingCount >= 2;
-
+            const genericOnly = /^(做|生成|写|创建)?\s*(一个|一款)?\s*(h5\s*)?(小游戏|游戏|小应用)(吧|呀|就行|就可以)?[！!。.\s]*$/i.test(userIntent);
+            const isVague = genericOnly || userIntent.length < 12 || (userIntent.length < 24 && missingCount >= 3);
             // 如果正在等待用户选择方案/确认配置，则进入对应阶段处理
             const pickChoice = (s: string) => {
               const t = String(s || "").trim();
+              // 结构化点击：@choice A
+              const c0 = t.match(/^@choice\s+([ABCabc])\b/);
+              if (c0) return c0[1].toUpperCase();
               const m = t.match(/(?:方案)?\s*([ABCabc])\b/);
               if (m) return m[1].toUpperCase();
               const n = t.match(/^\s*([123])\b/);
               if (n) return n[1] === "1" ? "A" : n[1] === "2" ? "B" : "C";
               return "";
             };
-            const isConfirm = (s: string) => /(确认|开始|生成|就这样|ok|好的|可以)/i.test(String(s || ""));
+            // 注意：不要用“包含生成/开始”等关键词来判断确认，否则用户点某些方案描述里包含“生成”会误触发进入编码。
+            // 仅在“明确命令”时进入编码。
+            const isConfirm = (s: string) => {
+              const t = String(s || "").trim();
+              if (!t) return false;
+              if (/^@confirm\b/i.test(t)) return true;
+              return /^(确认|开始生成|开始|ok|好的|可以|就这样)$/i.test(t);
+            };
+
+            // 如果前端一次性提交了答案（@answers），但 meta 里还没有 stage（例如刷新/丢状态），
+            // 则直接进入 clarify 分支继续往下走，避免再次触发“阶段0：需求澄清”导致跑题/死循环。
+            const userTrim0 = String(userIntent || "").trim();
+            // 允许用户在“写代码阶段失败”后点重试：@retry
+            // 直接进入 code_pending，复用已保存的 design/config，不再回到澄清/蓝图。
+            if (/^@retry\b/i.test(userTrim0)) {
+              stage = "code_pending";
+              genState.stage = "code_pending";
+              genState.seedPrompt = seedPrompt;
+              await writeMeta({ ...(readMeta && typeof readMeta === "object" ? readMeta : {}), _gen: { ...(genState || {}), updatedAt: Date.now() } });
+            }
+            if (!stage && /^@answers\b/i.test(userTrim0)) {
+              stage = "clarify";
+              genState.stage = "clarify";
+              genState.seedPrompt = seedPrompt;
+              genState.clarify = genState.clarify || {};
+              const raw = userTrim0.replace(/^@answers\b/i, "").trim();
+              const obj = parseJsonObjectLoose(raw);
+              const answers = (genState.answers && typeof genState.answers === "object" ? genState.answers : {}) as any;
+              if (obj && typeof obj === "object") {
+                for (const [k, v] of Object.entries(obj as any)) answers[k] = v as any;
+              }
+              genState.answers = answers;
+              genState.turnsUsed = MAX_TURNS; // 视为已完成本轮问答
+              await writeMeta({ ...(readMeta && typeof readMeta === "object" ? readMeta : {}), _gen: { ...(genState || {}), updatedAt: Date.now() } });
+            }
+
+            // 兼容旧状态：以前会在“澄清后先生成 config”这一层中断。
+            // 现在默认直接进入 blueprint，所以遇到旧状态时直接迁移过去。
+            if (stage === "monolith_mvp_pending") {
+              stage = "blueprint_pending";
+              await writeMeta({
+                ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
+                _gen: { ...(genState || {}), stage: "blueprint_pending", seedPrompt, updatedAt: Date.now() },
+              });
+            }
 
             // 0.1 若需要澄清（且不是已有配置流程中），先让 Qwen 输出澄清 JSON
             if (!stage && isVague) {
               sendStatus(`（1/3）需求澄清：给出 3 个方向供你选择（${provider} / ${mvpModel}）…`);
-              if (provider === "openrouter") model = mvpModel;
               sendMeta({ provider, model, phase: "clarify" });
               const payloadClarify: any = {
                 model,
                 messages: [
-                  { role: "system", content: CLARIFY_PROMPT },
-                  { role: "user", content: userIntent || "我想做一个小游戏，但需求还不明确。请按要求给出 A/B/C 三个方向并提问。" },
+                  { role: "system", content: `${CREATOR_GAME_TYPE_LIBRARY_ADDON}\n\n${CLARIFY_PROMPT}` },
+                  {
+                    role: "user",
+                    content:
+                      `【用户最早的主题】\n${seedPrompt || userIntent}\n\n` +
+                      `【用户最新补充】\n${userIntent}\n\n` +
+                      `请严格围绕“用户最早的主题”给出 A/B/C 三个方向，并提出选择题问题。`,
+                  },
                 ],
                 temperature: 0.2,
                 max_tokens: 1400,
@@ -1287,8 +2116,7 @@ export async function POST(req: Request) {
                   lines.push(`- ${qid ? `${qid}. ` : ""}${qq}${ch.length ? `（${ch.slice(0, 3).join(" / ")}）` : ""}`);
                 }
               }
-              lines.push(`\n请回复：A 或 B 或 C（也可以同时补充你的特别要求）。`);
-              lines.push(`\n（调试信息：澄清 JSON）\n\`\`\`json\n${JSON.stringify(obj, null, 2)}\n\`\`\``);
+              lines.push(`\n请回复：A 或 B 或 C（也可以直接补充一句你特别想要的效果）。`);
 
               // 写入 meta.json：记录澄清阶段与澄清 JSON（中间变量）
               const metaOut = {
@@ -1298,7 +2126,8 @@ export async function POST(req: Request) {
                   ...(genState || {}),
                   stage: "clarify",
                   clarify: obj,
-                  turnsUsed: 0,
+                  seedPrompt,
+                  turnsUsed: 0, // 已回答的问题数（不包含选 A/B/C）
                   maxTurns: MAX_TURNS,
                   answers: {},
                   updatedAt: Date.now(),
@@ -1306,23 +2135,26 @@ export async function POST(req: Request) {
               };
               await writeMeta(metaOut);
 
+              // 交互优化：一次只展示一个“下一步要选的维度”
+              // 第一步：先选 A/B/C；之后：按 questions 顺序逐个回答
               const ui = {
                 type: "clarify",
+                mode: "single_step",
                 turn: 0,
                 maxTurns: MAX_TURNS,
                 recommend: rec,
+                step: "choice",
                 options: options.slice(0, 3).map((o: any) => ({
                   id: String(o?.id || "").trim() || "",
                   label: String(o?.title || "").trim() || String(o?.id || "").trim() || "方案",
                   desc: String(o?.notes || "").trim() || String(o?.style || "").trim() || "",
+                  payload: `@choice ${String(o?.id || "").trim() || "A"}`,
                 })),
-                questions: qs.slice(0, 5).map((q: any) => ({
-                  id: String(q?.id || "").trim() || "",
-                  question: String(q?.question || "").trim() || "",
-                  choices: Array.isArray(q?.choices) ? q.choices.slice(0, 4) : [],
-                })),
+                questions: [],
                 selected: {},
-                actions: [{ id: "confirm", label: "开始生成（直接进入编码）", payload: "确认" }],
+                actions: [{ id: "confirm", label: "开始生成（跳过剩余选择）", payload: "@confirm" }],
+                // 给前端“本地分步选择”用：一次性下发全部维度，后续点击不必再次请求大模型
+                all: { options: options.slice(0, 3), questions: qs.slice(0, 5) },
               };
 
               const finalObj = { assistant: lines.join("\n"), meta: metaOut, files: [] as any[], ui };
@@ -1337,51 +2169,121 @@ export async function POST(req: Request) {
             if (stage === "clarify") {
               const clarify = genState.clarify || {};
               const turnsUsed0 = Number(genState.turnsUsed || 0) || 0;
-              const turnsUsed = turnsUsed0 + 1;
-              const picked = pickChoice(userIntent);
+              let turnsUsed = turnsUsed0;
+              let picked = pickChoice(userIntent);
 
               // 记录用户选择/回答（结构化收集）
               const answers = (genState.answers && typeof genState.answers === "object" ? genState.answers : {}) as any;
-              if (picked) answers.choice = picked;
-              // 支持 “q1: xxx” 这种回答格式
+              // 前端可一次性提交所有答案：@answers {...}
+              const userTrim = String(userIntent || "").trim();
+              if (/^@answers\b/i.test(userTrim)) {
+                const raw = userTrim.replace(/^@answers\b/i, "").trim();
+                const obj = parseJsonObjectLoose(raw);
+                if (obj && typeof obj === "object") {
+                  for (const [k, v] of Object.entries(obj as any)) answers[k] = v as any;
+                }
+                const c = String(answers.choice || "").trim();
+                if (c) picked = pickChoice(c) || c.toUpperCase();
+                if (picked) answers.choice = picked;
+                // 一次性提交时直接视为问题已答完
+                turnsUsed = MAX_TURNS;
+              } else {
+                if (picked) answers.choice = picked;
+              }
+              // 支持 “q1: xxx” / @answer q1 手机 这种回答格式
               try {
+                let answeredThisTurn = false;
+                // 结构化点击：@answer q1 手机
+                const a0 = String(userIntent || "").match(/^@answer\s+([a-zA-Z0-9_-]{1,16})\s+(.{1,60})\s*$/);
+                if (a0 && a0[1] && a0[2]) {
+                  answers[a0[1]] = a0[2].trim();
+                  answeredThisTurn = true;
+                }
                 const m = String(userIntent || "").match(/^\s*([a-zA-Z0-9_-]{1,16})\s*[:：]\s*(.{1,60})\s*$/);
-                if (m && m[1] && m[2]) answers[m[1]] = m[2].trim();
+                if (m && m[1] && m[2]) {
+                  answers[m[1]] = m[2].trim();
+                  answeredThisTurn = true;
+                }
+                // 如果用户不是点按钮，而是直接用自然语言回答，也视为回答了 1 个问题（避免一直问）
+                if (!answeredThisTurn && !userTrim.startsWith("@") && userTrim.length > 0) {
+                  const k = `free${turnsUsed0 + 1}`;
+                  if (!answers[k]) answers[k] = userTrim.slice(0, 80);
+                  answeredThisTurn = true;
+                }
+                if (answeredThisTurn && turnsUsed < MAX_TURNS) turnsUsed += 1;
               } catch {}
 
               const metaOut0 = {
                 ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
-                _gen: { ...(genState || {}), stage: "clarify", clarify, turnsUsed, maxTurns: MAX_TURNS, answers, updatedAt: Date.now() },
+                _gen: {
+                  ...(genState || {}),
+                  stage: "clarify",
+                  clarify,
+                  seedPrompt,
+                  turnsUsed,
+                  maxTurns: MAX_TURNS,
+                  answers,
+                  updatedAt: Date.now(),
+                },
               };
               await writeMeta(metaOut0);
 
-              const shouldStart = isConfirm(userIntent) || turnsUsed >= MAX_TURNS;
+              const shouldStart = isConfirm(userIntent) || turnsUsed >= MAX_TURNS || /^@answers\b/i.test(userTrim);
               if (!shouldStart) {
                 const options = Array.isArray((clarify as any)?.options) ? (clarify as any).options : [];
                 const qs = Array.isArray((clarify as any)?.questions) ? (clarify as any).questions : [];
                 const rec = String((clarify as any)?.recommend || "A").trim() || "A";
+                const unanswered = qs.filter((q: any) => {
+                  const id = String(q?.id || "").trim();
+                  if (!id) return false;
+                  return answers[id] == null || String(answers[id] || "").trim() === "";
+                });
+                const nextQ = unanswered[0] || null;
+                const remaining = Math.max(0, MAX_TURNS - turnsUsed);
+                const nextHint = !answers.choice
+                  ? "下一步：请选择一个方向（A/B/C）。"
+                  : nextQ
+                    ? `下一步：${String(nextQ?.question || "").trim() || "请回答下一个问题"}`
+                    : "下一步：如果没有更多要补充的，可以开始生成。";
                 const txt =
-                  `收到，我已记录你的选择（${turnsUsed}/${MAX_TURNS}）。\n` +
-                  `你还可以再选择 ${Math.max(0, MAX_TURNS - turnsUsed)} 次，之后我就会开始写代码。\n\n` +
+                  `收到，我已记录你的选择（已回答 ${turnsUsed}/${MAX_TURNS} 个问题）。\n` +
+                  `你还可以再回答 ${remaining} 个问题，之后我就会开始写代码。\n\n` +
                   `当前已选：${answers.choice ? `方案${answers.choice}` : "（未选方案）"}\n` +
-                  `如果你想直接开始生成，请点“开始生成”，或回复“确认”。`;
+                  `${nextHint}`;
+
                 const ui = {
                   type: "clarify",
+                  mode: "single_step",
                   turn: turnsUsed,
                   maxTurns: MAX_TURNS,
                   recommend: rec,
-                  options: options.slice(0, 3).map((o: any) => ({
-                    id: String(o?.id || "").trim() || "",
-                    label: String(o?.title || "").trim() || String(o?.id || "").trim() || "方案",
-                    desc: String(o?.notes || "").trim() || "",
-                  })),
-                  questions: qs.slice(0, 5).map((q: any) => ({
-                    id: String(q?.id || "").trim() || "",
-                    question: String(q?.question || "").trim() || "",
-                    choices: Array.isArray(q?.choices) ? q.choices.slice(0, 4) : [],
-                  })),
+                  step: !answers.choice ? "choice" : nextQ ? String(nextQ?.id || "").trim() || "q" : "done",
+                  options: !answers.choice
+                    ? options.slice(0, 3).map((o: any) => ({
+                        id: String(o?.id || "").trim() || "",
+                        label: String(o?.title || "").trim() || String(o?.id || "").trim() || "方案",
+                        desc: String(o?.notes || "").trim() || "",
+                        payload: `@choice ${String(o?.id || "").trim() || "A"}`,
+                      }))
+                    : [],
+                  questions: answers.choice && nextQ
+                    ? [
+                        {
+                          id: String(nextQ?.id || "").trim() || "",
+                          question: String(nextQ?.question || "").trim() || "",
+                          choices: Array.isArray(nextQ?.choices) ? nextQ.choices.slice(0, 4) : [],
+                        },
+                      ]
+                    : [],
                   selected: answers,
-                  actions: [{ id: "confirm", label: "开始生成（直接进入编码）", payload: "确认" }],
+                  actions:
+                    !answers.choice
+                      ? []
+                      : [
+                          { id: "confirm", label: "开始生成（跳过剩余选择）", payload: "@confirm" },
+                        ],
+                  // 为前端本地分步展示提供完整列表（不必再请求大模型）
+                  all: { options: options.slice(0, 3), questions: qs.slice(0, 5) },
                 };
                 const finalObj = { assistant: txt, meta: metaOut0, files: [] as any[], ui };
                 parseCreatorJson(JSON.stringify(finalObj));
@@ -1391,52 +2293,12 @@ export async function POST(req: Request) {
                 return;
               }
 
-              // 达到选择上限或用户确认：生成配置表 config，并直接进入编码模式（不再额外等待确认，避免死循环）
-              sendStatus(`（2/3）生成参数配置表 JSON（${provider} / ${mvpModel}）…`);
-              if (provider === "openrouter") model = mvpModel;
-              sendMeta({ provider, model, phase: "config" });
-              const payloadCfg: any = {
-                model,
-                messages: [
-                  { role: "system", content: CONFIG_PROMPT },
-                  {
-                    role: "user",
-                    content:
-                      `【澄清结果 JSON】\n${JSON.stringify(clarify, null, 2)}\n\n` +
-                      `【累计选择/回答】\n${JSON.stringify(answers, null, 2)}\n\n` +
-                      `请输出 config JSON。`,
-                  },
-                ],
-                temperature: 0.2,
-                max_tokens: 1600,
-                response_format: { type: "json_object" },
-              };
-              if (provider === "openrouter" && payloadBase.provider) payloadCfg.provider = payloadBase.provider;
-              const out = await autoRetry(
-                async () =>
-                  await callStreamRobust(
-                    payloadCfg,
-                    "阶段1：配置表 JSON",
-                    true,
-                    ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
-                    90_000,
-                  ),
-                "配置表",
-                "只输出 JSON（meta/config/needConfirm）。",
-                2,
-              );
-              const cfgObj = parseJsonObjectLoose(out);
-              if (!cfgObj) throw new Error("CONFIG_NOT_JSON");
-              const config = (cfgObj as any).config || {};
-              // 直接用于后续 codegen
-              (genState as any).config = config;
-              stage = "monolith_mvp";
-              const metaOut = {
+              // 达到选择上限或用户确认：直接进入 blueprint，省掉 config 这一跳，减少一次模型调用。
+              await writeMeta({
                 ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
-                ...safeMeta((cfgObj as any).meta),
-                _gen: { ...(genState || {}), stage: "monolith_mvp", config, updatedAt: Date.now() },
-              };
-              await writeMeta(metaOut);
+                _gen: { ...(genState || {}), stage: "blueprint_pending", seedPrompt, answers, updatedAt: Date.now() },
+              });
+              stage = "blueprint_pending";
             }
 
             // 0.3 若在配置确认阶段：确认 -> 进入代码生成；否则更新 config 再次确认
@@ -1444,15 +2306,15 @@ export async function POST(req: Request) {
               const clarify = genState.clarify || {};
               const oldConfig = genState.config || {};
               sendStatus(`（2/3）更新参数配置表 JSON（${provider} / ${mvpModel}）…`);
-              if (provider === "openrouter") model = mvpModel;
               sendMeta({ provider, model, phase: "config_update" });
               const payloadCfg2: any = {
                 model,
                 messages: [
-                  { role: "system", content: CONFIG_PROMPT },
+                  { role: "system", content: `${CREATOR_GAME_TYPE_LIBRARY_ADDON}\n\n${CONFIG_PROMPT}` },
                   {
                     role: "user",
                     content:
+                      `【用户最早的主题】\n${String((genState as any)?.seedPrompt || seedPrompt)}\n\n` +
                       `【澄清 JSON】\n${JSON.stringify(clarify, null, 2)}\n\n` +
                       `【当前 config】\n${JSON.stringify(oldConfig, null, 2)}\n\n` +
                       `【用户修改要求】\n${userIntent}\n\n` +
@@ -1504,163 +2366,393 @@ export async function POST(req: Request) {
               return;
             }
 
-            // 到这里：要么需求不模糊（无需澄清），要么用户已确认配置（进入代码生成）。
-            // 如果已在澄清阶段收集到 config（达到选择上限或用户确认），这里会直接复用 config 进入编码。
-            const activeConfig = genState && typeof genState === "object" && (genState as any).config ? (genState as any).config : null;
-
-            sendStatus(`（3/3）生成单文件 MVP（${provider} / ${mvpModel}）…`);
-            if (provider === "openrouter") model = mvpModel;
-            sendMeta({ provider, model, phase: "mvp_monolith" });
-
-            const payload: any = {
-              model,
-              messages: [
-                { role: "system", content: activeConfig ? CODEGEN_FROM_CONFIG_PROMPT : MONOLITH_MVP_PROMPT },
-                {
-                  role: "user",
-                  content: activeConfig
-                    ? `【用户需求】\n${prevUser || userIntent}\n\n【参数配置表 JSON】\n${JSON.stringify(activeConfig, null, 2)}\n`
-                    : userIntent || "请生成一个简单可玩的小游戏。要求可运行、单文件。",
-                },
-              ],
-              temperature: 0.3,
-              max_tokens: 2400,
-              response_format: { type: "json_object" },
+            // ===== 两步生成：蓝图（短 JSON） -> 代码（文件）=====
+            // 目标：降低 MVP_NOT_JSON（减少一次输出体积），并通过 protocol/命名保证蓝图与代码同源不漂移。
+            let activeConfig = genState && typeof genState === "object" && (genState as any).config ? (genState as any).config : null;
+            const answers = (genState as any)?.answers && typeof (genState as any).answers === "object" ? (genState as any).answers : {};
+            let design = (genState as any)?.design && typeof (genState as any).design === "object" ? (genState as any).design : null;
+            const templateHint = buildTemplateHintBlock(seedPrompt, userIntent, answers);
+            const repairBlueprintJson = async (rawText: string) => {
+              const fixerModel = provider === "openrouter"
+                ? pickOpenRouterModel(["qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"])
+                : model;
+              const repairPayload: any = {
+                model: fixerModel,
+                messages: [
+                  { role: "system", content: "你是 JSON 修复器。只输出一个严格 JSON 对象（json_object），不要任何解释或 markdown。" },
+                  {
+                    role: "user",
+                    content:
+                      `请把下面内容修复为严格 JSON，并确保符合 Schema：\n` +
+                      `{\n  "meta": object,\n  "config": object,\n  "protocol": object,\n  "blueprint": object,\n  "assetsPlan": object\n}\n\n` +
+                      `原输出：\n${String(rawText || "").slice(0, 24000)}\n`,
+                  },
+                ],
+                temperature: 0,
+                max_tokens: 1800,
+                response_format: { type: "json_object" },
+              };
+              if (provider === "openrouter" && payloadBase.provider) repairPayload.provider = payloadBase.provider;
+              const repairedText = await callStreamRobust(
+                repairPayload,
+                "阶段2：修复蓝图 JSON",
+                true,
+                ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
+                60_000,
+              );
+              return parseJsonObjectLoose(repairedText);
             };
-            if (provider === "openrouter" && payloadBase.provider) payload.provider = payloadBase.provider;
 
-            let outText = "";
-            try {
-              outText = await autoRetry(
+            // 1) 若还没有 design（蓝图/协议），先生成蓝图并落盘。只在 stage 非 code_pending 时进行。
+            if (!design && stage !== "code_pending") {
+              // 落盘：进入蓝图 pending，保证重试时不会回到阶段0/澄清
+              try {
+                await writeMeta({
+                  ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
+                  _gen: { ...(genState || {}), stage: "blueprint_pending", seedPrompt, config: activeConfig, answers, updatedAt: Date.now() },
+                });
+              } catch {}
+
+              sendStatus(`（1/2）生成蓝图（${provider} / ${mvpModel}）…`);
+              sendMeta({ provider, model, phase: "blueprint" });
+
+              const bpPayload: any = {
+                model,
+                messages: [
+                  { role: "system", content: `${CREATOR_GAME_TYPE_LIBRARY_ADDON}\n\n${BLUEPRINT_PROMPT}` },
+                  {
+                    role: "user",
+                    content:
+                      `【用户最早的主题】\n${seedPrompt}\n\n` +
+                      `【用户补充/本轮输入】\n${userIntent}\n\n` +
+                      `【已选答案（可能为空）】\n${JSON.stringify(answers, null, 2)}\n\n` +
+                      `${templateHint}\n` +
+                      (activeConfig ? `【已有 config（如有）】\n${JSON.stringify(activeConfig, null, 2)}\n\n` : "") +
+                      `请输出蓝图 JSON（含 meta/config/protocol/blueprint/assetsPlan）。`,
+                  },
+                ],
+                temperature: 0.2,
+                max_tokens: 1400,
+                response_format: { type: "json_object" },
+              };
+              if (provider === "openrouter" && payloadBase.provider) bpPayload.provider = payloadBase.provider;
+
+              const bpText = await autoRetry(
                 async () =>
                   await callStreamRobust(
-                    payload,
-                    "单次生成：单文件 MVP",
+                    bpPayload,
+                    "阶段2：蓝图 JSON",
                     true,
-                    // qwen 本身失败时，先在 OpenRouter 内换 deepseek/minimax；OpenRouter 不通时会自动切 DeepSeek 官方 API
                     ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
-                    120_000,
+                    90_000,
                   ),
-                "单文件 MVP",
-                "只输出 JSON，files 仅包含 index.html，且 index.html 必须含 <style> 与 <script>。",
+                "蓝图",
+                "只输出 JSON（meta/config/protocol/blueprint/assetsPlan），严禁输出代码。",
                 2,
               );
-            } catch (e: any) {
-              // 稳定优先：直接回滚 lastGood（如果存在），否则继续抛错
-              const lg = await restoreLastGood(String(e?.message || e));
-              const metaNow = lg.meta || {};
-              const html0 = String(lg.files.find((f: any) => f.path === "index.html")?.content || "");
+              let bpObj = parseJsonObjectLoose(bpText);
+              if (!bpObj) bpObj = await repairBlueprintJson(bpText);
+              if (!bpObj) throw new Error("BLUEPRINT_NOT_JSON");
+              const metaBp = safeMeta((bpObj as any).meta);
+              const cfgBp = (bpObj as any).config || activeConfig || {};
+              design = {
+                meta: metaBp,
+                config: cfgBp,
+                protocol: (bpObj as any).protocol || {},
+                blueprint: (bpObj as any).blueprint || {},
+                assetsPlan: (bpObj as any).assetsPlan || {},
+              };
+              activeConfig = cfgBp;
+              await writeMeta({
+                ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
+                ...metaBp,
+                _gen: { ...(genState || {}), stage: "code_pending", seedPrompt, answers, config: activeConfig, design, updatedAt: Date.now() },
+              });
+            }
+
+            // 2) 代码生成：先出 index.html + style.css，再单独出 game.js
+            // 这样首次生成不必一次吐出三个完整文件，严格 JSON 更稳。
+            // 落盘：进入 code_pending，确保重试时复用同一份蓝图（同源，不漂移）
+            try {
+              await writeMeta({
+                ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
+                _gen: { ...(genState || {}), stage: "code_pending", seedPrompt, answers, config: activeConfig, design, updatedAt: Date.now() },
+              });
+            } catch {}
+
+            const tryRepairJsonOnce = async (raw: string, why: string, schemaHint: string) => {
+              const rawText = String(raw || "");
+              if (!rawText.trim()) return null;
+              // 用户要求：修复模型优先 deepseek/deepseek-v3.2（仅 OpenRouter 可用）
+              const repairModel = provider === "openrouter" ? "deepseek/deepseek-v3.2" : model;
+              sendStatus(`输出 JSON 有问题，我尝试自动修复一次…（原因：${why}）`);
+              sendMeta({ provider, model: repairModel, phase: "json_repair" });
+              const clipped = rawText.length > 12000 ? rawText.slice(0, 12000) : rawText;
+              const repairPayload: any = {
+                model: repairModel,
+                messages: [
+                  { role: "system", content: `你是 JSON 修复器。\n${schemaHint}` },
+                  { role: "user", content: `请把下面“原输出”修复为严格 JSON：\n\n【原输出】\n${clipped}\n` },
+                ],
+                temperature: 0.0,
+                max_tokens: 2400,
+                response_format: { type: "json_object" },
+              };
+              if (provider === "openrouter" && payloadBase.provider) repairPayload.provider = payloadBase.provider;
+              try {
+                const repairedText = await callStreamRobust(
+                  repairPayload,
+                  "阶段：修复输出 JSON",
+                  true,
+                  // 修复阶段也允许在 OpenRouter 内换模型，但仍优先 deepseek
+                  ["deepseek/deepseek-v3.2", "qwen/qwen3.6-plus", "minimax/minimax-m2.5"],
+                  90_000,
+                );
+                return parseJsonObjectLoose(repairedText);
+              } catch {
+                return null;
+              }
+            };
+            const failWithRetry = async (assistant: string, badText = "") => {
+              await writeMeta({
+                ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
+                _gen: { ...(genState || {}), stage: "code_pending", seedPrompt, updatedAt: Date.now(), lastBad: String(badText || "").slice(0, 2000) },
+              });
               const finalObj = {
-                assistant: "本次生成网络不稳定，已回滚到上一次可用版本。",
-                meta: metaNow,
-                files: [{ path: "index.html", content: html0 }, { path: "meta.json", content: JSON.stringify(metaNow, null, 2) }],
+                assistant,
+                meta: readMeta,
+                files: [] as any[],
+                ui: { type: "actions", actions: [{ id: "retry", label: "重试（继续写代码）", payload: "@retry" }] },
               };
               parseCreatorJson(JSON.stringify(finalObj));
               send("final", { ok: true, content: JSON.stringify(finalObj), repaired: true });
               clearInterval(heartbeat);
               controller.close();
               return;
+            };
+
+            const parseFilesObject = async (
+              rawText: string,
+              schemaHint: string,
+              requiredPaths: string[],
+            ): Promise<any | null> => {
+              let obj: any = parseJsonObjectLoose(rawText);
+              if (!obj) obj = await tryRepairJsonOnce(rawText, "NOT_JSON_OR_TRUNCATED", schemaHint);
+              if (!obj) return null;
+              const outFiles = Array.isArray((obj as any).files) ? (obj as any).files : [];
+              const ok = requiredPaths.every((p) => outFiles.some((x: any) => String(x?.path || "").trim() === p && String(x?.content || "").trim()));
+              if (ok) return obj;
+              return (await tryRepairJsonOnce(rawText, `MISSING_${requiredPaths.join("_")}`, schemaHint)) || obj;
+            };
+
+            const htmlCssSchemaHint =
+              `只输出一个严格 JSON 对象（json_object），不要任何解释或 markdown。\n` +
+              `Schema：{\n` +
+              `  "assistant": string,\n` +
+              `  "meta": { "title": string, "shortDesc": string, "rules": string, "creator": { "name": string } },\n` +
+              `  "files": [\n` +
+              `    { "path": "index.html", "content": string },\n` +
+              `    { "path": "style.css", "content": string }\n` +
+              `  ]\n` +
+              `}\n` +
+              `要求：index.html 必须引用 ./style.css 和 ./game.js；不要输出 game.js。\n`;
+            const gameJsSchemaHint =
+              `只输出一个严格 JSON 对象（json_object），不要任何解释或 markdown。\n` +
+              `Schema：{\n` +
+              `  "path": "game.js",\n` +
+              `  "content": string\n` +
+              `}\n`;
+
+            sendStatus(`（2/3）生成页面结构和样式（${provider} / ${mvpModel}）…`);
+            sendMeta({ provider, model, phase: "codegen_html_css" });
+            const htmlCssPayload: any = {
+              model,
+              messages: [
+                { role: "system", content: CODEGEN_HTML_CSS_PROMPT },
+                {
+                  role: "user",
+                  content:
+                    `【用户最早的主题】\n${seedPrompt}\n\n` +
+                    `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
+                    `${templateHint}\n` +
+                    `请只输出 index.html 和 style.css。`,
+                },
+              ],
+              temperature: 0.2,
+              max_tokens: 2200,
+              response_format: { type: "json_object" },
+            };
+            if (provider === "openrouter" && payloadBase.provider) htmlCssPayload.provider = payloadBase.provider;
+
+            let htmlCssText = "";
+            try {
+              htmlCssText = await autoRetry(
+                async () =>
+                  await callStreamRobust(
+                    htmlCssPayload,
+                    "阶段3：页面和样式 JSON",
+                    true,
+                    ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
+                    90_000,
+                  ),
+                "页面和样式",
+                "只输出 JSON，files 中仅包含 index.html 和 style.css。",
+                2,
+              );
+            } catch (e: any) {
+              return await failWithRetry(
+                "我刚刚在生成页面结构和样式时遇到了网络问题。蓝图已经保存好，点“重试”会直接从写代码继续。",
+                String(e?.message || e),
+              );
             }
 
-            // 解析输出
-            const obj = parseJsonObjectLoose(outText);
-            if (!obj) throw new Error("MVP_NOT_JSON");
-            const meta = safeMeta((obj as any).meta);
-            const outFiles = Array.isArray((obj as any).files) ? (obj as any).files : [];
-            const html = String(outFiles.find((x: any) => String(x?.path || "") === "index.html")?.content || "");
-            if (!html.trim()) throw new Error("MVP_EMPTY_INDEX");
+            const htmlCssObj = await parseFilesObject(htmlCssText, htmlCssSchemaHint, ["index.html", "style.css"]);
+            if (!htmlCssObj) {
+              return await failWithRetry(
+                "我刚刚在生成页面结构和样式时，模型输出的 JSON 格式不对（可能内容太长被截断）。你的蓝图我已经保存好了，点“重试”会从写代码继续。",
+                htmlCssText,
+              );
+            }
 
-            await upsertDraftFile("index.html", html);
-            // 写入阶段：生成已开始。清理“澄清/配置确认”阶段字段，避免下一轮对话仍停留在确认态。
+            const meta = safeMeta((htmlCssObj as any).meta);
+            const htmlCssFiles = Array.isArray((htmlCssObj as any).files) ? (htmlCssObj as any).files : [];
+            const html = String(htmlCssFiles.find((x: any) => String(x?.path || "") === "index.html")?.content || "");
+            const css = String(htmlCssFiles.find((x: any) => String(x?.path || "") === "style.css")?.content || "");
+            if (!html.trim() || !css.trim()) {
+              return await failWithRetry(
+                "我生成出来的内容里没有完整找到 index.html 或 style.css。你的蓝图已保存，点“重试”继续写代码即可。",
+                htmlCssText,
+              );
+            }
+            const htmlCssWrite = await writeDraftFilesDetailed([
+              { path: "index.html", content: html },
+              { path: "style.css", content: css },
+            ]);
+            const metaAfterHtmlCss = applyPersistStatus((await readMetaObj()) || readMeta || {}, "html_css", htmlCssWrite, ["index.html", "style.css"]);
+            try {
+              await writeMeta(metaAfterHtmlCss);
+            } catch {}
+            if (!htmlCssWrite.ok) {
+              return await failWithRetry(
+                "页面和样式已经生成出来了，但写回数据库时没有完全成功。点“重试”我会从已生成结果继续。",
+                JSON.stringify(htmlCssWrite.failed),
+              );
+            }
+
+            sendStatus(`（3/3）生成核心逻辑（${provider} / ${mvpModel}）…`);
+            sendMeta({ provider, model, phase: "codegen_game_js" });
+            const gameJsPayload: any = {
+              model,
+              messages: [
+                { role: "system", content: coderPrompt(design || { config: activeConfig }, "game.js", quality === "quality") },
+                {
+                  role: "user",
+                  content:
+                    `【用户最早的主题】\n${seedPrompt}\n\n` +
+                    `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
+                    `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }, { path: "style.css", content: css }], null, 2)}\n\n` +
+                    `${templateHint}\n` +
+                    `请只输出 game.js 的 JSON。`,
+                },
+              ],
+              temperature: 0.2,
+              max_tokens: 2200,
+              response_format: { type: "json_object" },
+            };
+            if (provider === "openrouter" && payloadBase.provider) gameJsPayload.provider = payloadBase.provider;
+
+            let gameJsText = "";
+            try {
+              gameJsText = await autoRetry(
+                async () =>
+                  await callStreamRobust(
+                    gameJsPayload,
+                    "阶段4：核心逻辑 JSON",
+                    true,
+                    ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
+                    90_000,
+                  ),
+                "核心逻辑",
+                "只输出 JSON，结构为 {path:\"game.js\", content:\"...\"}。",
+                2,
+              );
+            } catch (e: any) {
+              return await failWithRetry(
+                "我刚刚在生成核心逻辑时遇到了网络问题。蓝图和页面结构已经保存好，点“重试”会直接从写代码继续。",
+                String(e?.message || e),
+              );
+            }
+
+            let gameJsObj: any = parseJsonObjectLoose(gameJsText);
+            if (!gameJsObj) gameJsObj = await tryRepairJsonOnce(gameJsText, "GAME_JS_NOT_JSON", gameJsSchemaHint);
+            const jsPath = String((gameJsObj as any)?.path || "").trim();
+            const jsContent = String((gameJsObj as any)?.content || "");
+            if (!gameJsObj || jsPath !== "game.js" || !jsContent.trim()) {
+              return await failWithRetry(
+                "我刚刚在生成核心逻辑时，模型输出的 JSON 格式不对（可能内容太长被截断）。你的蓝图和页面结构已保存，点“重试”会从写代码继续。",
+                gameJsText,
+              );
+            }
+            const gameJsWrite = await writeDraftFilesDetailed([{ path: "game.js", content: jsContent }]);
+            const metaAfterGameJs = applyPersistStatus((await readMetaObj()) || readMeta || {}, "game_js", gameJsWrite, ["game.js"]);
+            try {
+              await writeMeta(metaAfterGameJs);
+            } catch {}
+            if (!gameJsWrite.ok) {
+              return await failWithRetry(
+                "核心逻辑已经生成出来了，但写回数据库时没有完全成功。点“重试”我会从已生成结果继续。",
+                JSON.stringify(gameJsWrite.failed),
+              );
+            }
+
             const metaNow = {
               ...meta,
               _gen: {
                 ...(genState || {}),
                 v: 1,
-                stage: "monolith_mvp",
-                // 保留已确认的 config（若存在），便于后续迭代复用
+                stage: "code_done",
                 ...(activeConfig ? { config: activeConfig } : {}),
-                // 清理澄清中间变量
                 clarify: undefined,
+                persist: {
+                  step: "finalized",
+                  ok: true,
+                  expected: ["index.html", "style.css", "game.js"],
+                  written: ["index.html", "style.css", "game.js"],
+                  failed: [],
+                  updatedAt: Date.now(),
+                },
                 updatedAt: Date.now(),
               },
             };
-            await setLastGood(metaNow, [{ path: "index.html", content: html }], "after_generate");
-
-            // 最小验收：语法检查；若失败则仅自愈 1 轮，仍失败回滚 lastGood
-            const errs = validateScripts(html);
-            let finalHtml = html;
-            if (errs.length) {
-              try {
-                sendStatus(`检测到语法问题，自动修复一次…`);
-                const debugModel = hasOpenRouter
-                  ? pickOpenRouterModel([envModelOrEmpty("CREATOR_DEBUG_MODEL"), "openai/gpt-4o-mini", "qwen/qwen3.6-plus"].filter(Boolean) as string[])
-                  : model;
-                if (provider === "openrouter") model = debugModel;
-                sendMeta({ provider, model, phase: "debug_once" });
-                const debugPayload: any = {
-                  model,
-                  messages: [
-                    { role: "system", content: DEBUG_PROMPT },
-                    {
-                      role: "user",
-                      content:
-                        `【错误】\n${errs.join("\n")}\n\n` +
-                        `【当前 index.html】\n${finalHtml}\n\n` +
-                        `请输出修复后的 JSON：{assistant, files:[{path:\"index.html\", content:\"...\"}]}（只修语法错误）。`,
-                    },
-                  ],
-                  temperature: 0.1,
-                  max_tokens: 1600,
-                  response_format: { type: "json_object" },
-                };
-                if (provider === "openrouter" && payloadBase.provider) debugPayload.provider = payloadBase.provider;
-                const fixedText = await callStreamRobust(
-                  debugPayload,
-                  "Debug：修复 index.html",
-                  true,
-                  ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
-                  60_000,
-                );
-                const fixedObj = parseJsonObjectLoose(fixedText);
-                const ffiles = Array.isArray((fixedObj as any)?.files) ? (fixedObj as any).files : [];
-                const html2 = String(ffiles.find((x: any) => String(x?.path || "") === "index.html")?.content || "");
-                if (html2.trim() && !validateScripts(html2).length) {
-                  finalHtml = html2;
-                  await upsertDraftFile("index.html", finalHtml);
-                  const meta2 = (await readMetaObj()) || metaNow;
-                  await setLastGood(meta2, [{ path: "index.html", content: finalHtml }], "after_debug");
-                } else {
-                  throw new Error("DEBUG_FAILED");
-                }
-              } catch (e: any) {
-                const lg = await restoreLastGood(String(e?.message || e));
-                finalHtml = String(lg.files.find((f: any) => f.path === "index.html")?.content || "");
-              }
+            const finalFiles: Array<{ path: string; content: string }> = [
+              { path: "index.html", content: html },
+              { path: "style.css", content: css },
+              { path: "game.js", content: jsContent },
+            ];
+            let stableFiles = finalFiles;
+            const acceptanceErrs: string[] = [];
+            try {
+              if (jsContent.trim()) new Script(jsContent);
+            } catch (e: any) {
+              acceptanceErrs.push(`game.js 语法错误：${String(e?.message || e)}`);
             }
+            const indexRef = finalFiles.find((f) => f.path === "index.html")?.content || "";
+            if (!/href\s*=\s*["']\.\/style\.css["']/.test(indexRef)) acceptanceErrs.push("index.html 未正确引用 ./style.css");
+            if (!/src\s*=\s*["']\.\/game\.js["']/.test(indexRef)) acceptanceErrs.push("index.html 未正确引用 ./game.js");
+            if (acceptanceErrs.length) {
+              return await failWithRetry(
+                "我已经把三个文件都生成出来了，但首次联调检查没通过。蓝图和代码草稿已保存，点“重试”我会继续修。",
+                acceptanceErrs.join("\n"),
+              );
+            }
+            await writeMeta(metaNow);
 
             const metaFinal = (await readMetaObj()) || metaNow;
             const assistantText = `已生成可运行版本：${String((metaFinal as any)?.title || meta.title || "").trim() || "未命名作品"}。`;
-            // 生成完成后再尝试拆分成三文件（用户偏好），拆分失败则保留单文件
-            let finalFiles: Array<{ path: string; content: string }> = [{ path: "index.html", content: finalHtml }];
-            try {
-              const sp = splitSingleFile(finalHtml);
-              if (sp && !validateScripts(sp.index, sp.js).length && /href\s*=\s*["']\.\/style\.css["']/.test(sp.index)) {
-                await upsertDraftFile("index.html", sp.index);
-                await upsertDraftFile("style.css", sp.css);
-                await upsertDraftFile("game.js", sp.js);
-                finalFiles = [
-                  { path: "index.html", content: sp.index },
-                  { path: "style.css", content: sp.css },
-                  { path: "game.js", content: sp.js },
-                ];
-                await setLastGood(metaFinal, finalFiles, "after_split");
-              }
-            } catch {}
             const finalObj = {
               assistant: assistantText,
               meta: metaFinal,
-              files: [...finalFiles, { path: "meta.json", content: JSON.stringify(metaFinal, null, 2) }],
+              files: [...stableFiles, { path: "meta.json", content: JSON.stringify(metaFinal, null, 2) }],
             };
             parseCreatorJson(JSON.stringify(finalObj));
             send("final", { ok: true, content: JSON.stringify(finalObj), repaired: false });
@@ -1672,28 +2764,17 @@ export async function POST(req: Request) {
           // ===== 新方案：Architect -> 单文件 MVP -> （沙箱自愈）-> 拆分 -> 迭代补丁 =====
           const hasOpenRouter = !!(process.env.OPENROUTER_API_KEY || "");
 
-          // 环境变量覆盖：便于线上/本地根据地区可用性调整
-          const architectOverride = envModelOrEmpty("CREATOR_ARCHITECT_MODEL");
-          const mvpOverride = envModelOrEmpty("CREATOR_MVP_MODEL");
-          const refineOverride = envModelOrEmpty("CREATOR_REFINE_MODEL");
+          // 模型选择：优先使用前端“彩蛋”里用户选定的 model（请求 body 传入）。
+          // 这样 Architect/MVP/Refine 都同源，减少“变量/规则漂移”。
+          // Debug 阶段仍可使用更稳的兜底模型。
           const debugOverride = envModelOrEmpty("CREATOR_DEBUG_MODEL");
-
-          const architectModel = hasOpenRouter
-            ? pickOpenRouterModel(
-                [architectOverride, "qwen/qwen3.6-plus", "minimax/minimax-m2.5", "deepseek/deepseek-v3.2"].filter(Boolean) as string[],
-              )
-            : model;
-          const mvpModel = hasOpenRouter
-            ? pickOpenRouterModel([mvpOverride, "qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"].filter(Boolean) as string[])
-            : model;
-          const refineModel = hasOpenRouter
-            ? pickOpenRouterModel(
-                [refineOverride, "qwen/qwen3.6-plus", "minimax/minimax-m2.5", "deepseek/deepseek-v3.2"].filter(Boolean) as string[],
-              )
-            : model;
+          const chosen = String(model || "").trim() || "qwen/qwen3.6-plus";
+          const architectModel = chosen;
+          const mvpModel = chosen;
+          const refineModel = chosen;
           const debugModel = hasOpenRouter
             ? pickOpenRouterModel([debugOverride, "openai/gpt-4o-mini", "qwen/qwen3.6-plus", "deepseek/deepseek-v3.2"].filter(Boolean) as string[])
-            : model;
+            : chosen;
 
           // 必须有 gameId 才能做“可用成果持久化 + 失败不归零”
           if (!safeGameId || !ownerKey) throw new Error("MISSING_GAME_ID");
@@ -1708,34 +2789,15 @@ export async function POST(req: Request) {
           const ownRows = Array.isArray((owns as any).rows) ? (owns as any).rows : [];
           if (!ownRows.length) throw new Error("NOT_YOUR_GAME");
 
-          const upsertDraftFile = async (path: string, content: string) => {
-            await db.execute(sql`
-              insert into creator_draft_files (game_id, path, content)
-              values (${safeGameId}, ${path}, ${content})
-              on conflict (game_id, path)
-              do update set content = excluded.content, updated_at = now()
-            `);
-          };
-          const readDraftFile = async (path: string) => {
-            const rows = await db.execute(sql`
-              select content
-              from creator_draft_files
-              where game_id = ${safeGameId} and path = ${path}
-              limit 1
-            `);
-            const list = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
-            const c = list?.[0]?.content;
-            return typeof c === "string" ? c : "";
-          };
+          const draftStore = createDraftStore(safeGameId);
+          const upsertDraftFile = async (path: string, content: string) => await draftStore.writeFile(path, content);
+          const readDraftFile = async (path: string) => await draftStore.readFile(path);
+          const readDraftFiles = async (paths: string[]) => await draftStore.readFiles(paths);
 
           const hash12 = (s: string) => crypto.createHash("sha1").update(String(s || "")).digest("hex").slice(0, 12);
           const showModel = () => `${provider} / ${model}`;
 
-          const readMetaObj = async () => {
-            const metaRaw = await readDraftFile("meta.json");
-            const metaObj = metaRaw ? parseJsonObjectLoose(metaRaw) : null;
-            return metaObj && typeof metaObj === "object" ? metaObj : null;
-          };
+          const readMetaObj = async () => await draftStore.readMeta();
 
           const validateScripts = (files: Array<{ path: string; content: string }>) => {
             const err: string[] = [];
@@ -1904,9 +2966,10 @@ export async function POST(req: Request) {
           };
 
           // ===== 读取当前工程状态 =====
-          const index0 = await readDraftFile("index.html");
-          const style0 = await readDraftFile("style.css");
-          const game0 = await readDraftFile("game.js");
+          const currentDraft0 = await readDraftFiles(["index.html", "style.css", "game.js"]);
+          const index0 = currentDraft0["index.html"] || "";
+          const style0 = currentDraft0["style.css"] || "";
+          const game0 = currentDraft0["game.js"] || "";
           const meta0 = await readMetaObj();
           const plan0 = meta0 && typeof (meta0 as any)._plan === "object" ? (meta0 as any)._plan : null;
           const gen0 = meta0 && typeof (meta0 as any)._gen === "object" ? (meta0 as any)._gen : null;
@@ -2032,10 +3095,9 @@ export async function POST(req: Request) {
           const hasIndex = !!index0.trim();
           if (!hasIndex) {
             sendStatus(`（2/3）生成单文件 MVP（${provider} / ${mvpModel}）…`);
-            if (provider === "openrouter") model = mvpModel;
-            sendMeta({ provider, model, phase: "mvp" });
+            sendMeta({ provider, model: mvpModel, phase: "mvp" });
             const payload: any = {
-              model,
+              model: mvpModel,
               messages: [
                 { role: "system", content: MVP_PROMPT },
                 { role: "user", content: `【蓝图】\n${JSON.stringify(blueprint, null, 2)}\n\n【用户需求】\n${userIntent}\n` },

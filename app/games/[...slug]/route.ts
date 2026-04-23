@@ -26,8 +26,14 @@ function safeRel(rel: string) {
   return s;
 }
 
+function stripDangerousLocalBehaviorArtifacts(html: string) {
+  return String(html || "")
+    .replace(/\n?\s*<style\b[^>]*data-ai-local-behavior=["']1["'][^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/\n?\s*<script\b[^>]*data-ai-local-behavior=["']1["'][^>]*>[\s\S]*?<\/script>/gi, "");
+}
+
 function injectEmbedCleanup(html: string) {
-  const src = String(html || "");
+  const src = stripDangerousLocalBehaviorArtifacts(html);
   // 只用于“嵌入模式”：把创作者/规则信息从游戏区隐藏（信息在右栏展示）
   const css =
     "<style id='embed-hide-style'>" +
@@ -467,7 +473,11 @@ export async function GET(_req: Request, ctx: { params: Promise<{ slug: string[]
   const draftContent = draftList?.[0]?.content;
   if (typeof draftContent === "string") {
     const contentOut =
-      isEmbed && (relEmbed || "").toLowerCase().endsWith(".html") ? injectEmbedCleanup(draftContent) : draftContent;
+      (isEmbed || isRaw) && (isEmbed ? relEmbed : relRaw || "").toLowerCase().endsWith(".html")
+        ? isEmbed
+          ? injectEmbedCleanup(draftContent)
+          : stripDangerousLocalBehaviorArtifacts(draftContent)
+        : draftContent;
     return new NextResponse(contentOut, {
       status: 200,
       headers: {
@@ -517,7 +527,12 @@ export async function GET(_req: Request, ctx: { params: Promise<{ slug: string[]
   const list = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
   const content = list?.[0]?.content;
   if (typeof content === "string") {
-    const contentOut = isEmbed && (relEmbed || "").toLowerCase().endsWith(".html") ? injectEmbedCleanup(content) : content;
+    const contentOut =
+      (isEmbed || isRaw) && (isEmbed ? relEmbed : relRaw || "").toLowerCase().endsWith(".html")
+        ? isEmbed
+          ? injectEmbedCleanup(content)
+          : stripDangerousLocalBehaviorArtifacts(content)
+        : content;
     return new NextResponse(contentOut, {
       status: 200,
       headers: {

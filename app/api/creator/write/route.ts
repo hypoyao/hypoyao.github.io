@@ -57,6 +57,18 @@ function toKeywordFromPrompt(s: string) {
   return k;
 }
 
+function stripDangerousLocalBehaviorArtifacts(path: string, content: string) {
+  const rel = String(path || "").trim();
+  const raw = String(content || "");
+  if (!raw) return raw;
+  if (rel === "index.html") {
+    return raw
+      .replace(/\n?\s*<style\b[^>]*data-ai-local-behavior=["']1["'][^>]*>[\s\S]*?<\/style>/gi, "")
+      .replace(/\n?\s*<script\b[^>]*data-ai-local-behavior=["']1["'][^>]*>[\s\S]*?<\/script>/gi, "");
+  }
+  return raw;
+}
+
 export async function POST(req: Request) {
   try {
     const sess = await getSession();
@@ -94,12 +106,39 @@ export async function POST(req: Request) {
       `);
     }
 
+    // Neon/网络抖动时偶发会报 “Failed query: ...”，这里做一次轻量重试，避免用户直接看到 WRITE_INTERNAL。
+    const execTitleSelect = async () =>
+      await db.execute(sql`
+        select title
+        from creator_draft_games
+        where id = ${gid} and owner_key = ${ownerKey}
+        limit 1
+      `);
+    let titleRows: any = null;
+    try {
+      titleRows = await execTitleSelect();
+    } catch (e1: any) {
+      // 兼容旧表缺列/进程内 ensure 缓存：强制迁移一次，再重试
+      try {
+        await ensureCreatorDraftTables(true);
+      } catch {}
+      try {
+        titleRows = await execTitleSelect();
+      } catch (e2: any) {
+        // 仍失败：降级处理（不阻塞写文件），title 冻结逻辑与 updated_at 更新会尽量继续执行
+        titleRows = { rows: [] } as any;
+      }
+    }
+    const titleList = Array.isArray((titleRows as any).rows) ? (titleRows as any).rows : [];
+    const existingTitle = String(titleList?.[0]?.title || "").trim();
+    const shouldFreezeTitleFromFirstPrompt = !existingTitle;
+
     const written: string[] = [];
     let updatedTitle = "";
     for (const f of files) {
       const rel = safeRel(f?.path || "");
       if (!rel) continue;
-      const content = typeof f?.content === "string" ? f.content : "";
+      const content = stripDangerousLocalBehaviorArtifacts(rel, typeof f?.content === "string" ? f.content : "");
       if (body.seed && rel === "index.html") {
         // seed：如果 index 已存在就不覆盖
         const ex = await db.execute(sql`
@@ -120,30 +159,42 @@ export async function POST(req: Request) {
       `);
       written.push(`/games/${gid}/${rel}`);
 
-      // 同步 title
-      if (rel === "prompt.md") {
+      // 只在“第一次写入用户需求”时固化标题，后续增量修改不再覆盖。
+      if (shouldFreezeTitleFromFirstPrompt && rel === "prompt.md" && !updatedTitle) {
         const k = toKeywordFromPrompt(content);
         if (k) updatedTitle = k;
-      } else if (rel === "index.html") {
-        const m = content.match(/<title>\s*([^<]{1,80})\s*<\/title>/i);
-        if (m && m[1]) updatedTitle = String(m[1]).trim();
       }
     }
 
     if (!written.length) return json(400, { ok: false, error: "NO_VALID_FILES" });
 
-    await db.execute(sql`
-      update creator_draft_games
-      set updated_at = now(),
-          title = case when ${updatedTitle} <> '' then ${updatedTitle} else title end
-      where id = ${gid} and owner_key = ${ownerKey}
-    `);
+    // 更新 meta（updated_at + 首次标题）：若数据库暂时异常/列不齐，写文件仍然已经成功，不能因此让用户“生成归零”
+    try {
+      await db.execute(sql`
+        update creator_draft_games
+        set updated_at = now(),
+            title = case when ${shouldFreezeTitleFromFirstPrompt} and ${updatedTitle} <> '' then ${updatedTitle} else title end
+        where id = ${gid} and owner_key = ${ownerKey}
+      `);
+    } catch {
+      try {
+        await db.execute(sql`
+          update creator_draft_games
+          set updated_at = now()
+          where id = ${gid} and owner_key = ${ownerKey}
+        `);
+      } catch {
+        // ignore
+      }
+    }
 
     return json(200, { ok: true, written, gameId: gid, entry: `/games/${gid}/index.html` });
   } catch (e: any) {
     const code = e?.code || e?.cause?.code || "";
     const msg = String(e?.message || e);
+    const causeMsg = String(e?.cause?.message || "");
+    const tail = causeMsg && !msg.includes(causeMsg) ? ` CAUSE:${causeMsg}` : "";
     // 把系统错误码也带上，方便定位（例如 EROFS/EPERM）
-    return json(500, { ok: false, error: `WRITE_INTERNAL:${String(code || "")}:${msg}` });
+    return json(500, { ok: false, error: `WRITE_INTERNAL:${String(code || "")}:${msg}${tail}` });
   }
 }

@@ -12,8 +12,14 @@ export default async function CreatePage({
 }) {
   const sp = searchParams ? await searchParams : ({} as any);
   const initialPrompt = typeof sp?.prompt === "string" ? sp.prompt.slice(0, 800) : "";
-  const autoStart = typeof sp?.auto === "string" && sp.auto === "1";
+  // auto=1 仅在 prompt 非空时才有意义；否则会造成“看似要自动开始但其实没内容”的误导
+  const autoStart = typeof sp?.auto === "string" && sp.auto === "1" && !!initialPrompt.trim();
   const initialGameId = typeof sp?.id === "string" ? sp.id.trim().slice(0, 80) : "";
+
+  // 清理无效 auto=1（避免用户从首页不小心提交空 prompt 后进入奇怪状态）
+  if (typeof sp?.auto === "string" && sp.auto === "1" && !initialPrompt.trim() && !initialGameId) {
+    redirect("/create");
+  }
 
   // 创作入口必须登录
   const sess = await getSession();
