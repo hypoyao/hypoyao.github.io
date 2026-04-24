@@ -220,9 +220,9 @@ Schema：
 `.trim();
 
 
-const CODEGEN_HTML_CSS_PROMPT = `
+const CODEGEN_HTML_PROMPT = `
 你是“前端小游戏页面生成器”。你会收到一份已经确认好的蓝图 JSON（其中包含 meta/config/protocol/blueprint/assetsPlan）。
-你的任务是先生成稳定的页面结构和样式，只输出 index.html 与 style.css。
+你的任务是先生成稳定的页面结构，只输出 index.html。
 
 【硬性要求】
 1) 只输出合法 JSON（json_object），不要任何解释或 markdown。
@@ -230,15 +230,24 @@ const CODEGEN_HTML_CSS_PROMPT = `
 {
   "assistant": "一句话说明已生成什么",
   "meta": { "title": "...", "shortDesc": "...", "rules": "...", "creator": { "name": "..." } },
-  "files": [
-    { "path": "index.html", "content": "..." },
-    { "path": "style.css", "content": "..." }
-  ]
+  "files": [{ "path": "index.html", "content": "..." }]
 }
 3) index.html 必须正确引用 ./style.css 和 ./game.js，但不要内联大段脚本逻辑。
-4) style.css 负责主要布局和视觉表现；先保证结构清楚、DOM id 稳定。
-5) 严禁输出 game.js。
+4) 先保证结构清楚、DOM id 稳定、页面容器完整。
+5) 严禁输出 style.css 和 game.js。
 6) 严禁输出 data-ai-local-behavior 之类的注入脚本；不要用 MutationObserver + 轮询去外挂式修改页面。
+`.trim();
+
+const CODEGEN_CSS_PROMPT = `
+你是“前端小游戏样式生成器”。你会收到蓝图 JSON 和已经生成好的 index.html。
+你的任务是只输出 style.css 纯文本，为当前页面结构补上稳定、清晰、适合儿童使用的布局与视觉样式。
+
+【硬性要求】
+1) 只输出 style.css 的纯 CSS 文本，不要输出 JSON，不要解释，不要 markdown 说明。
+2) 如果你一定要使用代码块，也只能输出一个 \`\`\`css ... \`\`\` 代码块，里面只放 CSS。
+3) 不要输出 index.html 或 game.js。
+4) 样式优先保证清晰布局、大按钮、稳定响应式，不要为了炫技写过长或过度复杂的 CSS。
+5) 严禁依赖外部资源、远程字体或注入脚本。
 `.trim();
 
 const FIXER_PROMPT = `
@@ -276,6 +285,20 @@ function parseJsonObjectLoose(s: string) {
     } catch {}
   }
   return null;
+}
+
+function extractPlainCodeText(raw: string, languageHints: string[] = []) {
+  const text = String(raw || "").trim();
+  if (!text) return "";
+  for (const lang of languageHints) {
+    // 注意：这里不能直接在模板字符串里写 ```，会与 TS 的反引号字符串冲突
+    const re = new RegExp(`^\\s*\\\`\\\`\\\`${lang}\\s*([\\s\\S]*?)\\s*\\\`\\\`\\\`\\s*$`, "i");
+    const m = text.match(re);
+    if (m?.[1]) return String(m[1]).trim();
+  }
+  const generic = text.match(/^\s*```[a-zA-Z0-9_-]*\s*([\s\S]*?)\s*```\s*$/i);
+  if (generic?.[1]) return String(generic[1]).trim();
+  return text;
 }
 
 function safeMeta(meta: any) {
@@ -1207,10 +1230,60 @@ export async function POST(req: Request) {
           }
         };
 
-        const callStreamRobust = async (payload: any, stepTag: string, strictJson = false, timeoutMs = 180_000) => {
+        const callStreamRobust = async (
+          payload: any,
+          stepTag: string,
+          strictJson = false,
+          // 兼容两种调用方式：
+          // - (payload, tag, strictJson, timeoutMs)
+          // - (payload, tag, strictJson, fallbackModels, timeoutMs)
+          fallbackModelsOrTimeout: string[] | number = [],
+          timeoutMs = 180_000,
+        ) => {
+          const fallbackModels = Array.isArray(fallbackModelsOrTimeout) ? fallbackModelsOrTimeout : [];
+          const realTimeout = typeof fallbackModelsOrTimeout === "number" ? fallbackModelsOrTimeout : timeoutMs;
           try {
-            return await callStreamToString(payload, stepTag, strictJson, timeoutMs);
+            return await callStreamToString(payload, stepTag, strictJson, realTimeout);
           } catch (e: any) {
+            const em = String(e?.message || e);
+            const eml = em.toLowerCase();
+
+            const canSwapModel = provider === "openrouter" && Array.isArray(fallbackModels) && fallbackModels.length > 0;
+            const isRegionBlocked =
+              eml.includes("not available in your region") ||
+              eml.includes("region") ||
+              eml.includes("country") ||
+              eml.includes("location");
+            const isModelUnavailable =
+              eml.includes("model_not_found") ||
+              eml.includes("model not found") ||
+              eml.includes("not a valid model id") ||
+              eml.includes("invalid model id") ||
+              eml.includes("deprecated") ||
+              eml.includes("not available");
+            const isNetwork =
+              eml.includes("fetch_failed") || eml.includes("network error") || eml.includes("timeout") || eml.includes("gateway");
+
+            if (canSwapModel && (isRegionBlocked || isModelUnavailable || isNetwork)) {
+              const curModel = String(payload?.model || "");
+              const pickFallback = () => {
+                // 你之前的约定：fallback 优先 deepseek/deepseek-v3.2
+                if (fallbackModels.includes("deepseek/deepseek-v3.2") && curModel !== "deepseek/deepseek-v3.2") return "deepseek/deepseek-v3.2";
+                for (const m of fallbackModels) {
+                  if (m && m !== curModel) return m;
+                }
+                return "";
+              };
+              const picked = pickFallback();
+              if (picked) {
+                sendStatus(`当前模型不稳定/不可用，我切换到 ${picked} 再试一次…`);
+                sendMeta({ provider, model: picked, reason: "fallback_model_unstable" });
+                const p2: any = { ...payload, model: picked };
+                // 对 Gemini 的 provider routing 仅对 gemini 生效；换到 deepseek/qwen 就不需要了
+                if (!String(picked).toLowerCase().startsWith("google/")) delete p2.provider;
+                return await callStreamToString(p2, stepTag, strictJson, realTimeout);
+              }
+            }
             throw e;
           }
         };
@@ -2132,8 +2205,8 @@ export async function POST(req: Request) {
             };
             if (!design && stage !== "code_pending") await generateBlueprintStep();
 
-            // 2) 代码生成：先出 index.html + style.css，再单独出 game.js
-            // 这样首次生成不必一次吐出三个完整文件，严格 JSON 更稳。
+            // 2) 代码生成：先出 index.html，再出 style.css，最后单独出 game.js
+            // 避免把 index.html + style.css 塞进同一个 JSON，降低在第二个文件附近截断的概率。
             // 落盘：进入 code_pending，确保重试时复用同一份蓝图（同源，不漂移）
             await markCodePending();
 
@@ -2196,87 +2269,146 @@ export async function POST(req: Request) {
               if (ok) return obj;
               return (await tryRepairJsonOnce(rawText, `MISSING_${requiredPaths.join("_")}`, schemaHint)) || obj;
             };
-            const generateHtmlCssStep = async () => {
-              sendStatus(`（2/3）生成页面结构和样式（${provider} / ${mvpModel}）…`);
-              sendMeta({ provider, model, phase: "codegen_html_css" });
-              const htmlCssPayload: any = {
+            const generateHtmlStep = async () => {
+              sendStatus(`（2/4）生成页面结构（${provider} / ${mvpModel}）…`);
+              sendMeta({ provider, model, phase: "codegen_html" });
+              const htmlPayload: any = {
                 model,
                 messages: [
-                  { role: "system", content: CODEGEN_HTML_CSS_PROMPT },
+                  { role: "system", content: CODEGEN_HTML_PROMPT },
                   {
                     role: "user",
                     content:
                       `【用户最早的主题】\n${seedPrompt}\n\n` +
                       `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
                       `${templateHint}\n` +
-                      `请只输出 index.html 和 style.css。`,
+                      `请只输出 index.html。`,
                   },
                 ],
                 temperature: 0.2,
-                max_tokens: 1700,
+                max_tokens: 1200,
                 response_format: { type: "json_object" },
               };
-              if (provider === "openrouter" && payloadBase.provider) htmlCssPayload.provider = payloadBase.provider;
+              if (provider === "openrouter" && payloadBase.provider) htmlPayload.provider = payloadBase.provider;
 
-              let htmlCssText = "";
+              let htmlText = "";
               try {
-                htmlCssText = await autoRetry(
+                htmlText = await autoRetry(
                   async () =>
-                    await callStreamRobust(htmlCssPayload, "阶段3：页面和样式 JSON", true, 90_000),
-                  "页面和样式",
-                  "只输出 JSON，files 中仅包含 index.html 和 style.css。",
+                    await callStreamRobust(htmlPayload, "阶段3：页面结构 JSON", true, 90_000),
+                  "页面结构",
+                  "只输出 JSON，files 中仅包含 index.html。",
                   2,
                 );
               } catch (e: any) {
-                logStep("html_css.request_failed", String(e?.message || e));
+                logStep("html.request_failed", String(e?.message || e));
                 return await failWithRetry(
-                  "我刚刚在生成页面结构和样式时遇到了网络问题。蓝图已经保存好，点“重试”会直接从写代码继续。",
+                  "我刚刚在生成页面结构时遇到了网络问题。蓝图已经保存好，点“重试”会直接从写代码继续。",
                   String(e?.message || e),
                 );
               }
 
-              logStep("html_css.raw", htmlCssText);
-              const htmlCssObj = await parseFilesObject(htmlCssText, htmlCssSchemaHint, ["index.html", "style.css"]);
-              if (!htmlCssObj) {
-                logStep("html_css.not_json", htmlCssText);
+              logStep("html.raw", htmlText);
+              const htmlObj = await parseFilesObject(htmlText, htmlSchemaHint, ["index.html"]);
+              if (!htmlObj) {
+                logStep("html.not_json", htmlText);
                 return await failWithRetry(
-                  "我刚刚在生成页面结构和样式时，模型输出的 JSON 格式不对（可能内容太长被截断）。你的蓝图我已经保存好了，点“重试”会从写代码继续。",
-                  htmlCssText,
+                  "我刚刚在生成页面结构时，模型输出的 JSON 格式不对（可能内容太长被截断）。你的蓝图我已经保存好了，点“重试”会从写代码继续。",
+                  htmlText,
                 );
               }
 
-              const stepMeta = safeMeta((htmlCssObj as any).meta);
-              const htmlCssFiles = Array.isArray((htmlCssObj as any).files) ? (htmlCssObj as any).files : [];
-              const html = String(htmlCssFiles.find((x: any) => String(x?.path || "") === "index.html")?.content || "");
-              const css = String(htmlCssFiles.find((x: any) => String(x?.path || "") === "style.css")?.content || "");
-              if (!html.trim() || !css.trim()) {
-                logStep("html_css.missing_files", { files: htmlCssFiles });
+              const stepMeta = safeMeta((htmlObj as any).meta);
+              const htmlFiles = Array.isArray((htmlObj as any).files) ? (htmlObj as any).files : [];
+              const html = String(htmlFiles.find((x: any) => String(x?.path || "") === "index.html")?.content || "");
+              if (!html.trim()) {
+                logStep("html.missing_file", { files: htmlFiles });
                 return await failWithRetry(
-                  "我生成出来的内容里没有完整找到 index.html 或 style.css。你的蓝图已保存，点“重试”继续写代码即可。",
-                  htmlCssText,
+                  "我生成出来的内容里没有完整找到 index.html。你的蓝图已保存，点“重试”继续写代码即可。",
+                  htmlText,
                 );
               }
-              const htmlCssWrite = await writeDraftFilesDetailed([
-                { path: "index.html", content: html },
-                { path: "style.css", content: css },
-              ]);
-              logStep("html_css.persist", htmlCssWrite);
-              const metaAfterHtmlCss = applyPersistStatus((await readMetaObj()) || readMeta || {}, "html_css", htmlCssWrite, ["index.html", "style.css"]);
+              const htmlWrite = await writeDraftFilesDetailed([{ path: "index.html", content: html }]);
+              logStep("html.persist", htmlWrite);
+              const metaAfterHtml = applyPersistStatus((await readMetaObj()) || readMeta || {}, "html", htmlWrite, ["index.html"]);
               try {
-                await writeMeta(metaAfterHtmlCss);
+                await writeMeta(metaAfterHtml);
               } catch (e: any) {
-                logStep("html_css.persist_meta_failed", String(e?.message || e));
+                logStep("html.persist_meta_failed", String(e?.message || e));
               }
-              if (!htmlCssWrite.ok) {
+              if (!htmlWrite.ok) {
                 return await failWithRetry(
-                  "页面和样式已经生成出来了，但写回数据库时没有完全成功。点“重试”我会从已生成结果继续。",
-                  JSON.stringify(htmlCssWrite.failed),
+                  "页面结构已经生成出来了，但写回数据库时没有完全成功。点“重试”我会从已生成结果继续。",
+                  JSON.stringify(htmlWrite.failed),
                 );
               }
-              return { meta: stepMeta, html, css };
+              return { meta: stepMeta, html };
+            };
+            const generateCssStep = async (html: string) => {
+              sendStatus(`（3/4）生成页面样式（${provider} / ${mvpModel}）…`);
+              sendMeta({ provider, model, phase: "codegen_css" });
+              const cssPayload: any = {
+                model,
+                messages: [
+                  { role: "system", content: CODEGEN_CSS_PROMPT },
+                  {
+                    role: "user",
+                    content:
+                      `【用户最早的主题】\n${seedPrompt}\n\n` +
+                      `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
+                      `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }], null, 2)}\n\n` +
+                      `${templateHint}\n` +
+                      `请只输出 style.css 纯文本，不要输出 JSON。`,
+                  },
+                ],
+                temperature: 0.2,
+                max_tokens: 1000,
+              };
+              if (provider === "openrouter" && payloadBase.provider) cssPayload.provider = payloadBase.provider;
+
+              let cssText = "";
+              try {
+                cssText = await autoRetry(
+                  async () => await callStreamRobust(cssPayload, "阶段4：页面样式 CSS", false, 90_000),
+                  "页面样式",
+                  "只输出 style.css 纯文本，不要解释，不要 JSON。",
+                  2,
+                );
+              } catch (e: any) {
+                logStep("css.request_failed", String(e?.message || e));
+                return await failWithRetry(
+                  "我刚刚在生成页面样式时遇到了网络问题。蓝图和页面结构已经保存好，点“重试”会直接从写代码继续。",
+                  String(e?.message || e),
+                );
+              }
+
+              logStep("css.raw", cssText);
+              const cssContent = extractPlainCodeText(cssText, ["css"]);
+              if (!cssContent.trim()) {
+                logStep("css.empty", cssText);
+                return await failWithRetry(
+                  "我刚刚在生成页面样式时，没有拿到有效的 CSS 内容。你的蓝图和页面结构已保存，点“重试”会从写代码继续。",
+                  cssText,
+                );
+              }
+              const cssWrite = await writeDraftFilesDetailed([{ path: "style.css", content: cssContent }]);
+              logStep("css.persist", cssWrite);
+              const metaAfterCss = applyPersistStatus((await readMetaObj()) || readMeta || {}, "css", cssWrite, ["style.css"]);
+              try {
+                await writeMeta(metaAfterCss);
+              } catch (e: any) {
+                logStep("css.persist_meta_failed", String(e?.message || e));
+              }
+              if (!cssWrite.ok) {
+                return await failWithRetry(
+                  "页面样式已经生成出来了，但写回数据库时没有完全成功。点“重试”我会从已生成结果继续。",
+                  JSON.stringify(cssWrite.failed),
+                );
+              }
+              return { css: cssContent };
             };
             const generateGameJsStep = async (html: string, css: string) => {
-              sendStatus(`（3/3）生成核心逻辑（${provider} / ${mvpModel}）…`);
+              sendStatus(`（4/4）生成核心逻辑（${provider} / ${mvpModel}）…`);
               sendMeta({ provider, model, phase: "codegen_game_js" });
               const gameJsPayload: any = {
                 model,
@@ -2344,17 +2476,14 @@ export async function POST(req: Request) {
               return { jsContent };
             };
 
-            const htmlCssSchemaHint =
+            const htmlSchemaHint =
               `只输出一个严格 JSON 对象（json_object），不要任何解释或 markdown。\n` +
               `Schema：{\n` +
               `  "assistant": string,\n` +
               `  "meta": { "title": string, "shortDesc": string, "rules": string, "creator": { "name": string } },\n` +
-              `  "files": [\n` +
-              `    { "path": "index.html", "content": string },\n` +
-              `    { "path": "style.css", "content": string }\n` +
-              `  ]\n` +
+              `  "files": [{ "path": "index.html", "content": string }]\n` +
               `}\n` +
-              `要求：index.html 必须引用 ./style.css 和 ./game.js；不要输出 game.js。\n`;
+              `要求：index.html 必须引用 ./style.css 和 ./game.js；不要输出 style.css 或 game.js。\n`;
             const gameJsSchemaHint =
               `只输出一个严格 JSON 对象（json_object），不要任何解释或 markdown。\n` +
               `Schema：{\n` +
@@ -2362,9 +2491,13 @@ export async function POST(req: Request) {
               `  "content": string\n` +
               `}\n`;
 
-            const htmlCssStep = await generateHtmlCssStep();
-            if (!htmlCssStep) return;
-            const { meta, html, css } = htmlCssStep;
+            const htmlStep = await generateHtmlStep();
+            if (!htmlStep) return;
+            const { meta, html } = htmlStep;
+
+            const cssStep = await generateCssStep(html);
+            if (!cssStep) return;
+            const { css } = cssStep;
 
             const gameJsStep = await generateGameJsStep(html, css);
             if (!gameJsStep) return;
