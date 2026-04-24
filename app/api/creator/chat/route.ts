@@ -1207,21 +1207,29 @@ export async function POST(req: Request) {
           }
         };
 
-        const callStreamRobust = async (
-          payload: any,
-          stepTag: string,
-          strictJson = false,
-          fallbackModels: string[] = [],
-          timeoutMs = 180_000,
-        ) => {
+        const callStreamRobust = async (payload: any, stepTag: string, strictJson = false, timeoutMs = 180_000) => {
           try {
             return await callStreamToString(payload, stepTag, strictJson, timeoutMs);
           } catch (e: any) {
-            const em = String(e?.message || e);
-            const eml = em.toLowerCase();
-            const isNetwork = eml.includes("fetch_failed") || eml.includes("network error") || eml.includes("timeout");
             throw e;
           }
+        };
+
+        const repairJsonObject = async (rawText: string, schemaHint: string, stepTag: string, maxTokens = 1400) => {
+          const clipped = String(rawText || "").slice(0, 12000);
+          const repairPayload: any = {
+            model,
+            messages: [
+              { role: "system", content: `你是 JSON 修复器。只输出一个严格 JSON 对象（json_object），不要任何解释或 markdown。\n${schemaHint}` },
+              { role: "user", content: `请把下面“原输出”修复为严格 JSON：\n\n【原输出】\n${clipped}\n` },
+            ],
+            temperature: 0,
+            max_tokens: maxTokens,
+            response_format: { type: "json_object" },
+          };
+          if (provider === "openrouter" && payloadBase.provider) repairPayload.provider = payloadBase.provider;
+          const repairedText = await callStreamRobust(repairPayload, stepTag, true, 60_000);
+          return parseJsonObjectLoose(repairedText);
         };
 
         // 每一步“自动重试一次”，避免用户手动点重试
@@ -1302,17 +1310,20 @@ export async function POST(req: Request) {
               { role: "user", content: fixInput },
             ],
             temperature: 0.2,
-            max_tokens: 1600,
+            max_tokens: 1400,
             response_format: { type: "json_object" },
           };
           if (provider === "openrouter" && payloadBase.provider) fixPayload.provider = payloadBase.provider;
 
-          const outText = await callStreamRobust(fixPayload, `步骤 ${step}/${totalSteps}：生成补丁 JSON`, true, [
-            "qwen/qwen3.6-plus",
-            "deepseek/deepseek-v3.2",
-          ]);
+          const outText = await callStreamRobust(fixPayload, `步骤 ${step}/${totalSteps}：生成补丁 JSON`, true, 60_000);
           logStep("fix.raw", outText);
-          const obj = parseJsonObjectLoose(outText);
+          const fixSchemaHint =
+            `Schema：{\n` +
+            `  "assistant": string,\n` +
+            `  "files": [ { "path": "index.html|style.css|game.js", "content": string } ]\n` +
+            `}\n`;
+          let obj = parseJsonObjectLoose(outText);
+          if (!obj) obj = await repairJsonObject(outText, fixSchemaHint, "修复 fix JSON", 1200);
           if (!obj) throw new Error("FIXER_NOT_JSON");
           // 复用 parseCreatorJson 来做路径/结构校验
           const normalized = {
@@ -1435,33 +1446,22 @@ export async function POST(req: Request) {
               const tail = path === "index.html" ? "\n<!-- ...TRUNCATED... -->" : "\n/* ...TRUNCATED... */";
               return raw.slice(0, max) + tail;
             };
-            const repairFilesJson = async (rawText: string) => {
-              const repairPayload: any = {
-                model,
-                messages: [
-                  { role: "system", content: "你是 JSON 修复器。只输出一个严格 JSON 对象（json_object），不要任何解释或 markdown。" },
-                  {
-                    role: "user",
-                    content:
-                      `请把下面内容修复为严格 JSON，并确保符合 Schema：\n` +
-                      `{\n  "assistant": string,\n  "ops"?: [\n    {\n      "type":"replace_in_file|remove_in_file|insert_before|insert_after|append_in_file|prepend_in_file",\n      "path":"index.html|style.css|game.js"\n    }\n  ],\n  "files"?: [ { "path": "index.html|style.css|game.js", "content": string } ]\n}\n\n` +
-                      `原输出：\n${String(rawText || "").slice(0, 24000)}\n`,
-                  },
-                ],
-                temperature: 0,
-                max_tokens: 2200,
-                response_format: { type: "json_object" },
-              };
-              if (provider === "openrouter" && payloadBase.provider) repairPayload.provider = payloadBase.provider;
-              const repairedText = await callStreamRobust(
-                repairPayload,
+            const repairFilesJson = async (rawText: string) =>
+              await repairJsonObject(
+                rawText,
+                `Schema：{\n` +
+                  `  "assistant": string,\n` +
+                  `  "ops"?: [\n` +
+                  `    {\n` +
+                  `      "type":"replace_in_file|remove_in_file|insert_before|insert_after|append_in_file|prepend_in_file",\n` +
+                  `      "path":"index.html|style.css|game.js"\n` +
+                  `    }\n` +
+                  `  ],\n` +
+                  `  "files"?: [ { "path": "index.html|style.css|game.js", "content": string } ]\n` +
+                  `}\n`,
                 "直接补丁：修复 JSON",
-                true,
-                ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
-                60_000,
+                1200,
               );
-              return parseJsonObjectLoose(repairedText);
-            };
             const healDirectFiles = async (files: Array<{ path: string; content: string }>, errMsg: string) => {
               sendMeta({ provider, model, phase: "direct_refine_debug" });
               const debugPayload: any = {
@@ -1477,17 +1477,11 @@ export async function POST(req: Request) {
                   },
                 ],
                 temperature: 0.1,
-                max_tokens: 1800,
+                max_tokens: 1400,
                 response_format: { type: "json_object" },
               };
               if (provider === "openrouter" && payloadBase.provider) debugPayload.provider = payloadBase.provider;
-              const debugText = await callStreamRobust(
-                debugPayload,
-                "直接补丁：修复校验问题",
-                true,
-                ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
-                60_000,
-              );
+              const debugText = await callStreamRobust(debugPayload, "直接补丁：修复校验问题", true, 60_000);
               const debugObj = parseJsonObjectLoose(debugText);
               const outFiles = Array.isArray((debugObj as any)?.files) ? (debugObj as any).files : [];
               const merged = files.slice();
@@ -1502,8 +1496,7 @@ export async function POST(req: Request) {
               return merged;
             };
 
-            // 选择模型：优先使用前端“彩蛋”中用户选择的 provider/model（请求 body 传入的 model）。
-            // 仅当模型不稳定/不可用时，callStreamRobust 才会在 fallbackModels 中自动切换。
+            // 选择模型：始终优先使用前端“彩蛋”中用户选择的 provider/model（请求 body 传入的 model）。
             const mvpModel = String(model || "").trim() || (hasOpenRouter ? "qwen/qwen3.6-plus" : model);
             const refineModel = mvpModel;
 
@@ -1628,20 +1621,14 @@ export async function POST(req: Request) {
                   },
                 ],
                 temperature: editProfile.kind === "bugfix" ? 0.1 : editProfile.kind === "feature" ? 0.25 : 0.15,
-                max_tokens: directPaths.length === 1 ? (editProfile.kind === "behavior" ? 1200 : 1600) : 2200,
+                max_tokens: directPaths.length === 1 ? (editProfile.kind === "behavior" ? 1200 : 1000) : 1600,
                 response_format: { type: "json_object" },
               };
               if (provider === "openrouter" && payloadBase.provider) refinePayload.provider = payloadBase.provider;
 
               const refineText = await autoRetry(
                 async () =>
-                  await callStreamRobust(
-                    refinePayload,
-                    "直接补丁：小改动",
-                    true,
-                    ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
-                    directPaths.length === 1 ? (editProfile.kind === "behavior" ? 20_000 : 25_000) : 45_000,
-                  ),
+                  await callStreamRobust(refinePayload, "直接补丁：小改动", true, directPaths.length === 1 ? (editProfile.kind === "behavior" ? 20_000 : 25_000) : 45_000),
                 "小改动补丁",
                 "这是已有游戏上的小改动，只输出 JSON 和必要文件。",
                 1,
@@ -1802,24 +1789,28 @@ export async function POST(req: Request) {
                   },
                 ],
                 temperature: 0.2,
-                max_tokens: 1400,
+                max_tokens: 1100,
                 response_format: { type: "json_object" },
               };
               if (provider === "openrouter" && payloadBase.provider) payloadClarify.provider = payloadBase.provider;
               const out = await autoRetry(
                 async () =>
-                  await callStreamRobust(
-                    payloadClarify,
-                    "阶段0：需求澄清 JSON",
-                    true,
-                    ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
-                    90_000,
-                  ),
+                  await callStreamRobust(payloadClarify, "阶段0：需求澄清 JSON", true, 90_000),
                 "需求澄清",
                 "只输出 JSON（intent/missing/options/questions/recommend）。",
                 2,
               );
-              const obj = parseJsonObjectLoose(out) || {};
+              const clarifySchemaHint =
+                `Schema：{\n` +
+                `  "intent": string,\n` +
+                `  "missing": string[],\n` +
+                `  "options": object[],\n` +
+                `  "questions": object[],\n` +
+                `  "recommend": string\n` +
+                `}\n`;
+              let obj = parseJsonObjectLoose(out);
+              if (!obj) obj = await repairJsonObject(out, clarifySchemaHint, "修复澄清 JSON", 1000);
+              if (!obj) throw new Error("CLARIFY_NOT_JSON");
               const options = Array.isArray((obj as any).options) ? (obj as any).options : [];
               const qs = Array.isArray((obj as any).questions) ? (obj as any).questions : [];
               const rec = String((obj as any).recommend || "A").trim() || "A";
@@ -2045,33 +2036,19 @@ export async function POST(req: Request) {
               model,
               quality,
             });
-            const repairBlueprintJson = async (rawText: string) => {
-              const repairPayload: any = {
-                model,
-                messages: [
-                  { role: "system", content: "你是 JSON 修复器。只输出一个严格 JSON 对象（json_object），不要任何解释或 markdown。" },
-                  {
-                    role: "user",
-                    content:
-                      `请把下面内容修复为严格 JSON，并确保符合 Schema：\n` +
-                      `{\n  "meta": object,\n  "config": object,\n  "protocol": object,\n  "blueprint": object,\n  "assetsPlan": object\n}\n\n` +
-                      `原输出：\n${String(rawText || "").slice(0, 24000)}\n`,
-                  },
-                ],
-                temperature: 0,
-                max_tokens: 1800,
-                response_format: { type: "json_object" },
-              };
-              if (provider === "openrouter" && payloadBase.provider) repairPayload.provider = payloadBase.provider;
-              const repairedText = await callStreamRobust(
-                repairPayload,
+            const repairBlueprintJson = async (rawText: string) =>
+              await repairJsonObject(
+                rawText,
+                `Schema：{\n` +
+                  `  "meta": object,\n` +
+                  `  "config": object,\n` +
+                  `  "protocol": object,\n` +
+                  `  "blueprint": object,\n` +
+                  `  "assetsPlan": object\n` +
+                  `}\n`,
                 "阶段2：修复蓝图 JSON",
-                true,
-                ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
-                60_000,
+                1200,
               );
-              return parseJsonObjectLoose(repairedText);
-            };
             const markCodePending = async () => {
               const nextMeta = {
                 ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
@@ -2115,20 +2092,14 @@ export async function POST(req: Request) {
                   },
                 ],
                 temperature: 0.2,
-                max_tokens: 1400,
+                max_tokens: 1200,
                 response_format: { type: "json_object" },
               };
               if (provider === "openrouter" && payloadBase.provider) bpPayload.provider = payloadBase.provider;
 
               const bpText = await autoRetry(
                 async () =>
-                  await callStreamRobust(
-                    bpPayload,
-                    "阶段2：蓝图 JSON",
-                    true,
-                    ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
-                    90_000,
-                  ),
+                  await callStreamRobust(bpPayload, "阶段2：蓝图 JSON", true, 90_000),
                 "蓝图",
                 "只输出 JSON（meta/config/protocol/blueprint/assetsPlan），严禁输出代码。",
                 2,
@@ -2180,19 +2151,12 @@ export async function POST(req: Request) {
                   { role: "user", content: `请把下面“原输出”修复为严格 JSON：\n\n【原输出】\n${clipped}\n` },
                 ],
                 temperature: 0.0,
-                max_tokens: 2400,
+                max_tokens: 1200,
                 response_format: { type: "json_object" },
               };
               if (provider === "openrouter" && payloadBase.provider) repairPayload.provider = payloadBase.provider;
               try {
-                const repairedText = await callStreamRobust(
-                  repairPayload,
-                  "阶段：修复输出 JSON",
-                  true,
-                  // 修复阶段也允许在 OpenRouter 内换模型，但仍优先 deepseek
-                  ["deepseek/deepseek-v3.2", "qwen/qwen3.6-plus", "minimax/minimax-m2.5"],
-                  90_000,
-                );
+                const repairedText = await callStreamRobust(repairPayload, "阶段：修复输出 JSON", true, 90_000);
                 logStep("json_repair.raw", repairedText);
                 return parseJsonObjectLoose(repairedText);
               } catch {
@@ -2249,7 +2213,7 @@ export async function POST(req: Request) {
                   },
                 ],
                 temperature: 0.2,
-                max_tokens: 2200,
+                max_tokens: 1700,
                 response_format: { type: "json_object" },
               };
               if (provider === "openrouter" && payloadBase.provider) htmlCssPayload.provider = payloadBase.provider;
@@ -2258,13 +2222,7 @@ export async function POST(req: Request) {
               try {
                 htmlCssText = await autoRetry(
                   async () =>
-                    await callStreamRobust(
-                      htmlCssPayload,
-                      "阶段3：页面和样式 JSON",
-                      true,
-                      ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
-                      90_000,
-                    ),
+                    await callStreamRobust(htmlCssPayload, "阶段3：页面和样式 JSON", true, 90_000),
                   "页面和样式",
                   "只输出 JSON，files 中仅包含 index.html 和 style.css。",
                   2,
@@ -2335,7 +2293,7 @@ export async function POST(req: Request) {
                   },
                 ],
                 temperature: 0.2,
-                max_tokens: 2200,
+                max_tokens: 2000,
                 response_format: { type: "json_object" },
               };
               if (provider === "openrouter" && payloadBase.provider) gameJsPayload.provider = payloadBase.provider;
@@ -2344,13 +2302,7 @@ export async function POST(req: Request) {
               try {
                 gameJsText = await autoRetry(
                   async () =>
-                    await callStreamRobust(
-                      gameJsPayload,
-                      "阶段4：核心逻辑 JSON",
-                      true,
-                      ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
-                      90_000,
-                    ),
+                    await callStreamRobust(gameJsPayload, "阶段4：核心逻辑 JSON", true, 90_000),
                   "核心逻辑",
                   "只输出 JSON，结构为 {path:\"game.js\", content:\"...\"}。",
                   2,
