@@ -15,6 +15,8 @@ export const maxDuration = 300;
 
 type Msg = { role: "system" | "user" | "assistant"; content: string };
 
+const TENCENT_TOKENHUB_MODELS = ["hy3-preview"] as const;
+
 const OPENROUTER_MODELS = [
   // 默认：免费模型（用户要求）
   "nvidia/nemotron-3-super-120b-a12b:free",
@@ -971,11 +973,13 @@ export async function POST(req: Request) {
   const hasOpenRouter = !!(process.env.OPENROUTER_API_KEY || "");
   const hasDeepSeek = !!(process.env.DEEPSEEK_API_KEY || "");
   const hasBailian = !!(process.env.DASHSCOPE_API_KEY || process.env.BAILIAN_API_KEY || "");
-  let provider: "openrouter" | "deepseek" | "bailian" = "openrouter";
+  const hasTencentTokenHub = !!(process.env.TENCENT_TOKENHUB_API_KEY || process.env.TOKENHUB_API_KEY || "");
+  let provider: "openrouter" | "deepseek" | "bailian" | "tencent" = "openrouter";
   if (providerRaw === "deepseek") provider = "deepseek";
   else if (providerRaw === "openrouter") provider = "openrouter";
   else if (providerRaw === "bailian" || providerRaw === "dashscope") provider = "bailian";
-  else provider = hasBailian ? "bailian" : hasOpenRouter ? "openrouter" : "deepseek";
+  else if (providerRaw === "tencent" || providerRaw === "tokenhub" || providerRaw === "hunyuan") provider = "tencent";
+  else provider = hasTencentTokenHub ? "tencent" : hasBailian ? "bailian" : hasOpenRouter ? "openrouter" : "deepseek";
 
   let url = "";
   let authKey = "";
@@ -984,7 +988,9 @@ export async function POST(req: Request) {
     authKey = process.env.DEEPSEEK_API_KEY || "";
     if (!authKey) {
       // DeepSeek 未配置时自动回退 OpenRouter
-      if (hasBailian) {
+      if (hasTencentTokenHub) {
+        provider = "tencent";
+      } else if (hasBailian) {
         provider = "bailian";
       } else if (hasOpenRouter) {
         provider = "openrouter";
@@ -1017,6 +1023,22 @@ export async function POST(req: Request) {
       // 百炼模型名：例如 qwen3.6-plus / qwen-plus 等
       model = picked || process.env.BAILIAN_MODEL || process.env.DASHSCOPE_MODEL || "qwen3.6-plus";
     }
+  } else if (provider === "tencent") {
+    authKey = process.env.TENCENT_TOKENHUB_API_KEY || process.env.TOKENHUB_API_KEY || "";
+    if (!authKey) {
+      if (hasBailian) provider = "bailian";
+      else if (hasOpenRouter) provider = "openrouter";
+      else if (hasDeepSeek) provider = "deepseek";
+      else return json(500, { ok: false, error: "MISSING_TENCENT_TOKENHUB_API_KEY" });
+    } else {
+      const baseUrl = (process.env.TENCENT_TOKENHUB_BASE_URL || process.env.TOKENHUB_BASE_URL || "https://tokenhub.tencentmaas.com/v1")
+        .replace(/\/+$/, "");
+      url = `${baseUrl}/chat/completions`;
+      const picked = String((body as any)?.model || "").trim();
+      model = (TENCENT_TOKENHUB_MODELS as readonly string[]).includes(picked)
+        ? picked
+        : process.env.TENCENT_TOKENHUB_MODEL || process.env.TOKENHUB_MODEL || "hy3-preview";
+    }
   } else {
     authKey = process.env.OPENROUTER_API_KEY || "";
     if (!authKey) return json(500, { ok: false, error: "MISSING_OPENROUTER_API_KEY" });
@@ -1038,11 +1060,13 @@ export async function POST(req: Request) {
   // - 会把 Cookie header 一并转发到线上（如线上也需要 session）
   const devProxyOrigin = String(process.env.DEV_OPENROUTER_PROXY_ORIGIN || "").trim().replace(/\/+$/, "");
   if (process.env.NODE_ENV === "development" && devProxyOrigin && provider === "openrouter") {
-    // 本地开发默认优先命中本地代码，避免调试时实际跑到线上旧逻辑。
-    // 只有显式要求 use_dev_proxy 时，才把 OpenRouter 请求转发到线上中转。
+    // 分步生成会在“内部”动态切换模型（Planner/Coder/Review）。
+    // 如果只按“最开始选中的 model”判断，后续切到 OpenAI/Gemini 时就不会走中转，
+    // 从而在本地触发 region 限制。因此：本地开发只要配置了 DEV_OPENROUTER_PROXY_ORIGIN，
+    // 默认对所有 OpenRouter 请求都走线上中转（可通过 promptAddon 包含 no_dev_proxy 关闭）。
     const addon0 = typeof (body as any)?.promptAddon === "string" ? String((body as any).promptAddon) : "";
-    const enableProxy = addon0.includes("use_dev_proxy");
-    if (enableProxy) {
+    const disableProxy = addon0.includes("no_dev_proxy");
+    if (!disableProxy) {
       const forwardBody = { ...(body as any), messages };
       const doProxy = async () => {
         const upstream = await fetch(`${devProxyOrigin}/api/creator/chat`, {

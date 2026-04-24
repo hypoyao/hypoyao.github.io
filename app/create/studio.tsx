@@ -129,7 +129,7 @@ export default function CreateStudio({
   // 模型选择：DeepSeek / OpenRouter
   // 注意：不要在 useState initializer 读取 localStorage，否则 SSR/CSR 初始值不一致会触发 hydration failed。
   // 这里先用稳定默认值，等客户端挂载后再从 localStorage 恢复。
-  const [provider, setProvider] = useState<"deepseek" | "openrouter" | "bailian">("openrouter");
+  const [provider, setProvider] = useState<"deepseek" | "openrouter" | "bailian" | "tencent">("openrouter");
   // 默认模型：保持原先默认（不要在这里强行替用户改模型）
   const [model, setModel] = useState<string>("nvidia/nemotron-3-super-120b-a12b:free");
   const [hydrated, setHydrated] = useState(false);
@@ -180,6 +180,11 @@ export default function CreateStudio({
     [],
   );
 
+  const tencentModels = useMemo(
+    () => [{ id: "hy3-preview", name: "hy3-preview（腾讯混元 Hunyuan 3 Preview）" }],
+    [],
+  );
+
   const deepseekModels = useMemo(
     () => [
       { id: "deepseek-reasoner", name: "deepseek-reasoner（思考更强）" },
@@ -197,6 +202,9 @@ export default function CreateStudio({
     } else if (provider === "bailian") {
       const ok = bailianModels.some((x) => x.id === model);
       if (!ok) setModel("qwen3.6-plus");
+    } else if (provider === "tencent") {
+      const ok = tencentModels.some((x) => x.id === model);
+      if (!ok) setModel("hy3-preview");
     } else {
       const ok = deepseekModels.some((x) => x.id === model);
       if (!ok) setModel("deepseek-reasoner");
@@ -210,7 +218,7 @@ export default function CreateStudio({
     try {
       const p = window.localStorage.getItem("creatorStudio:modelProvider");
       const m = window.localStorage.getItem("creatorStudio:modelName");
-      if (p === "deepseek" || p === "openrouter" || p === "bailian") setProvider(p as any);
+      if (p === "deepseek" || p === "openrouter" || p === "bailian" || p === "tencent") setProvider(p as any);
       if (m) setModel(m);
     } catch {
       // ignore
@@ -993,6 +1001,8 @@ export default function CreateStudio({
           ? "（登录状态可能已过期：请刷新页面或重新登录）"
           : ml.includes("missing_deepseek_api_key")
           ? "（服务端未配置 DEEPSEEK_API_KEY）"
+          : ml.includes("missing_tencent_tokenhub_api_key")
+          ? "（服务端未配置 TENCENT_TOKENHUB_API_KEY 或 TOKENHUB_API_KEY）"
           : ml.includes("missing_openrouter_api_key")
             ? "（服务端未配置 OPENROUTER_API_KEY）"
             : ml.includes("write_internal:erofs") || ml.includes("write_internal:eperm")
@@ -1001,7 +1011,7 @@ export default function CreateStudio({
               ? "（网络异常：可能是服务端到模型的网络/DNS/代理/TLS 问题，或浏览器到服务端连接中断；建议重试、切换模型/Provider，必要时刷新页面）"
           : ml.includes("terminated")
             ? "（连接被中断：可能是网络/模型超时/Key 无效/服务端被重启，建议重试）"
-            : "（建议重试；如持续失败再检查 OPENROUTER_API_KEY / DEEPSEEK_API_KEY）";
+            : "（建议重试；如持续失败再检查 OPENROUTER_API_KEY / DEEPSEEK_API_KEY / TENCENT_TOKENHUB_API_KEY）";
       setMsg(`出错：${m}${hint}`);
       setLastFailedText(text);
       // 把最后的“AI 开始写代码…”替换成更友好的提示
@@ -1510,16 +1520,18 @@ export default function CreateStudio({
                   disabled={busy}
                   onChange={(e) => {
                     const p = (e.target.value || "openrouter") as any;
-                    if (p !== "deepseek" && p !== "openrouter" && p !== "bailian") return;
+                    if (p !== "deepseek" && p !== "openrouter" && p !== "bailian" && p !== "tencent") return;
                     setProvider(p);
                     if (p === "openrouter") setModel("nvidia/nemotron-3-super-120b-a12b:free");
                     else if (p === "bailian") setModel("qwen3.6-plus");
+                    else if (p === "tencent") setModel("hy3-preview");
                     else setModel("deepseek-reasoner");
                   }}
                   aria-label="选择模型平台"
                 >
                   <option value="openrouter">OpenRouter</option>
                   <option value="bailian">阿里云百炼</option>
+                  <option value="tencent">腾讯混元 TokenHub</option>
                   <option value="deepseek">DeepSeek</option>
                 </select>
               </div>
@@ -1532,7 +1544,13 @@ export default function CreateStudio({
                   onChange={(e) => setModel(e.target.value)}
                   aria-label="选择模型"
                 >
-                  {(provider === "openrouter" ? openrouterModels : provider === "bailian" ? bailianModels : deepseekModels).map((m) => (
+                  {(provider === "openrouter"
+                    ? openrouterModels
+                    : provider === "bailian"
+                      ? bailianModels
+                      : provider === "tencent"
+                        ? tencentModels
+                        : deepseekModels).map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.name}
                     </option>
