@@ -165,6 +165,8 @@ export default function CreateStudio({
       { id: "qwen/qwen3.6-plus", name: "qwen/qwen3.6-plus（Qwen3.6 Plus）" },
       { id: "qwen/qwen-2.5-72b-instruct:free", name: "qwen/qwen-2.5-72b-instruct:free" },
       { id: "deepseek/deepseek-v3.2", name: "deepseek/deepseek-v3.2" },
+      { id: "deepseek/deepseek-v4-pro", name: "deepseek/deepseek-v4-pro（思考：最高）" },
+      { id: "deepseek/deepseek-v4-flash", name: "deepseek/deepseek-v4-flash（思考：最高，较快）" },
       { id: "google/gemini-2.5-flash", name: "google/gemini-2.5-flash" },
       { id: "google/gemini-2.5-flash-lite", name: "google/gemini-2.5-flash-lite" },
       { id: "minimax/minimax-m2.5", name: "minimax/minimax-m2.5" },
@@ -187,8 +189,9 @@ export default function CreateStudio({
 
   const deepseekModels = useMemo(
     () => [
-      { id: "deepseek-reasoner", name: "deepseek-reasoner（思考更强）" },
-      { id: "deepseek-chat", name: "deepseek-chat（更快）" },
+      // DeepSeek V4：统一开启“最高思考强度”（由后端/网关控制）
+      { id: "deepseek-v4-pro", name: "deepseek-v4-pro（思考：最高）" },
+      { id: "deepseek-v4-flash", name: "deepseek-v4-flash（思考：最高，较快）" },
     ],
     [],
   );
@@ -207,7 +210,7 @@ export default function CreateStudio({
       if (!ok) setModel("hy3-preview");
     } else {
       const ok = deepseekModels.some((x) => x.id === model);
-      if (!ok) setModel("deepseek-reasoner");
+      if (!ok) setModel("deepseek-v4-flash");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider, model]);
@@ -868,7 +871,7 @@ export default function CreateStudio({
                 const reason = String(ev.data?.reason || "").trim();
                 if (reason && p === "deepseek") {
                   // 明确提醒用户：已回退到 DeepSeek
-                  statusRaw = `已回退到 DeepSeek（${m || "deepseek-chat"}）`;
+                  statusRaw = `已回退到 DeepSeek（${m || "deepseek-v4-flash"}）`;
                   if (m) setCurrentModelLabel(`当前模型：deepseek / ${m}`);
                 } else if (p && m) {
                   statusRaw = `当前模型：${p} / ${m}`;
@@ -1525,7 +1528,7 @@ export default function CreateStudio({
                     if (p === "openrouter") setModel("nvidia/nemotron-3-super-120b-a12b:free");
                     else if (p === "bailian") setModel("qwen3.6-plus");
                     else if (p === "tencent") setModel("hy3-preview");
-                    else setModel("deepseek-reasoner");
+                    else setModel("deepseek-v4-flash");
                   }}
                   aria-label="选择模型平台"
                 >

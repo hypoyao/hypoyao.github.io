@@ -16,6 +16,14 @@ export const maxDuration = 300;
 type Msg = { role: "system" | "user" | "assistant"; content: string };
 
 const TENCENT_TOKENHUB_MODELS = ["hy3-preview"] as const;
+// DeepSeek 官方 API（OpenAI 兼容）模型：V4 系列
+// deepseek-chat / deepseek-reasoner 将逐步下线（官方已声明未来弃用）
+const DEEPSEEK_DIRECT_MODELS = ["deepseek-v4-pro", "deepseek-v4-flash"] as const;
+
+function isDeepSeekV4OpenRouterModel(m: string) {
+  const s = String(m || "").trim();
+  return s === "deepseek/deepseek-v4-pro" || s === "deepseek/deepseek-v4-flash";
+}
 
 const OPENROUTER_MODELS = [
   // 默认：免费模型（用户要求）
@@ -23,6 +31,9 @@ const OPENROUTER_MODELS = [
   "qwen/qwen3.6-plus",
   "qwen/qwen-2.5-72b-instruct:free",
   "deepseek/deepseek-v3.2",
+  // DeepSeek V4（支持 reasoning 参数；这里会自动开“最高思考强度”）
+  "deepseek/deepseek-v4-pro",
+  "deepseek/deepseek-v4-flash",
   // Architect / Refine（优先不用 Claude：地区/链路更容易失败）
   "anthropic/claude-sonnet-4.6",
   // Planner / Review 阶段（按需自动使用）
@@ -112,28 +123,37 @@ function stripDangerousLocalBehaviorArtifacts(path: string, content: string) {
   return raw;
 }
 
-const REFINE_PROMPT = `
-你是“程序员（Refiner）”。你将基于“当前可运行代码 + 架构协议 + 用户新需求”，输出最小风险的全量替换版本（或多文件时输出必要文件）。
+const OPS_PATCH_PROMPT = `
+你是“前端最小补丁器（Ops Patch）”。你将基于当前现有文件和用户修改要求，只输出最小 JSON 补丁。
 
 【硬性要求】
 1) 只输出合法 JSON，不要输出 markdown/解释。
 2) 输出结构优先使用轻量补丁：
 { "assistant": "...", "ops": [ ... ] }
-如果确实需要返回完整文件，也可以用：
+如果确实无法用 ops 表达，才允许输出：
 { "assistant": "...", "files": [ { "path": "...", "content": "..." } ] }
 3) ops 仅允许使用这些类型：
-   - replace_in_file: { "type":"replace_in_file", "path":"index.html|style.css|game.js", "find":"原片段", "replace":"新片段" }
-   - remove_in_file: { "type":"remove_in_file", "path":"...", "find":"要删除的片段" }
-   - insert_before: { "type":"insert_before", "path":"...", "find":"锚点片段", "content":"插入内容" }
-   - insert_after: { "type":"insert_after", "path":"...", "find":"锚点片段", "content":"插入内容" }
-   - append_in_file: { "type":"append_in_file", "path":"...", "content":"追加内容" }
-   - prepend_in_file: { "type":"prepend_in_file", "path":"...", "content":"前置内容" }
+   - replace_in_file
+   - remove_in_file
+   - insert_before
+   - insert_after
+   - append_in_file
+   - prepend_in_file
 4) 只允许改这些文件：index.html / style.css / game.js
 5) 最小改动原则：不要无意义重写；保持原有结构与命名协议。
-6) 严禁通过“额外注入一个兜底脚本”来偷改行为。
-   - 不要输出带 data-ai-local-behavior 的 style/script
-   - 不要用 MutationObserver + setInterval 轮询 DOM 的方式强行修页面
-   - 优先直接改现有按钮、状态流、事件绑定和文案
+6) 如果只是改文案、显隐、位置、样式，请优先输出 ops，不要重写整文件。
+7) 严禁通过“额外注入一个兜底脚本”来偷改行为。
+`.trim();
+
+const SINGLE_FILE_PATCH_PROMPT = `
+你是“前端单文件补丁器（Single File Patch）”。你会收到一个目标文件和一次具体修改指令。
+
+【硬性要求】
+1) 只输出目标文件的完整纯代码文本，不要输出 JSON，不要解释，不要 markdown 说明。
+2) 如果一定要用代码块，只能输出一个与目标文件匹配的代码块。
+3) 这是已有游戏上的最小修改，保留原有结构与命名，能少改就少改。
+4) 只修和这次任务直接相关的内容，不要重写整个游戏，不要改其它文件。
+5) 严禁通过额外注入兜底脚本来绕过现有逻辑。
 `.trim();
 
 const DEBUG_PROMPT = `
@@ -189,49 +209,68 @@ Schema：
 - 你喜欢哪种画风？（卡通 / 像素 / 霓虹酷炫）
 `.trim();
 
-// 蓝图阶段（新）：一次输出“同源蓝图 + 协议/命名 + config”，但严禁输出任何代码。
-// 这一步输出短 JSON，稳定落盘；下一步代码生成必须严格按此 JSON 实现，避免变量/规则漂移。
+// 蓝图阶段（新）：一次输出“同源蓝图 + 协议/命名 + config”的分段文本协议，但严禁输出任何代码。
+// 目标：避免蓝图阶段因为严格 JSON 而跑飞；后端负责把文本协议解析成内部 design 对象。
 const BLUEPRINT_PROMPT = `
 你现在是“青少年友好”的小游戏设计师（面向小学/初中）。你要先做设计蓝图，再写代码（代码在下一步做）。
 
 【铁律】
-1) 严禁输出任何代码（HTML/CSS/JS），只输出 JSON（json_object）。
+1) 严禁输出任何代码（HTML/CSS/JS）。
 2) 你必须先把“关键命名/协议”定下来，后续写代码必须一模一样（比如：canvasId、按钮id、全局对象名、关键变量名）。
 3) 蓝图要短、清楚、孩子能读懂；不要写长篇。
 4) 必须紧扣【用户最早的主题】，不能跑题。
 
-【输出要求：只输出合法 JSON（json_object）】
-Schema：
-{
-  "meta": { "title": "...", "shortDesc": "...", "rules": "...", "creator": { "name": "..." } },
-  "config": { ...（沿用当前蓝图约定的 config 结构，缺啥就用默认值）... },
-  "protocol": {
-    "dom": { "rootId": "app", "canvasId": "game", "btnStartId": "btnStart", "btnRestartId": "btnRestart", "btnLeftId": "btnLeft" },
-    "state": { "name": "G", "vars": ["level","score","state","speed","autoCenter"] }
-  },
-  "blueprint": {
-    "type": "A|B|C|D|E|F",
-    "coreLoop": "一句话核心循环",
-    "steps": ["1 ...","2 ...","3 ..."],
-    "winLose": "什么时候结束/怎么算赢"
-  },
-  "assetsPlan": { "renderer": "canvas", "sprites": ["元素1","元素2","元素3"] }
-}
+【输出要求：分段文本协议（更稳，严禁 JSON）】
+你必须严格按下面格式输出 5 个段落。每一段都只允许写简单的 key=value 行，段落外禁止任何解释文字。
+不要输出 JSON，不要输出 markdown 标题，不要写“下面是蓝图”之类说明。
+
+===SECTION:meta===
+title=...
+shortDesc=...
+rules=...
+creatorName=...
+===END===
+
+===SECTION:config===
+platform=pc|mobile|both
+theme=卡通|像素|霓虹|清新
+bg=#...
+accent=#...
+startText=开始
+restartText=重开
+===END===
+
+===SECTION:protocol===
+rootId=app
+canvasId=game
+btnStartId=btnStart
+btnRestartId=btnRestart
+btnLeftId=btnLeft
+stateName=G
+stateVars=level,score,state,speed,autoCenter
+===END===
+
+===SECTION:blueprint===
+type=A|B|C|D|E|F
+coreLoop=一句话核心循环
+steps=步骤1 | 步骤2 | 步骤3
+winLose=什么时候结束/怎么算赢
+===END===
+
+===SECTION:assetsPlan===
+renderer=canvas|dom
+sprites=元素1,元素2,元素3
+===END===
 `.trim();
 
 
 const CODEGEN_HTML_PROMPT = `
 你是“前端小游戏页面生成器”。你会收到一份已经确认好的蓝图 JSON（其中包含 meta/config/protocol/blueprint/assetsPlan）。
-你的任务是先生成稳定的页面结构，只输出 index.html。
+你的任务是先生成稳定的页面结构，只输出 index.html 纯文本。
 
 【硬性要求】
-1) 只输出合法 JSON（json_object），不要任何解释或 markdown。
-2) 输出结构必须为：
-{
-  "assistant": "一句话说明已生成什么",
-  "meta": { "title": "...", "shortDesc": "...", "rules": "...", "creator": { "name": "..." } },
-  "files": [{ "path": "index.html", "content": "..." }]
-}
+1) 只输出 index.html 的纯 HTML 文本，不要输出 JSON，不要解释，不要 markdown 说明。
+2) 如果你一定要使用代码块，也只能输出一个 \`\`\`html ... \`\`\` 代码块，里面只放 HTML。
 3) index.html 必须正确引用 ./style.css 和 ./game.js，但不要内联大段脚本逻辑。
 4) 先保证结构清楚、DOM id 稳定、页面容器完整。
 5) 严禁输出 style.css 和 game.js。
@@ -248,6 +287,46 @@ const CODEGEN_CSS_PROMPT = `
 3) 不要输出 index.html 或 game.js。
 4) 样式优先保证清晰布局、大按钮、稳定响应式，不要为了炫技写过长或过度复杂的 CSS。
 5) 严禁依赖外部资源、远程字体或注入脚本。
+`.trim();
+const CODEGEN_GAMEJS_PROMPT = `
+你是“前端小游戏逻辑生成器”。你会收到蓝图 JSON、已经生成好的 index.html 和 style.css。
+你的任务是只输出 game.js 纯文本，实现核心玩法逻辑。
+
+【硬性要求】
+1) 只输出 game.js 的纯 JavaScript 文本，不要输出 JSON，不要解释，不要 markdown 说明。
+2) 如果你一定要使用代码块，也只能输出一个 \`\`\`js ... \`\`\` 代码块，里面只放 JS。
+3) 不要输出 index.html 或 style.css。
+4) 逻辑优先保证可运行、可重开、状态清楚，再考虑额外特效。
+5) 不要依赖外部库；尽量暴露稳定的 window.gameHooks（如 start/restart/setAutoStart/showCurrentSentence）。
+`.trim();
+
+const CODEGEN_GAMEJS_SKELETON_PROMPT = `
+你是“前端小游戏逻辑骨架生成器”。你会收到蓝图 JSON、已经生成好的 index.html 和 style.css。
+你的任务是先输出一个结构完整、能通过基础语法检查的 game.js 骨架版本。
+
+【硬性要求】
+1) 只输出 game.js 的纯 JavaScript 文本，不要输出 JSON，不要解释，不要 markdown 说明。
+2) 如果你一定要使用代码块，也只能输出一个 \`\`\`js ... \`\`\` 代码块，里面只放 JS。
+3) 必须先把这些内容完整写出来：
+   - 全局状态
+   - DOM 获取
+   - 关键函数定义
+   - 事件绑定
+   - init()/start() 入口
+4) 先保证结构完整闭合、函数齐全、启动入口明确，再考虑细节。
+5) 可以先用简单逻辑或 TODO 注释占位，但代码必须能通过基础 JS 语法检查，不能半句结束。
+`.trim();
+
+const CODEGEN_GAMEJS_COMPLETE_PROMPT = `
+你是“前端小游戏逻辑补全器”。你会收到蓝图 JSON、index.html、style.css，以及一份已经闭合完整的 game.js 骨架。
+你的任务是在保留现有结构的前提下，把 game.js 补成完整可运行版本。
+
+【硬性要求】
+1) 只输出 game.js 的纯 JavaScript 文本，不要输出 JSON，不要解释，不要 markdown 说明。
+2) 如果你一定要使用代码块，也只能输出一个 \`\`\`js ... \`\`\` 代码块，里面只放 JS。
+3) 必须保留已有骨架里的命名、函数结构和入口，不要重写成另一套架构。
+4) 优先补全玩法细节、状态流转、事件逻辑、进度/评分/TTS/录音等业务细节。
+5) 最后一行不能是半句；代码必须完整闭合，并能通过基础 JS 语法检查。
 `.trim();
 
 const FIXER_PROMPT = `
@@ -299,6 +378,117 @@ function extractPlainCodeText(raw: string, languageHints: string[] = []) {
   const generic = text.match(/^\s*```[a-zA-Z0-9_-]*\s*([\s\S]*?)\s*```\s*$/i);
   if (generic?.[1]) return String(generic[1]).trim();
   return text;
+}
+
+function parseSectionBlocks(raw: string) {
+  const text = String(raw || "").trim();
+  if (!text) return null;
+  const re = /===SECTION:([a-zA-Z0-9_-]+)===\s*([\s\S]*?)\s*===END===/g;
+  const sections = new Map<string, string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const name = String(m[1] || "").trim();
+    const content = String(m[2] || "");
+    if (name) sections.set(name, content);
+  }
+  if (!sections.size) return null;
+  return sections;
+}
+
+function parseKeyValueLines(raw: string) {
+  const map = new Map<string, string>();
+  for (const line of String(raw || "").split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t) continue;
+    const m = t.match(/^([A-Za-z][A-Za-z0-9_]*)\s*[:=]\s*(.+)$/);
+    if (!m) continue;
+    map.set(m[1], String(m[2] || "").trim());
+  }
+  return map;
+}
+
+function splitPipeList(raw: string) {
+  return String(raw || "")
+    .split("|")
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+function splitCommaList(raw: string) {
+  return String(raw || "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+function parseBlueprintSectionProtocol(
+  sections: Map<string, string>,
+  fallbackConfig: any,
+  fallbackMeta: any,
+) {
+  const metaKv = parseKeyValueLines(sections.get("meta") || "");
+  const configKv = parseKeyValueLines(sections.get("config") || "");
+  const protocolKv = parseKeyValueLines(sections.get("protocol") || "");
+  const blueprintKv = parseKeyValueLines(sections.get("blueprint") || "");
+  const assetsKv = parseKeyValueLines(sections.get("assetsPlan") || "");
+
+  const title = String(metaKv.get("title") || "").trim();
+  if (!title) return null;
+
+  const meta = safeMeta({
+    title,
+    shortDesc: String(metaKv.get("shortDesc") || (fallbackMeta as any)?.shortDesc || "").trim(),
+    rules: String(metaKv.get("rules") || (fallbackMeta as any)?.rules || "").trim(),
+    creator: { name: String(metaKv.get("creatorName") || (fallbackMeta as any)?.creator?.name || "Architect").trim() },
+  });
+
+  const nextConfig = {
+    ...(fallbackConfig && typeof fallbackConfig === "object" ? fallbackConfig : {}),
+    platform: String(configKv.get("platform") || (fallbackConfig as any)?.platform || "both").trim() || "both",
+    style: {
+      ...(((fallbackConfig as any)?.style && typeof (fallbackConfig as any).style === "object") ? (fallbackConfig as any).style : {}),
+      theme: String(configKv.get("theme") || (fallbackConfig as any)?.style?.theme || "卡通").trim() || "卡通",
+      colors: {
+        bg: String(configKv.get("bg") || (fallbackConfig as any)?.style?.colors?.bg || "#f8fafc").trim() || "#f8fafc",
+        accent: String(configKv.get("accent") || (fallbackConfig as any)?.style?.colors?.accent || "#2563eb").trim() || "#2563eb",
+      },
+    },
+    ui: {
+      ...(((fallbackConfig as any)?.ui && typeof (fallbackConfig as any).ui === "object") ? (fallbackConfig as any).ui : {}),
+      texts: {
+        start: String(configKv.get("startText") || (fallbackConfig as any)?.ui?.texts?.start || "开始").trim() || "开始",
+        restart: String(configKv.get("restartText") || (fallbackConfig as any)?.ui?.texts?.restart || "重开").trim() || "重开",
+      },
+    },
+  };
+
+  const protocol = {
+    dom: {
+      rootId: String(protocolKv.get("rootId") || "app").trim() || "app",
+      canvasId: String(protocolKv.get("canvasId") || "game").trim() || "game",
+      btnStartId: String(protocolKv.get("btnStartId") || "btnStart").trim() || "btnStart",
+      btnRestartId: String(protocolKv.get("btnRestartId") || "btnRestart").trim() || "btnRestart",
+      btnLeftId: String(protocolKv.get("btnLeftId") || "btnLeft").trim() || "btnLeft",
+    },
+    state: {
+      name: String(protocolKv.get("stateName") || "G").trim() || "G",
+      vars: splitCommaList(protocolKv.get("stateVars") || "level,score,state,speed,autoCenter"),
+    },
+  };
+
+  const blueprint = {
+    type: String(blueprintKv.get("type") || "C").trim() || "C",
+    coreLoop: String(blueprintKv.get("coreLoop") || "").trim(),
+    steps: splitPipeList(blueprintKv.get("steps") || "开始 -> 游玩 -> 结束"),
+    winLose: String(blueprintKv.get("winLose") || "").trim(),
+  };
+
+  const assetsPlan = {
+    renderer: String(assetsKv.get("renderer") || "dom").trim() || "dom",
+    sprites: splitCommaList(assetsKv.get("sprites") || ""),
+  };
+
+  return { meta, config: nextConfig, protocol, blueprint, assetsPlan };
 }
 
 function safeMeta(meta: any) {
@@ -470,12 +660,65 @@ function looksLikeIncrementalEdit(text: string) {
   return !!classifyIncrementalEdit(text);
 }
 
+function isSentenceLikeEditIntent(text: string) {
+  return /(sentence|sentences|句子|当前句子|当前文本|台词|文案|题目|题干|字幕|提示语|显示句子|显示文本)/i.test(
+    String(text || ""),
+  );
+}
+
+function pickPrimaryDirectRefinePath(
+  kind: IncrementalEditProfile["kind"],
+  hasSplit: boolean,
+  userIntent = "",
+) {
+  const intent = String(userIntent || "");
+  if (!hasSplit) return "index.html";
+  if (kind === "visual") return "style.css";
+  if (kind === "layout") return "style.css";
+  if (kind === "behavior") return "game.js";
+  if (kind === "content") {
+    if (isSentenceLikeEditIntent(intent)) return "game.js";
+    return "index.html";
+  }
+  if (kind === "bugfix") return "game.js";
+  return "game.js";
+}
+
+function pickPrimaryFixPath(userIntent = "", hasSplit = true) {
+  const intent = String(userIntent || "");
+  if (!hasSplit) return "index.html";
+  if (/(颜色|字体|圆角|阴影|背景|主题色|样式|美化|动画|动效|布局|位置|居中|右上角|左上角)/i.test(intent)) {
+    return "style.css";
+  }
+  if (/(按钮|标题|文案|文字|提示语|显示|隐藏|不显示|页面|弹层|浮层|遮罩|html|dom)/i.test(intent)) {
+    return "index.html";
+  }
+  return "game.js";
+}
+
+function chooseDirectPatchStrategy(
+  kind: IncrementalEditProfile["kind"],
+  directPaths: string[],
+  userIntent = "",
+): "ops_patch" | "single_file_patch" {
+  const intent = String(userIntent || "");
+  if (kind === "behavior" || kind === "bugfix") return "single_file_patch";
+  if (isSentenceLikeEditIntent(intent)) return "single_file_patch";
+  if (directPaths.length === 1 && directPaths[0] === "game.js") return "single_file_patch";
+  return "ops_patch";
+}
+
 function pickDirectRefinePaths(kind: IncrementalEditProfile["kind"], hasSplit: boolean, userIntent = "") {
   const intent = String(userIntent || "");
   if (!hasSplit) return ["index.html"];
   if (kind === "visual") return ["index.html", "style.css"];
   if (kind === "layout") return ["index.html", "style.css"];
-  if (kind === "content") return ["index.html", "game.js"];
+  if (kind === "content") {
+    // “句子/题目/文案同步”这类学习游戏改动，经常真实只落在 game.js 的状态与渲染逻辑里。
+    // 这里优先收敛到单文件，减少 JSON 输出体积，也更容易命中纯代码 fallback。
+    if (isSentenceLikeEditIntent(intent)) return ["game.js"];
+    return ["index.html", "game.js"];
+  }
   if (kind === "behavior") {
     // 行为类小改动默认只改 game.js，避免把页面结构和玩法逻辑一起塞给模型。
     // 对“自动开始/跳过开始页/按进度显示句子”这类请求，单文件补丁更快也更稳。
@@ -738,6 +981,34 @@ function envFlag(key: string) {
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
+function isDeepSeekV4DirectModel(model: string) {
+  return /^deepseek-v4-(pro|flash)$/i.test(String(model || "").trim());
+}
+
+function extractModelTextParts(content: any): string[] {
+  if (typeof content === "string") return content ? [content] : [];
+  if (!Array.isArray(content)) return [];
+  const out: string[] = [];
+  for (const item of content) {
+    if (!item || typeof item !== "object") continue;
+    const t = item as any;
+    if (typeof t.text === "string" && t.text) out.push(t.text);
+    else if (typeof t.content === "string" && t.content) out.push(t.content);
+    else if (typeof t.value === "string" && t.value) out.push(t.value);
+  }
+  return out;
+}
+
+function extractAssistantTextFromResponseJson(j: any) {
+  const msg = j?.choices?.[0]?.message || {};
+  const parts = [
+    ...extractModelTextParts(msg?.content),
+    ...extractModelTextParts(msg?.output_text),
+    ...extractModelTextParts(j?.output_text),
+  ].filter(Boolean);
+  return parts.join("");
+}
+
 const STEP_LOG_MAX = 900;
 
 function summarizeLogValue(value: unknown, maxLen = STEP_LOG_MAX): string {
@@ -854,8 +1125,8 @@ export async function POST(req: Request) {
     const baseUrl = (process.env.DEEPSEEK_API_BASE || "https://api.deepseek.com").replace(/\/+$/, "");
     url = `${baseUrl}/v1/chat/completions`;
     const picked = (body as any)?.model;
-    const envModel = process.env.DEEPSEEK_MODEL || "deepseek-chat";
-    model = picked === "deepseek-chat" || picked === "deepseek-reasoner" ? picked : envModel;
+    const envModel = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
+    model = (DEEPSEEK_DIRECT_MODELS as readonly string[]).includes(String(picked || "").trim()) ? String(picked).trim() : envModel;
   } else if (provider === "bailian") {
     // 阿里云百炼（DashScope）OpenAI 兼容接口：
     // base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
@@ -973,12 +1244,13 @@ export async function POST(req: Request) {
     `\n\n【连接稳定性要求】\n` +
     `- 请不要输出冗长的“思考过程/分析/推理”，直接输出最终 JSON。\n` +
     `- 先做最小可运行版本，再逐步迭代，避免一次性输出过长代码。\n`;
-  const systemPrompt = `${serverBasePrompt}${CREATOR_OUTPUT_FORMAT_ADDON}${antiCoT}${safeAddon ? `\n\n【用户补充要求】\n${safeAddon}\n` : ""}`;
+  const baseSystemPrompt = `${serverBasePrompt}${antiCoT}${safeAddon ? `\n\n【用户补充要求】\n${safeAddon}\n` : ""}`;
+  const jsonSystemPrompt = `${serverBasePrompt}${CREATOR_OUTPUT_FORMAT_ADDON}${antiCoT}${safeAddon ? `\n\n【用户补充要求】\n${safeAddon}\n` : ""}`;
 
   // ===== Streaming SSE =====
   const payloadBase: any = {
     model,
-    messages: [{ role: "system", content: systemPrompt }, ...messages],
+    messages: [{ role: "system", content: jsonSystemPrompt }, ...messages],
     temperature: 0.4,
     stream: true,
   };
@@ -1048,7 +1320,16 @@ export async function POST(req: Request) {
   async function callModelOnce(payload: any, timeoutMs = 180_000) {
     // 尽量也用 json_object，减少模型“解释/思考”导致的超长输出；
     // 如果不兼容，再自动退回普通模式。
-    const p0 = { ...payload, stream: false };
+    const p0: any = { ...payload, stream: false };
+    // OpenRouter 上 DeepSeek V4：开启 reasoning（最高强度）
+    if (provider === "openrouter" && isDeepSeekV4OpenRouterModel(String(p0.model || ""))) {
+      p0.reasoning = { effort: "high" };
+    }
+    // DeepSeek 官方 V4：开启 thinking（最高强度）
+    if (provider === "deepseek" && isDeepSeekV4DirectModel(String(p0.model || ""))) {
+      p0.thinking = { type: "enabled" };
+      p0.reasoning_effort = "max";
+    }
     const doReq = async (p: any) => {
       let r: Response;
       try {
@@ -1068,9 +1349,9 @@ export async function POST(req: Request) {
         const msg = j?.error?.message || j?.message || r.status;
         throw new Error(`MODEL_ERROR:${msg}`);
       }
-      const content = j?.choices?.[0]?.message?.content;
-      if (!content) throw new Error("EMPTY_MODEL_RESPONSE");
-      return String(content);
+      const text = extractAssistantTextFromResponseJson(j);
+      if (!text) throw new Error("EMPTY_MODEL_RESPONSE");
+      return text;
     };
     try {
       return await doReq(p0);
@@ -1128,6 +1409,15 @@ export async function POST(req: Request) {
         const callStreamToString = async (payload: any, stepTag: string, strictJson = false, timeoutMs = 180_000) => {
           // payload.stream 必须为 true
           const p0: any = { ...payload, stream: true };
+          // OpenRouter 上 DeepSeek V4：开启 reasoning（最高强度）
+          if (provider === "openrouter" && isDeepSeekV4OpenRouterModel(String(p0.model || ""))) {
+            p0.reasoning = { effort: "high" };
+          }
+          // DeepSeek 官方 V4：开启 thinking（最高强度）
+          if (provider === "deepseek" && isDeepSeekV4DirectModel(String(p0.model || ""))) {
+            p0.thinking = { type: "enabled" };
+            p0.reasoning_effort = "max";
+          }
           // 在 Vercel 上，服务端“上游再开一条流”更容易卡死/断流；这里强制改为非流式获取结果，
           // 前端仍通过 SSE status/ping 看到进度，不依赖上游流的稳定性。
           // 如确实需要上游也流式（风险更高），可在环境变量设置 CREATOR_UPSTREAM_STREAM=1
@@ -1199,10 +1489,15 @@ export async function POST(req: Request) {
                 } catch {
                   continue;
                 }
-                const delta = j?.choices?.[0]?.delta?.content ?? "";
-                if (typeof delta === "string" && delta) {
-                  out += delta;
-                  sendDelta(delta);
+                const deltaParts = [
+                  ...extractModelTextParts(j?.choices?.[0]?.delta?.content),
+                  ...extractModelTextParts(j?.choices?.[0]?.delta?.output_text),
+                ];
+                for (const delta of deltaParts) {
+                  if (typeof delta === "string" && delta) {
+                    out += delta;
+                    sendDelta(delta);
+                  }
                 }
               }
             }
@@ -1375,28 +1670,75 @@ export async function POST(req: Request) {
             `index.html:\n${trim(indexHtml)}\n\n` +
             `style.css:\n${trim(styleCss)}\n\n` +
             `game.js:\n${trim(gameJs)}\n`;
-
-          const fixPayload: any = {
-            model,
-            messages: [
-              { role: "system", content: FIXER_PROMPT },
-              { role: "user", content: fixInput },
-            ],
-            temperature: 0.2,
-            max_tokens: 1400,
-            response_format: { type: "json_object" },
+          const fixSingleFilePlainFallback = async (targetPath: "index.html" | "style.css" | "game.js") => {
+            const currentContent = targetPath === "index.html" ? indexHtml : targetPath === "style.css" ? styleCss : gameJs;
+            const lang = targetPath === "index.html" ? "html" : targetPath === "style.css" ? "css" : "js";
+            const plainPrompt =
+              `${SINGLE_FILE_PATCH_PROMPT}\n` +
+              `- 目标文件：${targetPath}\n` +
+              `- 只输出 ${targetPath} 的完整内容。\n` +
+              `- 如果一定要用代码块，只能输出一个 \`\`\`${lang} ... \`\`\` 代码块。\n` +
+              `- 只修和这次 bug 直接相关的问题，不要重写整个游戏。\n`;
+            const fallbackPayload: any = {
+              model,
+              messages: [
+                { role: "system", content: `${baseSystemPrompt}\n\n${plainPrompt}` },
+                {
+                  role: "user",
+                  content:
+                    `【Bug 描述】\n${lastUser || "（用户未提供具体 bug 描述）"}\n\n` +
+                    `【目标文件】\npath=${targetPath}\n${currentContent}\n`,
+                },
+              ],
+              temperature: 0.1,
+              max_tokens: targetPath === "game.js" ? 3600 : 1000,
+            };
+            if (provider === "openrouter" && payloadBase.provider) fallbackPayload.provider = payloadBase.provider;
+            const out = await callStreamRobust(fallbackPayload, `修复 bug：${targetPath} 纯代码`, false, 45_000);
+            return extractPlainCodeText(out, [lang, targetPath === "game.js" ? "javascript" : lang]);
           };
-          if (provider === "openrouter" && payloadBase.provider) fixPayload.provider = payloadBase.provider;
+          const validateFixStandaloneJs = (jsCode: string) => {
+            try {
+              if (String(jsCode || "").trim()) new Script(String(jsCode || ""));
+              return "";
+            } catch (e: any) {
+              return String(e?.message || e || "");
+            }
+          };
+          const primaryFixPath = pickPrimaryFixPath(lastUser, true) as "index.html" | "style.css" | "game.js";
 
-          const outText = await callStreamRobust(fixPayload, `步骤 ${step}/${totalSteps}：生成补丁 JSON`, true, 60_000);
-          logStep("fix.raw", outText);
-          const fixSchemaHint =
-            `Schema：{\n` +
-            `  "assistant": string,\n` +
-            `  "files": [ { "path": "index.html|style.css|game.js", "content": string } ]\n` +
-            `}\n`;
-          let obj = parseJsonObjectLoose(outText);
-          if (!obj) obj = await repairJsonObject(outText, fixSchemaHint, "修复 fix JSON", 1200);
+          sendStatus(`（${step}/${totalSteps}）修复 bug：优先修主文件 ${primaryFixPath}…`);
+          let obj: any = null;
+          const plainContent = await fixSingleFilePlainFallback(primaryFixPath);
+          if (plainContent.trim()) {
+            obj = {
+              assistant: "已按你的要求完成这次 bug 修复。",
+              files: [{ path: primaryFixPath, content: plainContent }],
+            };
+          }
+          if (!obj) {
+            const fixPayload: any = {
+              model,
+              messages: [
+                { role: "system", content: FIXER_PROMPT },
+                { role: "user", content: fixInput },
+              ],
+              temperature: 0.2,
+              max_tokens: 1400,
+              response_format: { type: "json_object" },
+            };
+            if (provider === "openrouter" && payloadBase.provider) fixPayload.provider = payloadBase.provider;
+
+            const outText = await callStreamRobust(fixPayload, `步骤 ${step}/${totalSteps}：生成补丁 JSON`, true, 60_000);
+            logStep("fix.raw", outText);
+            const fixSchemaHint =
+              `Schema：{\n` +
+              `  "assistant": string,\n` +
+              `  "files": [ { "path": "index.html|style.css|game.js", "content": string } ]\n` +
+              `}\n`;
+            obj = parseJsonObjectLoose(outText);
+            if (!obj) obj = await repairJsonObject(outText, fixSchemaHint, "修复 fix JSON", 1200);
+          }
           if (!obj) throw new Error("FIXER_NOT_JSON");
           // 复用 parseCreatorJson 来做路径/结构校验
           const normalized = {
@@ -1404,6 +1746,23 @@ export async function POST(req: Request) {
             files: Array.isArray((obj as any).files) ? (obj as any).files : [],
           };
           parseCreatorJson(JSON.stringify(normalized));
+          const normalizedGameJs = normalized.files.find((f: any) => String((f as any)?.path || "").trim() === "game.js");
+          if (normalizedGameJs) {
+            let fixJsErr = validateFixStandaloneJs(String((normalizedGameJs as any)?.content || ""));
+            if (fixJsErr) {
+              sendStatus("这次修复后的 game.js 语法还不完整，我再自动补一次闭合…");
+              const repairedFixJs = await fixSingleFilePlainFallback("game.js");
+              if (repairedFixJs.trim()) {
+                const repairedErr = validateFixStandaloneJs(repairedFixJs);
+                logStep("fix.game_js_repair_result", { before: fixJsErr, after: repairedErr || "ok" });
+                if (!repairedErr) {
+                  (normalizedGameJs as any).content = repairedFixJs;
+                  fixJsErr = "";
+                }
+              }
+            }
+            if (fixJsErr) throw new Error(`FIXER_INVALID_JS:${fixJsErr}`);
+          }
 
           // 可选：服务端也写一份，确保断点续跑时立即生效（前端也会再写一次）
           try {
@@ -1482,6 +1841,14 @@ export async function POST(req: Request) {
               }
               return err;
             };
+            const validateStandaloneJs = (jsCode: string) => {
+              try {
+                if (String(jsCode || "").trim()) new Script(String(jsCode || ""));
+                return "";
+              } catch (e: any) {
+                return String(e?.message || e || "");
+              }
+            };
 
             const setLastGood = async (metaObj: any, files: Array<{ path: string; content: string }>, note: string) => {
               const m = metaObj && typeof metaObj === "object" ? metaObj : {};
@@ -1535,6 +1902,38 @@ export async function POST(req: Request) {
                 "直接补丁：修复 JSON",
                 1200,
               );
+            const directSingleFilePlainFallback = async (
+              targetPath: string,
+              currentContent: string,
+              promptText: string,
+              taskHint: string,
+            ) => {
+              const lang = targetPath.endsWith(".js") ? "js" : targetPath.endsWith(".css") ? "css" : "html";
+              const plainPrompt =
+                `${SINGLE_FILE_PATCH_PROMPT}\n` +
+                `- 目标文件：${targetPath}\n` +
+                `- 只输出 ${targetPath} 的完整内容。\n` +
+                `- 如果一定要用代码块，只能输出一个 \`\`\`${lang} ... \`\`\` 代码块。\n` +
+                `${taskHint ? `- 任务提示：${taskHint}\n` : ""}`;
+              const payload: any = {
+                model,
+                messages: [
+                  { role: "system", content: `${baseSystemPrompt}\n\n${plainPrompt}` },
+                  {
+                    role: "user",
+                    content:
+                      `【最早主题】\n${seedPrompt}\n\n` +
+                      `【当前文件】\npath=${targetPath}\n${currentContent}\n\n` +
+                      `【本次修改指令】\n${promptText}\n`,
+                  },
+                ],
+                temperature: 0.1,
+                max_tokens: targetPath.endsWith(".js") ? 1600 : 1000,
+              };
+              if (provider === "openrouter" && payloadBase.provider) payload.provider = payloadBase.provider;
+              const out = await callStreamRobust(payload, `直接补丁：${targetPath} 纯代码`, false, 45_000);
+              return extractPlainCodeText(out, [lang, targetPath.endsWith(".js") ? "javascript" : lang]);
+            };
             const healDirectFiles = async (files: Array<{ path: string; content: string }>, errMsg: string) => {
               sendMeta({ provider, model, phase: "direct_refine_debug" });
               const debugPayload: any = {
@@ -1646,6 +2045,8 @@ export async function POST(req: Request) {
               }
 
               const directPaths = pickDirectRefinePaths(editProfile.kind, hasCompleteSplitGame, userIntent);
+              const primaryDirectPath = pickPrimaryDirectRefinePath(editProfile.kind, hasCompleteSplitGame, userIntent);
+              const directPatchStrategy = chooseDirectPatchStrategy(editProfile.kind, directPaths, userIntent);
               const currentFiles = currentFilesRaw
                 .filter((f) => directPaths.includes(f.path))
                 .map((f) => ({ path: f.path, content: trimRefineFile(f.path, f.content) }));
@@ -1668,47 +2069,73 @@ export async function POST(req: Request) {
                     `- 如果要“自动开始”，请直接复用现有 start/init 流程；如果要“按进度显示当前句子”，请在现有状态更新里同步文案。\n`
                   : "";
 
-              const refinePayload: any = {
-                model,
-                messages: [
-                  {
-                    role: "system",
-                    content:
-                      `${REFINE_PROMPT}\n\n` +
-                      `【额外要求】\n` +
-                      `- 这是“已有游戏上的小改动/小优化”，不是从零创建新游戏。\n` +
-                      `- 不要反问，不要改主题，不要重做整体结构。\n` +
-                      `- 只改和用户这句话直接相关的内容，能少改就少改。\n` +
-                      refineExtraRules,
-                  },
-                  {
-                    role: "user",
-                    content:
-                      `【最早主题】\n${seedPrompt}\n\n` +
-                      `【增量编辑类型】\nkind=${editProfile.kind}\nconfidence=${editProfile.confidence}\nhint=${editProfile.hint}\n\n` +
-                      `【本次任务提示】\n${refineTaskHint}\n\n` +
-                      `【本次可修改文件】\n${directPaths.join(", ")}\n\n` +
-                      `【当前文件】\n${JSON.stringify(currentFiles, null, 2)}\n\n` +
-                      `【本次修改指令】\n${userIntent}\n\n` +
-                      `优先输出 ops；只有在确实无法用 ops 表达时，再输出修改后的 files。若这句话只是“去掉/隐藏/调整位置/改文案/改样式”，不要生成额外玩法方案，不要重写无关文件。`,
-                  },
-                ],
-                temperature: editProfile.kind === "bugfix" ? 0.1 : editProfile.kind === "feature" ? 0.25 : 0.15,
-                max_tokens: directPaths.length === 1 ? (editProfile.kind === "behavior" ? 1200 : 1000) : 1600,
-                response_format: { type: "json_object" },
-              };
-              if (provider === "openrouter" && payloadBase.provider) refinePayload.provider = payloadBase.provider;
+              let refineObj: any = null;
+              if (directPatchStrategy === "single_file_patch") {
+                const targetPath = directPaths.includes(primaryDirectPath) ? primaryDirectPath : directPaths[0];
+                const currentTarget = currentFilesRaw.find((f) => f.path === targetPath)?.content || "";
+                sendStatus(`这次小改动走“单文件补丁”模式，优先修改 ${targetPath}…`);
+                const plainContent = await directSingleFilePlainFallback(targetPath, currentTarget, userIntent, refineTaskHint);
+                if (plainContent.trim()) {
+                  refineObj = {
+                    assistant: "已按你的要求完成这次小改动。",
+                    files: [{ path: targetPath, content: plainContent }],
+                  };
+                }
+              } else {
+                const refinePayload: any = {
+                  model,
+                  messages: [
+                    {
+                      role: "system",
+                      content:
+                        `${OPS_PATCH_PROMPT}\n\n` +
+                        `【额外要求】\n` +
+                        `- 这是“已有游戏上的小改动/小优化”，不是从零创建新游戏。\n` +
+                        `- 不要反问，不要改主题，不要重做整体结构。\n` +
+                        `- 只改和用户这句话直接相关的内容，能少改就少改。\n` +
+                        refineExtraRules,
+                    },
+                    {
+                      role: "user",
+                      content:
+                        `【最早主题】\n${seedPrompt}\n\n` +
+                        `【增量编辑类型】\nkind=${editProfile.kind}\nconfidence=${editProfile.confidence}\nhint=${editProfile.hint}\n\n` +
+                        `【本次任务提示】\n${refineTaskHint}\n\n` +
+                        `【本次可修改文件】\n${directPaths.join(", ")}\n\n` +
+                        `【当前文件】\n${JSON.stringify(currentFiles, null, 2)}\n\n` +
+                        `【本次修改指令】\n${userIntent}\n\n` +
+                        `优先输出 ops；只有在确实无法用 ops 表达时，再输出修改后的 files。若这句话只是“去掉/隐藏/调整位置/改文案/改样式”，不要生成额外玩法方案，不要重写无关文件。`,
+                    },
+                  ],
+                  temperature: editProfile.kind === "bugfix" ? 0.1 : editProfile.kind === "feature" ? 0.25 : 0.15,
+                  max_tokens: directPaths.length === 1 ? 1000 : 1600,
+                  response_format: { type: "json_object" },
+                };
+                if (provider === "openrouter" && payloadBase.provider) refinePayload.provider = payloadBase.provider;
 
-              const refineText = await autoRetry(
-                async () =>
-                  await callStreamRobust(refinePayload, "直接补丁：小改动", true, directPaths.length === 1 ? (editProfile.kind === "behavior" ? 20_000 : 25_000) : 45_000),
-                "小改动补丁",
-                "这是已有游戏上的小改动，只输出 JSON 和必要文件。",
-                1,
-              );
-              logStep("direct_refine.raw", refineText);
-              let refineObj = parseJsonObjectLoose(refineText);
-              if (!refineObj) refineObj = await repairFilesJson(refineText);
+                const refineText = await autoRetry(
+                  async () =>
+                    await callStreamRobust(refinePayload, "直接补丁：ops patch", true, directPaths.length === 1 ? 25_000 : 45_000),
+                  "小改动补丁",
+                  "这是已有游戏上的小改动，只输出 JSON 和必要文件。",
+                  1,
+                );
+                logStep("direct_refine.raw", refineText);
+                refineObj = parseJsonObjectLoose(refineText);
+                if (!refineObj) refineObj = await repairFilesJson(refineText);
+                if (!refineObj) {
+                  const targetPath = directPaths.includes(primaryDirectPath) ? primaryDirectPath : directPaths[0];
+                  const currentTarget = currentFilesRaw.find((f) => f.path === targetPath)?.content || "";
+                  sendStatus(`这次小改动的 JSON 不稳定，我改用“主文件纯代码”方式再试一次…`);
+                  const plainContent = await directSingleFilePlainFallback(targetPath, currentTarget, userIntent, refineTaskHint);
+                  if (plainContent.trim()) {
+                    refineObj = {
+                      assistant: "已按你的要求完成这次小改动。",
+                      files: [{ path: targetPath, content: plainContent }],
+                    };
+                  }
+                }
+              }
               if (!refineObj) throw new Error("DIRECT_REFINE_NOT_JSON");
               const outOps = Array.isArray((refineObj as any)?.ops) ? ((refineObj as any).ops as PatchOp[]) : [];
               const outFiles = Array.isArray((refineObj as any)?.files) ? (refineObj as any).files : [];
@@ -1719,7 +2146,18 @@ export async function POST(req: Request) {
                 files = applied.files;
                 appliedOpsChanged = applied.changed;
               }
-              if (!outFiles.length && outOps.length && !appliedOpsChanged) throw new Error("DIRECT_REFINE_OPS_NO_MATCH");
+              if (!outFiles.length && outOps.length && !appliedOpsChanged) {
+                const targetPath = directPaths.includes(primaryDirectPath) ? primaryDirectPath : directPaths[0];
+                const currentTarget = currentFilesRaw.find((f) => f.path === targetPath)?.content || "";
+                logStep("direct_refine.ops_no_match", { targetPath, ops: outOps });
+                sendStatus(`这次补丁锚点没有命中当前代码，我改用“主文件纯代码”方式再试一次…`);
+                const plainContent = await directSingleFilePlainFallback(targetPath, currentTarget, userIntent, refineTaskHint);
+                if (plainContent.trim()) {
+                  files = currentFilesRaw.map((f) => (f.path === targetPath ? { path: targetPath, content: plainContent } : f));
+                } else {
+                  throw new Error("DIRECT_REFINE_OPS_NO_MATCH");
+                }
+              }
               for (const f of outFiles) {
                 const p = String((f as any)?.path || "").trim();
                 const c = String((f as any)?.content || "");
@@ -1728,11 +2166,6 @@ export async function POST(req: Request) {
                 if (idx >= 0) files[idx] = { path: p, content: c };
                 else files.push({ path: p, content: c });
               }
-              for (const f of files) {
-                if (!["index.html", "style.css", "game.js"].includes(f.path)) continue;
-                await upsertDraftFile(f.path, f.content);
-              }
-              logStep("direct_refine.persist", { files, ops: outOps, changed: appliedOpsChanged });
               const acceptanceErrs = validateAcceptanceSimple(
                 files.filter((f) => ["index.html", "style.css", "game.js"].includes(f.path)),
               );
@@ -1742,8 +2175,20 @@ export async function POST(req: Request) {
                   acceptanceErrs.join("\n"),
                 );
               }
+              const finalAcceptanceErrs = validateAcceptanceSimple(
+                files.filter((f) => ["index.html", "style.css", "game.js"].includes(f.path)),
+              );
+              if (finalAcceptanceErrs.length) {
+                logStep("direct_refine.invalid_after_heal", finalAcceptanceErrs);
+                throw new Error(`DIRECT_REFINE_INVALID_FILES:${finalAcceptanceErrs.join(" | ").slice(0, 300)}`);
+              }
+              for (const f of files) {
+                if (!["index.html", "style.css", "game.js"].includes(f.path)) continue;
+                await upsertDraftFile(f.path, f.content);
+              }
+              logStep("direct_refine.persist", { files, ops: outOps, changed: appliedOpsChanged });
               const metaNow = (await readMetaObj()) || readMeta || {};
-              if (!validateAcceptanceSimple(files).length) await setLastGood(metaNow, files, "after_direct_refine");
+              await setLastGood(metaNow, files, "after_direct_refine");
               const finalObj = {
                 assistant: String((refineObj as any)?.assistant || "已按你的要求完成这次小改动。").trim(),
                 meta: metaNow,
@@ -2109,19 +2554,31 @@ export async function POST(req: Request) {
               model,
               quality,
             });
-            const repairBlueprintJson = async (rawText: string) =>
-              await repairJsonObject(
-                rawText,
-                `Schema：{\n` +
-                  `  "meta": object,\n` +
-                  `  "config": object,\n` +
-                  `  "protocol": object,\n` +
-                  `  "blueprint": object,\n` +
-                  `  "assetsPlan": object\n` +
-                  `}\n`,
-                "阶段2：修复蓝图 JSON",
-                1200,
-              );
+            const repairBlueprintProtocol = async (rawText: string) => {
+              const clipped = String(rawText || "").slice(0, 12000);
+              const repairPayload: any = {
+                model,
+                messages: [
+                  {
+                    role: "system",
+                    content:
+                      `你是蓝图协议修复器。不要输出 JSON，不要解释，只输出分段文本协议。\n` +
+                      `必须严格包含 5 段：meta、config、protocol、blueprint、assetsPlan。\n` +
+                      `每段都用 ===SECTION:name=== 开始，用 ===END=== 结束，段内只允许 key=value 行。\n`,
+                  },
+                  {
+                    role: "user",
+                    content:
+                      `请把下面内容修复成正确的“蓝图分段文本协议”：\n\n` +
+                      `【原输出】\n${clipped}\n`,
+                  },
+                ],
+                temperature: 0,
+                max_tokens: 900,
+              };
+              if (provider === "openrouter" && payloadBase.provider) repairPayload.provider = payloadBase.provider;
+              return await callStreamRobust(repairPayload, "阶段2：修复蓝图协议", false, 60_000);
+            };
             const markCodePending = async () => {
               const nextMeta = {
                 ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
@@ -2146,13 +2603,13 @@ export async function POST(req: Request) {
                 logStep("blueprint.pending", { stage: "blueprint_pending", seedPrompt });
               } catch {}
 
-              sendStatus(`（1/2）生成蓝图（${provider} / ${mvpModel}）…`);
+              sendStatus(`（1/5）生成蓝图（${provider} / ${mvpModel}）…`);
               sendMeta({ provider, model, phase: "blueprint" });
 
               const bpPayload: any = {
                 model,
                 messages: [
-                  { role: "system", content: `${CREATOR_GAME_TYPE_LIBRARY_ADDON}\n\n${BLUEPRINT_PROMPT}` },
+                  { role: "system", content: `${baseSystemPrompt}\n\n${CREATOR_GAME_TYPE_LIBRARY_ADDON}\n\n${BLUEPRINT_PROMPT}` },
                   {
                     role: "user",
                     content:
@@ -2161,35 +2618,35 @@ export async function POST(req: Request) {
                       `【已选答案（可能为空）】\n${JSON.stringify(answers, null, 2)}\n\n` +
                       `${templateHint}\n` +
                       (activeConfig ? `【已有 config（如有）】\n${JSON.stringify(activeConfig, null, 2)}\n\n` : "") +
-                      `请输出蓝图 JSON（含 meta/config/protocol/blueprint/assetsPlan）。`,
+                      `请输出蓝图分段文本协议（meta/config/protocol/blueprint/assetsPlan），不要输出 JSON。`,
                   },
                 ],
                 temperature: 0.2,
-                max_tokens: 1200,
-                response_format: { type: "json_object" },
+                max_tokens: 1100,
               };
               if (provider === "openrouter" && payloadBase.provider) bpPayload.provider = payloadBase.provider;
 
               const bpText = await autoRetry(
                 async () =>
-                  await callStreamRobust(bpPayload, "阶段2：蓝图 JSON", true, 90_000),
+                  await callStreamRobust(bpPayload, "阶段2：蓝图（分段协议）", false, 90_000),
                 "蓝图",
-                "只输出 JSON（meta/config/protocol/blueprint/assetsPlan），严禁输出代码。",
+                "严格按 ===SECTION:...=== / ===END=== 输出 5 段 key=value 文本协议（meta/config/protocol/blueprint/assetsPlan），严禁输出代码。",
                 2,
               );
               logStep("blueprint.raw", bpText);
-              let bpObj = parseJsonObjectLoose(bpText);
-              if (!bpObj) bpObj = await repairBlueprintJson(bpText);
-              if (!bpObj) throw new Error("BLUEPRINT_NOT_JSON");
-              const metaBp = safeMeta((bpObj as any).meta);
-              const cfgBp = (bpObj as any).config || activeConfig || {};
-              design = {
-                meta: metaBp,
-                config: cfgBp,
-                protocol: (bpObj as any).protocol || {},
-                blueprint: (bpObj as any).blueprint || {},
-                assetsPlan: (bpObj as any).assetsPlan || {},
-              };
+              let sec = parseSectionBlocks(bpText);
+              if (!sec) {
+                const repairedBpText = await repairBlueprintProtocol(bpText);
+                logStep("blueprint.repaired", repairedBpText);
+                sec = parseSectionBlocks(repairedBpText);
+              }
+              if (!sec) throw new Error("BLUEPRINT_PROTOCOL_INVALID");
+
+              const parsedBlueprint = parseBlueprintSectionProtocol(sec, activeConfig, readMeta);
+              if (!parsedBlueprint) throw new Error("BLUEPRINT_PROTOCOL_PARSE_FAILED");
+              design = parsedBlueprint;
+              const metaBp = parsedBlueprint.meta;
+              const cfgBp = parsedBlueprint.config || activeConfig || {};
               activeConfig = cfgBp;
               logStep("blueprint.parsed", {
                 meta: metaBp,
@@ -2270,24 +2727,23 @@ export async function POST(req: Request) {
               return (await tryRepairJsonOnce(rawText, `MISSING_${requiredPaths.join("_")}`, schemaHint)) || obj;
             };
             const generateHtmlStep = async () => {
-              sendStatus(`（2/4）生成页面结构（${provider} / ${mvpModel}）…`);
+              sendStatus(`（2/5）生成页面结构（${provider} / ${mvpModel}）…`);
               sendMeta({ provider, model, phase: "codegen_html" });
               const htmlPayload: any = {
                 model,
                 messages: [
-                  { role: "system", content: CODEGEN_HTML_PROMPT },
+                  { role: "system", content: `${baseSystemPrompt}\n\n${CODEGEN_HTML_PROMPT}` },
                   {
                     role: "user",
                     content:
                       `【用户最早的主题】\n${seedPrompt}\n\n` +
                       `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
                       `${templateHint}\n` +
-                      `请只输出 index.html。`,
+                      `请只输出 index.html 纯文本，不要输出 JSON。`,
                   },
                 ],
                 temperature: 0.2,
-                max_tokens: 1200,
-                response_format: { type: "json_object" },
+                max_tokens: 1000,
               };
               if (provider === "openrouter" && payloadBase.provider) htmlPayload.provider = payloadBase.provider;
 
@@ -2295,9 +2751,9 @@ export async function POST(req: Request) {
               try {
                 htmlText = await autoRetry(
                   async () =>
-                    await callStreamRobust(htmlPayload, "阶段3：页面结构 JSON", true, 90_000),
+                    await callStreamRobust(htmlPayload, "阶段3：页面结构 HTML", false, 90_000),
                   "页面结构",
-                  "只输出 JSON，files 中仅包含 index.html。",
+                  "只输出 index.html 纯文本，不要解释，不要 JSON。",
                   2,
                 );
               } catch (e: any) {
@@ -2309,22 +2765,11 @@ export async function POST(req: Request) {
               }
 
               logStep("html.raw", htmlText);
-              const htmlObj = await parseFilesObject(htmlText, htmlSchemaHint, ["index.html"]);
-              if (!htmlObj) {
-                logStep("html.not_json", htmlText);
-                return await failWithRetry(
-                  "我刚刚在生成页面结构时，模型输出的 JSON 格式不对（可能内容太长被截断）。你的蓝图我已经保存好了，点“重试”会从写代码继续。",
-                  htmlText,
-                );
-              }
-
-              const stepMeta = safeMeta((htmlObj as any).meta);
-              const htmlFiles = Array.isArray((htmlObj as any).files) ? (htmlObj as any).files : [];
-              const html = String(htmlFiles.find((x: any) => String(x?.path || "") === "index.html")?.content || "");
+              const html = extractPlainCodeText(htmlText, ["html"]);
               if (!html.trim()) {
-                logStep("html.missing_file", { files: htmlFiles });
+                logStep("html.empty", htmlText);
                 return await failWithRetry(
-                  "我生成出来的内容里没有完整找到 index.html。你的蓝图已保存，点“重试”继续写代码即可。",
+                  "我刚刚在生成页面结构时，没有拿到有效的 HTML 内容。你的蓝图我已经保存好了，点“重试”会从写代码继续。",
                   htmlText,
                 );
               }
@@ -2342,15 +2787,16 @@ export async function POST(req: Request) {
                   JSON.stringify(htmlWrite.failed),
                 );
               }
+              const stepMeta = safeMeta((design as any)?.meta || (readMeta as any) || {});
               return { meta: stepMeta, html };
             };
             const generateCssStep = async (html: string) => {
-              sendStatus(`（3/4）生成页面样式（${provider} / ${mvpModel}）…`);
+              sendStatus(`（3/5）生成页面样式（${provider} / ${mvpModel}）…`);
               sendMeta({ provider, model, phase: "codegen_css" });
               const cssPayload: any = {
                 model,
                 messages: [
-                  { role: "system", content: CODEGEN_CSS_PROMPT },
+                  { role: "system", content: `${baseSystemPrompt}\n\n${CODEGEN_CSS_PROMPT}` },
                   {
                     role: "user",
                     content:
@@ -2408,12 +2854,12 @@ export async function POST(req: Request) {
               return { css: cssContent };
             };
             const generateGameJsStep = async (html: string, css: string) => {
-              sendStatus(`（4/4）生成核心逻辑（${provider} / ${mvpModel}）…`);
-              sendMeta({ provider, model, phase: "codegen_game_js" });
-              const gameJsPayload: any = {
+              sendStatus(`（4/5）生成核心逻辑骨架（${provider} / ${mvpModel}）…`);
+              sendMeta({ provider, model, phase: "codegen_game_js_skeleton" });
+              const gameJsSkeletonPayload: any = {
                 model,
                 messages: [
-                  { role: "system", content: coderPrompt(design || { config: activeConfig }, "game.js", quality === "quality") },
+                  { role: "system", content: `${baseSystemPrompt}\n\n${CODEGEN_GAMEJS_SKELETON_PROMPT}` },
                   {
                     role: "user",
                     content:
@@ -2421,42 +2867,139 @@ export async function POST(req: Request) {
                       `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
                       `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }, { path: "style.css", content: css }], null, 2)}\n\n` +
                       `${templateHint}\n` +
-                      `请只输出 game.js 的 JSON。`,
+                      `请先输出一个结构完整、函数齐全、带启动入口的 game.js 骨架纯文本，不要输出 JSON。`,
                   },
                 ],
                 temperature: 0.2,
-                max_tokens: 2000,
-                response_format: { type: "json_object" },
+                max_tokens: 1400,
               };
-              if (provider === "openrouter" && payloadBase.provider) gameJsPayload.provider = payloadBase.provider;
+              if (provider === "openrouter" && payloadBase.provider) gameJsSkeletonPayload.provider = payloadBase.provider;
+
+              let skeletonText = "";
+              try {
+                skeletonText = await autoRetry(
+                  async () =>
+                    await callStreamRobust(gameJsSkeletonPayload, "阶段5：核心逻辑骨架 JS", false, 90_000),
+                  "核心逻辑骨架",
+                  "只输出 game.js 骨架纯文本，不要解释，不要 JSON。",
+                  2,
+                );
+              } catch (e: any) {
+                logStep("game_js_skeleton.request_failed", String(e?.message || e));
+                return await failWithRetry(
+                  "我刚刚在生成核心逻辑骨架时遇到了网络问题。蓝图和页面结构已经保存好，点“重试”会直接从写代码继续。",
+                  String(e?.message || e),
+                );
+              }
+
+              logStep("game_js_skeleton.raw", skeletonText);
+              let skeletonJs = extractPlainCodeText(skeletonText, ["js", "javascript"]);
+              if (!skeletonJs.trim()) {
+                logStep("game_js_skeleton.empty", skeletonText);
+                return await failWithRetry(
+                  "我刚刚在生成核心逻辑骨架时，没有拿到有效的 JS 内容。你的蓝图和页面结构已保存，点“重试”会从写代码继续。",
+                  skeletonText,
+                );
+              }
+              let skeletonErr = validateStandaloneJs(skeletonJs);
+              if (skeletonErr) {
+                logStep("game_js_skeleton.syntax_error", skeletonErr);
+                return await failWithRetry(
+                  "我刚刚生成的核心逻辑骨架没有闭合完整。蓝图和页面结构已保存，点“重试”我会直接从 JS 继续。",
+                  skeletonErr,
+                );
+              }
+
+              sendStatus(`（5/5）补全核心逻辑细节（${provider} / ${mvpModel}）…`);
+              sendMeta({ provider, model, phase: "codegen_game_js_complete" });
+              const gameJsCompletePayload: any = {
+                model,
+                messages: [
+                  { role: "system", content: `${baseSystemPrompt}\n\n${CODEGEN_GAMEJS_COMPLETE_PROMPT}` },
+                  {
+                    role: "user",
+                    content:
+                      `【用户最早的主题】\n${seedPrompt}\n\n` +
+                      `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
+                      `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }, { path: "style.css", content: css }], null, 2)}\n\n` +
+                      `【当前 game.js 骨架】\n${skeletonJs}\n\n` +
+                      `${templateHint}\n` +
+                      `请基于这份骨架补全完整的 game.js 纯文本，不要输出 JSON。`,
+                  },
+                ],
+                temperature: 0.2,
+                max_tokens: 2200,
+              };
+              if (provider === "openrouter" && payloadBase.provider) gameJsCompletePayload.provider = payloadBase.provider;
 
               let gameJsText = "";
               try {
                 gameJsText = await autoRetry(
                   async () =>
-                    await callStreamRobust(gameJsPayload, "阶段4：核心逻辑 JSON", true, 90_000),
-                  "核心逻辑",
-                  "只输出 JSON，结构为 {path:\"game.js\", content:\"...\"}。",
+                    await callStreamRobust(gameJsCompletePayload, "阶段6：补全核心逻辑 JS", false, 90_000),
+                  "核心逻辑补全",
+                  "基于已有骨架补全 game.js 纯文本，不要解释，不要 JSON。",
                   2,
                 );
               } catch (e: any) {
-                logStep("game_js.request_failed", String(e?.message || e));
+                logStep("game_js_complete.request_failed", String(e?.message || e));
                 return await failWithRetry(
-                  "我刚刚在生成核心逻辑时遇到了网络问题。蓝图和页面结构已经保存好，点“重试”会直接从写代码继续。",
+                  "我刚刚在补全核心逻辑时遇到了网络问题。蓝图和页面结构已经保存好，点“重试”会直接从写代码继续。",
                   String(e?.message || e),
                 );
               }
 
-              logStep("game_js.raw", gameJsText);
-              let gameJsObj: any = parseJsonObjectLoose(gameJsText);
-              if (!gameJsObj) gameJsObj = await tryRepairJsonOnce(gameJsText, "GAME_JS_NOT_JSON", gameJsSchemaHint);
-              const jsPath = String((gameJsObj as any)?.path || "").trim();
-              const jsContent = String((gameJsObj as any)?.content || "");
-              if (!gameJsObj || jsPath !== "game.js" || !jsContent.trim()) {
-                logStep("game_js.not_json", gameJsText);
+              logStep("game_js_complete.raw", gameJsText);
+              let jsContent = extractPlainCodeText(gameJsText, ["js", "javascript"]);
+              if (!jsContent.trim()) {
+                logStep("game_js_complete.empty", gameJsText);
                 return await failWithRetry(
-                  "我刚刚在生成核心逻辑时，模型输出的 JSON 格式不对（可能内容太长被截断）。你的蓝图和页面结构已保存，点“重试”会从写代码继续。",
+                  "我刚刚在补全核心逻辑时，没有拿到有效的 JS 内容。你的蓝图和页面结构已保存，点“重试”会从写代码继续。",
                   gameJsText,
+                );
+              }
+              let jsSyntaxErr = validateStandaloneJs(jsContent);
+              if (jsSyntaxErr) {
+                logStep("game_js.syntax_error", jsSyntaxErr);
+                sendStatus("核心逻辑看起来没生成完整，我先自动修一次 JS 语法…");
+                const repairPayload: any = {
+                  model,
+                  messages: [
+                    { role: "system", content: `${baseSystemPrompt}\n\n${SINGLE_FILE_PATCH_PROMPT}\n- 目标文件：game.js\n- 这次只修 JS 语法和截断问题，优先补全括号、函数体、对象、数组和字符串，不要重写业务逻辑。` },
+                    {
+                      role: "user",
+                      content:
+                        `【用户最早的主题】\n${seedPrompt}\n\n` +
+                        `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
+                        `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }, { path: "style.css", content: css }], null, 2)}\n\n` +
+                        `【当前损坏的 game.js】\n${jsContent}\n\n` +
+                        `【语法错误】\n${jsSyntaxErr}\n\n` +
+                        `请只输出修复后的 game.js 纯文本。`,
+                    },
+                  ],
+                  temperature: 0.1,
+                  max_tokens: 1200,
+                };
+                if (provider === "openrouter" && payloadBase.provider) repairPayload.provider = payloadBase.provider;
+                try {
+                  const repairedJsText = await callStreamRobust(repairPayload, "阶段5：修复核心逻辑 JS", false, 60_000);
+                  const repairedJs = extractPlainCodeText(repairedJsText, ["js", "javascript"]);
+                  if (repairedJs.trim()) {
+                    const repairedErr = validateStandaloneJs(repairedJs);
+                    logStep("game_js.repair_result", { before: jsSyntaxErr, after: repairedErr || "ok" });
+                    if (!repairedErr) {
+                      jsContent = repairedJs;
+                      jsSyntaxErr = "";
+                    }
+                  }
+                } catch (e: any) {
+                  logStep("game_js.repair_failed", String(e?.message || e));
+                }
+              }
+              if (jsSyntaxErr) {
+                return await failWithRetry(
+                  "我刚刚生成的核心逻辑没有闭合完整，自动修复这次也没成功。蓝图和页面结构已保存，点“重试”我会直接从 JS 继续。",
+                  jsSyntaxErr,
                 );
               }
               const gameJsWrite = await writeDraftFilesDetailed([{ path: "game.js", content: jsContent }]);
@@ -2475,21 +3018,6 @@ export async function POST(req: Request) {
               }
               return { jsContent };
             };
-
-            const htmlSchemaHint =
-              `只输出一个严格 JSON 对象（json_object），不要任何解释或 markdown。\n` +
-              `Schema：{\n` +
-              `  "assistant": string,\n` +
-              `  "meta": { "title": string, "shortDesc": string, "rules": string, "creator": { "name": string } },\n` +
-              `  "files": [{ "path": "index.html", "content": string }]\n` +
-              `}\n` +
-              `要求：index.html 必须引用 ./style.css 和 ./game.js；不要输出 style.css 或 game.js。\n`;
-            const gameJsSchemaHint =
-              `只输出一个严格 JSON 对象（json_object），不要任何解释或 markdown。\n` +
-              `Schema：{\n` +
-              `  "path": "game.js",\n` +
-              `  "content": string\n` +
-              `}\n`;
 
             const htmlStep = await generateHtmlStep();
             if (!htmlStep) return;
