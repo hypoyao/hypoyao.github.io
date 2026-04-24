@@ -112,59 +112,6 @@ function stripDangerousLocalBehaviorArtifacts(path: string, content: string) {
   return raw;
 }
 
-// ===== “骨架增长 + 迭代补丁”生成架构（默认开启）=====
-// 核心目标：先拿到单文件可运行 MVP（闭环），再迭代补丁；避免多文件分步“上下文漂移”导致不可用。
-const ARCHITECT_PROMPT = `
-你是“架构师（Architect）”。你的任务不是写最终代码，而是把用户的一句话需求转成一份“协议蓝图”，为后续所有生成/补丁提供统一约束，保证变量命名与交互一致。
-
-【输出要求】
-1) 只输出合法 JSON，不要输出任何 Markdown/解释文字。
-2) 必须包含 meta、protocol、acceptance：
-   - meta：用于 meta.json（title/shortDesc/rules/creator{name}）
-   - protocol：全局状态/事件/DOM 协议（命名约定就是“法律”）
-   - acceptance：可运行验收清单（可自动检查的项）
-
-【JSON Schema（必须符合）】
-{
-  "meta": { "title": "...", "shortDesc": "...", "rules": "...", "creator": { "name": "..." } },
-  "protocol": {
-    "globalState": { "stateMachine": ["start","playing","win","lose"], "vars": [{"name":"score","type":"number","purpose":"..."}] },
-    "dom": { "rootId": "app", "canvasId": "gameCanvas", "startBtnId": "btnStart", "hudIds": ["hudScore","hudInfo"] },
-    "events": ["startGame","resetGame","tick","render"],
-    "gameLoop": { "tickMs": 16, "functions": ["init","reset","update","render"] }
-  },
-  "acceptance": {
-    "mustHave": [
-      "index.html 内含一个 <style> 和一个 <script>（单文件 MVP）",
-      "无 JS 语法错误（可被静态解析）",
-      "点击开始可进入 playing，结束后可回到 start/over"
-    ]
-  }
-}
-`.trim();
-
-const MVP_PROMPT = `
-你是“程序员（Skeleton Builder）”。请基于架构师蓝图，生成一个“单文件 MVP（index.html）”，把 CSS/JS 全部内联在同一个 HTML 文件里。
-
-【目标】
-- 先做“能跑起来”的最小可运行版本（MVP），主循环与基础 UI 完整闭环。
-- 代码尽量控制在 200~450 行左右，避免超长输出。
-
-【硬性要求】
-1) 只输出合法 JSON，不要输出 markdown/解释。
-2) 输出结构必须是：
-{
-  "assistant": "一句话说明你生成了什么",
-  "meta": { "title": "...", "shortDesc": "...", "rules": "...", "creator": { "name": "..." } },
-  "files": [{ "path": "index.html", "content": "..." }]
-}
-3) index.html 里必须包含：
-   - <!-- AI_MVP_SINGLE_FILE v1 -->
-   - 一个 <style>（内联样式）
-   - 一个 <script>（内联逻辑）
-4) 不依赖任何外部库。
-`.trim();
-
 const REFINE_PROMPT = `
 你是“程序员（Refiner）”。你将基于“当前可运行代码 + 架构协议 + 用户新需求”，输出最小风险的全量替换版本（或多文件时输出必要文件）。
 
@@ -198,58 +145,6 @@ const DEBUG_PROMPT = `
 2) 输出结构必须是：{ "assistant": "...", "files": [ { "path": "...", "content": "..." } ] }
 3) 只允许改 index.html/style.css/game.js
 4) 最小修复原则：只修报错相关内容，不要大改功能。
-`.trim();
-
-// 单模型单次生成（稳定优先）：一次性输出“蓝图 + 代码”（仍为单文件），再做最小校验/一次自愈
-// 注意：不要求/不输出“内心独白”，而是输出可读的“蓝图/伪代码/资源方案”，避免泄露推理过程且更稳定。
-const MONOLITH_MVP_PROMPT = `
-你是“前端小游戏生成器”。请根据用户的一句话需求，在一次输出中同时给出：
-1) 游戏蓝图（可读的结构化说明 + 伪代码）
-2) 资源/渲染方案（Canvas 或 SVG，说明理由与关键资产）
-3) 最终可运行代码（单文件 index.html，内联 CSS/JS）
-
-【硬性要求】
-1) 只输出合法 JSON（json_object），不要任何解释或 markdown。
-2) 输出结构必须为：
-{
-  "assistant": "一句话说明已生成什么",
-  "meta": { "title": "...", "shortDesc": "...", "rules": "...", "creator": { "name": "..." } },
-  "blueprint": {
-    "coreLoop": "一句话描述核心循环",
-    "states": ["start","playing","gameover"],
-    "pseudocode": ["步骤1 ...", "步骤2 ..."],
-    "controls": ["..."],
-    "winLose": "结束判定"
-  },
-  "assets": {
-    "renderer": "canvas|svg",
-    "reasons": ["为什么选它"],
-    "sprites": ["需要的图形元素列表（用程序绘制即可）"]
-  },
-  "files": [
-    { "path": "index.html", "content": "..." }
-  ]
-}
-3) files 里必须且只能包含 index.html；index.html 必须包含：
-   - <!-- AI_MVP_SINGLE_FILE v1 -->
-   - 一个 <style>（内联样式）
-   - 一个 <script>（内联逻辑）
-4) 不依赖任何外部库，不要引用外部 CDN。
-5) 目标是“最小可运行版本”：点击开始/重开可玩；保证无明显 JS 语法错误。
-6) 为避免输出过长导致 JSON 被截断：blueprint / assets 必须简短：
-   - blueprint.pseudocode 最多 8 条
-   - assets.reasons 最多 3 条
-   - assets.sprites 最多 8 条
-7) 如果脚本里存在开始/重开/句子展示等核心动作，请尽量暴露：
-   window.gameHooks = {
-     start(){},
-     restart(){},
-     setAutoStart(enabled){},
-     setCurrentSentence(text){},
-     showCurrentSentence(enabled){}
-   }
-   没有对应能力时可以是空实现，但名字必须稳定，方便后续小改动复用。
-8) 严禁输出 data-ai-local-behavior 之类的注入脚本；不要用 MutationObserver + 轮询去“外挂式”修改页面。
 `.trim();
 
 // 需求澄清（第一步）：严禁生成代码，先给出 3 个可选方向 + 3-5 个关键反问。
@@ -294,56 +189,6 @@ Schema：
 - 你喜欢哪种画风？（卡通 / 像素 / 霓虹酷炫）
 `.trim();
 
-// 配置表生成（第二步）：基于用户选择/回答生成“参数配置表 JSON”，仍然不写代码。
-const CONFIG_PROMPT = `
-你现在是“青少年友好”的小游戏配置生成器（面向小学/初中）。
-你要把用户刚才点选的答案，变成一份“游戏配置表 JSON”，方便下一步写代码。
-
-【铁律】
-1) 严禁输出任何代码（HTML/CSS/JS），只输出 JSON。
-2) 配置要简单、可理解：不要出现专业术语；用“速度/难度/颜色/按钮文字”这种词。
-3) 如果用户没选某个点，用合理默认值（更偏简单、好上手）。
-4) 规则文字 rules 必须用青少年能读懂的话说明“怎么玩、怎么得分、什么时候结束”。
-
-【输出要求：只输出合法 JSON（json_object）】
-Schema：
-{
-  "meta": { "title": "...", "shortDesc": "...", "rules": "...", "creator": { "name": "..." } },
-  "config": {
-    "platform": "pc|mobile|both",
-    "style": {
-      "theme": "卡通|像素|霓虹",
-      "colors": { "bg": "#...", "accent": "#..." }
-    },
-    "controls": {
-      "pc": { "left": "ArrowLeft", "right": "ArrowRight" },
-      "mobile": { "type": "virtual_left", "releaseAutoCenter": true }
-    },
-    "level": {
-      "min": 1,
-      "max": 10,
-      "meaning": "等级越高越难（更快/障碍更多/回正更慢）"
-    },
-    "numbers": {
-      "speedBase": 7,
-      "speedPerLevel": 0.9,
-      "autoCenterBase": 0.12,
-      "autoCenterPerLevel": -0.007
-    },
-    "gameplay": {
-      "mode": "endless|levels|time",
-      "score": ["distance","stars"],
-      "endOnCrash": true
-    },
-    "ui": {
-      "texts": { "start": "开始", "restart": "重开", "pause": "暂停" },
-      "showHud": true
-    }
-  },
-  "needConfirm": ["如果还有必须确认的点，用很简单的句子列出来；没有就给空数组"]
-}
-`.trim();
-
 // 蓝图阶段（新）：一次输出“同源蓝图 + 协议/命名 + config”，但严禁输出任何代码。
 // 这一步输出短 JSON，稳定落盘；下一步代码生成必须严格按此 JSON 实现，避免变量/规则漂移。
 const BLUEPRINT_PROMPT = `
@@ -359,7 +204,7 @@ const BLUEPRINT_PROMPT = `
 Schema：
 {
   "meta": { "title": "...", "shortDesc": "...", "rules": "...", "creator": { "name": "..." } },
-  "config": { ...（沿用 CONFIG_PROMPT 的 config 结构，缺啥就用默认值）... },
+  "config": { ...（沿用当前蓝图约定的 config 结构，缺啥就用默认值）... },
   "protocol": {
     "dom": { "rootId": "app", "canvasId": "game", "btnStartId": "btnStart", "btnRestartId": "btnRestart", "btnLeftId": "btnLeft" },
     "state": { "name": "G", "vars": ["level","score","state","speed","autoCenter"] }
@@ -374,39 +219,6 @@ Schema：
 }
 `.trim();
 
-// 代码生成（第三步）：一次性输出“蓝图 + 代码”，并严格按照 config 实现（服务端仍可拆分为三文件）。
-const CODEGEN_FROM_CONFIG_PROMPT = `
-你是“前端小游戏生成器”。你会收到一份已经确认好的蓝图 JSON（其中包含 meta/config/protocol/blueprint/assetsPlan）。
-你的任务是严格按照这份蓝图生成最终可运行代码。
-
-【硬性要求】
-1) 只输出合法 JSON（json_object），不要任何解释或 markdown。
-2) 输出结构必须为：
-{
-  "assistant": "一句话说明已生成什么",
-  "meta": { "title": "...", "shortDesc": "...", "rules": "...", "creator": { "name": "..." } },
-  "files": [ { "path": "index.html", "content": "..." } ]
-}
-3) index.html 必须包含：
-   - <!-- AI_MVP_SINGLE_FILE v1 -->
-   - 一个 <style>（内联样式）
-   - 一个 <script>（内联逻辑）
-4) 不依赖外部库/CDN。
-5) 必须严格遵守蓝图中的命名、DOM id、状态字段、玩法规则、控制方式和渲染方案，不要擅自改协议。
-6) 优先复用成熟玩法骨架，不要每次从零发明结构；但如果模板建议与用户需求冲突，以用户需求和蓝图为准。
-7) 目标是“最小但完整的高质量版本”：能开始、能重开、反馈清楚、按钮清晰、手机和桌面至少有一种适配正确。
-8) 严禁再次输出 blueprint/protocol/assetsPlan 字段，它们已经在上一步生成并落盘。
-9) 如果输出包含 game.js，必须暴露统一接口：
-   window.gameHooks = {
-     start(){},
-     restart(){},
-     setAutoStart(enabled){},
-     setCurrentSentence(text){},
-     showCurrentSentence(enabled){}
-   }
-   这些接口可以是薄封装，但名字必须稳定，供后续增量编辑复用。
-10) 严禁在 index.html 里额外注入“本地行为补丁脚本”去劫持开始按钮、轮询句子或观察整个 DOM。
-`.trim();
 
 const CODEGEN_HTML_CSS_PROMPT = `
 你是“前端小游戏页面生成器”。你会收到一份已经确认好的蓝图 JSON（其中包含 meta/config/protocol/blueprint/assetsPlan）。
@@ -845,14 +657,6 @@ function createDraftStore(gameId: string, options?: { enabled?: boolean }) {
     }
   };
 
-  const writeFiles = async (files: Array<{ path: string; content: string }>) => {
-    for (const f of files) {
-      const path = String(f?.path || "").trim();
-      if (!path) continue;
-      await writeFile(path, String(f?.content || ""));
-    }
-  };
-
   const writeFilesDetailed = async (files: Array<{ path: string; content: string }>) => {
     const written: string[] = [];
     const failed: Array<{ path: string; error: string }> = [];
@@ -884,7 +688,7 @@ function createDraftStore(gameId: string, options?: { enabled?: boolean }) {
     await writeFile("meta.json", JSON.stringify(metaObj || {}, null, 2));
   };
 
-  return { readFile, readFiles, writeFile, writeFiles, writeFilesDetailed, readMeta, writeMeta };
+  return { readFile, readFiles, writeFile, writeFilesDetailed, readMeta, writeMeta };
 }
 
 function coderPrompt(blueprint: any, filePath: string, isQuality: boolean) {
@@ -906,30 +710,53 @@ ${bp}
 `.trim();
 }
 
-function pickOpenRouterModel(prefer: string[]) {
-  for (const m of prefer) {
-    if ((OPENROUTER_MODELS as readonly string[]).includes(m)) return m;
-  }
-  return OPENROUTER_MODELS[0];
-}
-
-function pickAlternateOpenRouterModel(current: string, prefer: string[]) {
-  const cur = String(current || "").trim();
-  for (const m of prefer) {
-    const mm = String(m || "").trim();
-    if (!mm || mm === cur) continue;
-    if ((OPENROUTER_MODELS as readonly string[]).includes(mm)) return mm;
-  }
-  return "";
-}
-
-function envModelOrEmpty(key: string) {
-  return String(process.env[key] || "").trim();
-}
-
 function envFlag(key: string) {
   const v = String(process.env[key] || "").trim().toLowerCase();
   return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
+const STEP_LOG_MAX = 900;
+
+function summarizeLogValue(value: unknown, maxLen = STEP_LOG_MAX): string {
+  const summarizeString = (text: string, limit = maxLen) => {
+    const compact = String(text || "").replace(/\s+/g, " ").trim();
+    return compact.length > limit ? `${compact.slice(0, limit)}…[${compact.length}]` : compact;
+  };
+
+  const fileSummary = (item: any) => ({
+    path: String(item?.path || "").trim(),
+    chars: String(item?.content || "").length,
+    hash: crypto.createHash("sha1").update(String(item?.content || "")).digest("hex").slice(0, 10),
+  });
+
+  if (typeof value === "string") return summarizeString(value);
+  if (Array.isArray(value)) {
+    const simple =
+      value.length && value.every((x) => x && typeof x === "object" && "path" in x && "content" in x)
+        ? value.map(fileSummary)
+        : value;
+    return summarizeString(JSON.stringify(simple));
+  }
+  if (value && typeof value === "object") {
+    const raw = value as Record<string, any>;
+    const normalized: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(raw)) {
+      if (key === "files" && Array.isArray(val)) normalized[key] = val.map(fileSummary);
+      else if (typeof val === "string") normalized[key] = summarizeString(val, 180);
+      else if (Array.isArray(val)) normalized[key] = val.length > 8 ? { count: val.length } : val;
+      else normalized[key] = val;
+    }
+    return summarizeString(JSON.stringify(normalized));
+  }
+  return summarizeString(String(value ?? ""));
+}
+
+function createStepLogger(scope: string) {
+  const prefix = `[creator:${scope || "unknown"}]`;
+  return (step: string, details?: unknown) => {
+    const suffix = details === undefined ? "" : ` ${summarizeLogValue(details)}`;
+    console.log(`${prefix} ${step}${suffix}`);
+  };
 }
 
 export async function POST(req: Request) {
@@ -1248,10 +1075,10 @@ export async function POST(req: Request) {
         controller.enqueue(enc.encode(`data: ${JSON.stringify(data)}\n\n`));
       };
 
-      let full = "";
       const sendStatus = (text: string) => send("status", { text });
       const sendMeta = (data: any) => send("meta", data);
       const sendDelta = (text: string) => send("delta", { text });
+      const logStep = createStepLogger(safeGameId || "no-game");
       // SSE 心跳：避免部分网关/代理在“长时间无数据”时主动断开
       const heartbeat = setInterval(() => {
         try {
@@ -1259,7 +1086,6 @@ export async function POST(req: Request) {
         } catch {}
       }, 12000);
 
-      let resp: Response | null = null;
       try {
         sendStatus("AI 正在理解你的想法…");
         // 告诉前端当前使用的 provider/model（用于 UI 提示）
@@ -1274,30 +1100,6 @@ export async function POST(req: Request) {
         const mode = modeRaw === "fix" || modeRaw === "generate" ? modeRaw : looksLikeBug ? "fix" : "generate";
         const quality =
           qualityRaw === "quality" || qualityRaw === "stable" ? qualityRaw : wantsQuality ? "quality" : "stable";
-
-        // 默认走分步生成；若用户补充要求里包含 legacy_single_shot 则强制使用旧模式
-        const forceLegacy = safeAddon.includes("legacy_single_shot");
-
-        const canFallbackDeepSeek = !!(process.env.DEEPSEEK_API_KEY || "");
-        const canFallbackBailian = !!(process.env.DASHSCOPE_API_KEY || process.env.BAILIAN_API_KEY || "");
-        const fallbackToDeepSeek = async () => {
-          provider = "deepseek";
-          authKey = process.env.DEEPSEEK_API_KEY || "";
-          const baseUrl = (process.env.DEEPSEEK_API_BASE || "https://api.deepseek.com").replace(/\/+$/, "");
-          url = `${baseUrl}/v1/chat/completions`;
-          model = process.env.DEEPSEEK_MODEL || "deepseek-chat";
-          // 通知前端：已经回退
-          sendMeta({ provider, model, reason: "fallback_openrouter_fetch_failed" });
-        };
-        const fallbackToBailian = async () => {
-          provider = "bailian";
-          authKey = process.env.DASHSCOPE_API_KEY || process.env.BAILIAN_API_KEY || "";
-          const baseUrl = (process.env.DASHSCOPE_BASE_URL || process.env.BAILIAN_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1")
-            .replace(/\/+$/, "");
-          url = `${baseUrl}/chat/completions`;
-          model = process.env.BAILIAN_MODEL || process.env.DASHSCOPE_MODEL || "qwen3.6-plus";
-          sendMeta({ provider, model, reason: "fallback_to_bailian" });
-        };
 
         // 对分步生成：每一步也做“流式输出”并把 token 增量推给前端，让用户看到进度
         const callStreamToString = async (payload: any, stepTag: string, strictJson = false, timeoutMs = 180_000) => {
@@ -1509,6 +1311,7 @@ export async function POST(req: Request) {
             "qwen/qwen3.6-plus",
             "deepseek/deepseek-v3.2",
           ]);
+          logStep("fix.raw", outText);
           const obj = parseJsonObjectLoose(outText);
           if (!obj) throw new Error("FIXER_NOT_JSON");
           // 复用 parseCreatorJson 来做路径/结构校验
@@ -1526,6 +1329,7 @@ export async function POST(req: Request) {
               if (["index.html", "style.css", "game.js"].includes(p) && c.trim()) await upsertDraftFile(p, c);
             }
           } catch {}
+          logStep("fix.persist", normalized);
 
           send("final", { ok: true, content: JSON.stringify(normalized), repaired: false });
           clearInterval(heartbeat);
@@ -1534,11 +1338,8 @@ export async function POST(req: Request) {
           }
         }
 
-        if (!forceLegacy) {
-          // ===== 稳定模式（默认）：单模型单次生成 + 最小后处理 =====
-          // 目标：减少模型调用次数（失败点），避免阶段3卡住；先交付可运行 MVP，再逐步迭代。
-          const generationMode = (envModelOrEmpty("CREATOR_GENERATION_MODE") || "evolve").toLowerCase(); // monolith | evolve
-          if (generationMode !== "evolve") {
+        {
+          // ===== 默认生成/补丁主链：blueprint -> html/css -> game.js =====
             const hasOpenRouter = !!(process.env.OPENROUTER_API_KEY || "");
             if (!safeGameId || !ownerKey) throw new Error("MISSING_GAME_ID");
 
@@ -1554,7 +1355,6 @@ export async function POST(req: Request) {
 
             const draftStore = createDraftStore(safeGameId);
             const upsertDraftFile = async (path: string, content: string) => await draftStore.writeFile(path, content);
-            const writeDraftFiles = async (files: Array<{ path: string; content: string }>) => await draftStore.writeFiles(files);
             const writeDraftFilesDetailed = async (files: Array<{ path: string; content: string }>) => await draftStore.writeFilesDetailed(files);
             const readDraftFile = async (path: string) => await draftStore.readFile(path);
             const readDraftFiles = async (paths: string[]) => await draftStore.readFiles(paths);
@@ -1599,17 +1399,6 @@ export async function POST(req: Request) {
               return err;
             };
 
-            const readLastGood = async () => {
-              const meta = (await readMetaObj()) || {};
-              const lg = (meta as any)?._gen?.lastGood;
-              if (!lg || typeof lg !== "object") return null;
-              const files = Array.isArray(lg.files) ? lg.files : [];
-              const normalized = files
-                .map((f: any) => ({ path: String(f?.path || "").trim(), content: String(f?.content || "") }))
-                .filter((f: any) => ["index.html", "style.css", "game.js"].includes(f.path) && f.content.trim());
-              if (!normalized.find((f: any) => f.path === "index.html")) return null;
-              return { meta, files: normalized };
-            };
             const setLastGood = async (metaObj: any, files: Array<{ path: string; content: string }>, note: string) => {
               const m = metaObj && typeof metaObj === "object" ? metaObj : {};
               const pick = files
@@ -1618,7 +1407,7 @@ export async function POST(req: Request) {
               const blob = pick.map((f) => `${f.path}\n${f.content}`).join("\n\n");
               (m as any)._gen = {
                 ...(m as any)._gen,
-                stage: "monolith_mvp",
+                stage: "code_done",
                 updatedAt: Date.now(),
                 lastGood: {
                   at: Date.now(),
@@ -1628,41 +1417,6 @@ export async function POST(req: Request) {
                 },
               };
               await writeMetaObj(m);
-            };
-            const restoreLastGood = async (reason: string) => {
-              const lg = await readLastGood();
-              if (!lg) throw new Error(`NO_LAST_GOOD:${reason}`);
-              sendStatus(`生成遇到问题（${reason}），已回滚到上一次可用版本。`);
-              await writeDraftFiles(lg.files);
-              return lg;
-            };
-
-            const splitSingleFile = (html: string) => {
-              const raw = String(html || "");
-              // 不强制要求标记，尽量拆；拆不出来就返回 null
-              const styleBlocks: string[] = [];
-              const scriptBlocks: string[] = [];
-              let out = raw;
-              out = out.replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gi, (_m, c) => {
-                styleBlocks.push(String(c || ""));
-                return "";
-              });
-              out = out.replace(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi, (_m, attrs, c) => {
-                const a = String(attrs || "");
-                if (/src\s*=/.test(a)) return _m;
-                scriptBlocks.push(String(c || ""));
-                return "";
-              });
-              const css = styleBlocks.join("\n\n").trim();
-              const js = scriptBlocks.join("\n\n").trim();
-              if (!css || !js) return null;
-              if (!/href\s*=\s*["']\.\/style\.css["']/.test(out)) {
-                out = out.replace(/<\/head>/i, `  <link rel="stylesheet" href="./style.css" />\n</head>`);
-              }
-              if (!/src\s*=\s*["']\.\/game\.js["']/.test(out)) {
-                out = out.replace(/<\/body>/i, `  <script src="./game.js"></script>\n</body>`);
-              }
-              return { index: out.trim() + "\n", css: css + "\n", js: js + "\n" };
             };
             const validateAcceptanceSimple = (files: Array<{ path: string; content: string }>) => {
               const index = files.find((f) => f.path === "index.html")?.content || "";
@@ -1792,6 +1546,7 @@ export async function POST(req: Request) {
 
             if (shouldUseDirectRefine) {
               const editProfile = directEditProfile as IncrementalEditProfile;
+              logStep("direct_refine.enter", { kind: editProfile.kind, confidence: editProfile.confidence, hasCompleteSplitGame });
               sendStatus(`（1/1）根据现有游戏直接做小改动（${provider} / ${refineModel}）…`);
               if (provider === "openrouter") model = refineModel;
               sendMeta({ provider, model, phase: `direct_refine_${editProfile.kind}` });
@@ -1891,6 +1646,7 @@ export async function POST(req: Request) {
                 "这是已有游戏上的小改动，只输出 JSON 和必要文件。",
                 1,
               );
+              logStep("direct_refine.raw", refineText);
               let refineObj = parseJsonObjectLoose(refineText);
               if (!refineObj) refineObj = await repairFilesJson(refineText);
               if (!refineObj) throw new Error("DIRECT_REFINE_NOT_JSON");
@@ -1916,6 +1672,7 @@ export async function POST(req: Request) {
                 if (!["index.html", "style.css", "game.js"].includes(f.path)) continue;
                 await upsertDraftFile(f.path, f.content);
               }
+              logStep("direct_refine.persist", { files, ops: outOps, changed: appliedOpsChanged });
               const acceptanceErrs = validateAcceptanceSimple(
                 files.filter((f) => ["index.html", "style.css", "game.js"].includes(f.path)),
               );
@@ -2018,8 +1775,8 @@ export async function POST(req: Request) {
               await writeMeta({ ...(readMeta && typeof readMeta === "object" ? readMeta : {}), _gen: { ...(genState || {}), updatedAt: Date.now() } });
             }
 
-            // 兼容旧状态：以前会在“澄清后先生成 config”这一层中断。
-            // 现在默认直接进入 blueprint，所以遇到旧状态时直接迁移过去。
+            // 兼容历史草稿状态：旧版本会把待生成阶段写成 monolith_mvp_pending。
+            // 新链只保留 blueprint -> html/css -> game.js，所以这里直接迁移到 blueprint_pending。
             if (stage === "monolith_mvp_pending") {
               stage = "blueprint_pending";
               await writeMeta({
@@ -2274,77 +2031,20 @@ export async function POST(req: Request) {
               stage = "blueprint_pending";
             }
 
-            // 0.3 若在配置确认阶段：确认 -> 进入代码生成；否则更新 config 再次确认
-            if (stage === "confirm_config" && !isConfirm(userIntent)) {
-              const clarify = genState.clarify || {};
-              const oldConfig = genState.config || {};
-              sendStatus(`（2/3）更新参数配置表 JSON（${provider} / ${mvpModel}）…`);
-              sendMeta({ provider, model, phase: "config_update" });
-              const payloadCfg2: any = {
-                model,
-                messages: [
-                  { role: "system", content: `${CREATOR_GAME_TYPE_LIBRARY_ADDON}\n\n${CONFIG_PROMPT}` },
-                  {
-                    role: "user",
-                    content:
-                      `【用户最早的主题】\n${String((genState as any)?.seedPrompt || seedPrompt)}\n\n` +
-                      `【澄清 JSON】\n${JSON.stringify(clarify, null, 2)}\n\n` +
-                      `【当前 config】\n${JSON.stringify(oldConfig, null, 2)}\n\n` +
-                      `【用户修改要求】\n${userIntent}\n\n` +
-                      `请输出更新后的 config JSON。`,
-                  },
-                ],
-                temperature: 0.2,
-                max_tokens: 1600,
-                response_format: { type: "json_object" },
-              };
-              if (provider === "openrouter" && payloadBase.provider) payloadCfg2.provider = payloadBase.provider;
-              const out = await autoRetry(
-                async () =>
-                  await callStreamRobust(
-                    payloadCfg2,
-                    "阶段1：更新配置表 JSON",
-                    true,
-                    ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
-                    90_000,
-                  ),
-                "配置表更新",
-                "只输出 JSON（meta/config/needConfirm）。",
-                2,
-              );
-              const cfgObj = parseJsonObjectLoose(out);
-              if (!cfgObj) throw new Error("CONFIG_NOT_JSON");
-              const metaCfg = safeMeta((cfgObj as any).meta);
-              const config = (cfgObj as any).config || {};
-              const needConfirm = Array.isArray((cfgObj as any).needConfirm) ? (cfgObj as any).needConfirm : [];
-
-              const metaOut = {
-                ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
-                ...metaCfg,
-                _gen: { ...(genState || {}), stage: "confirm_config", clarify, config, updatedAt: Date.now() },
-              };
-              await writeMeta(metaOut);
-
-              const txt =
-                `好的，我已更新“参数配置表”。请确认后我再开始写代码：\n\n` +
-                `\`\`\`json\n${JSON.stringify({ meta: metaCfg, config }, null, 2)}\n\`\`\`\n\n` +
-                (needConfirm.length ? `需要你确认的点：\n- ${needConfirm.join("\n- ")}\n\n` : "") +
-                `如果没问题请回复：确认（或“开始生成”）。`;
-
-              const finalObj = { assistant: txt, meta: metaOut, files: [] as any[] };
-              parseCreatorJson(JSON.stringify(finalObj));
-              send("final", { ok: true, content: JSON.stringify(finalObj), repaired: false });
-              clearInterval(heartbeat);
-              controller.close();
-              return;
-            }
-
             // ===== 两步生成：蓝图（短 JSON） -> 代码（文件）=====
             // 目标：降低 MVP_NOT_JSON（减少一次输出体积），并通过 protocol/命名保证蓝图与代码同源不漂移。
             let activeConfig = genState && typeof genState === "object" && (genState as any).config ? (genState as any).config : null;
             const answers = (genState as any)?.answers && typeof (genState as any).answers === "object" ? (genState as any).answers : {};
             let design = (genState as any)?.design && typeof (genState as any).design === "object" ? (genState as any).design : null;
             const templateHint = buildTemplateHintBlock(seedPrompt, userIntent, answers);
+            logStep("generation.enter", {
+              stage,
+              hasDesign: !!design,
+              hasActiveConfig: !!activeConfig,
+              provider,
+              model,
+              quality,
+            });
             const repairBlueprintJson = async (rawText: string) => {
               const repairPayload: any = {
                 model,
@@ -2372,15 +2072,28 @@ export async function POST(req: Request) {
               );
               return parseJsonObjectLoose(repairedText);
             };
+            const markCodePending = async () => {
+              const nextMeta = {
+                ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
+                _gen: { ...(genState || {}), stage: "code_pending", seedPrompt, answers, config: activeConfig, design, updatedAt: Date.now() },
+              };
+              try {
+                await writeMeta(nextMeta);
+                logStep("generation.stage.code_pending", { stage: "code_pending", hasDesign: !!design });
+              } catch (e: any) {
+                logStep("generation.stage.code_pending_failed", String(e?.message || e));
+              }
+            };
 
             // 1) 若还没有 design（蓝图/协议），先生成蓝图并落盘。只在 stage 非 code_pending 时进行。
-            if (!design && stage !== "code_pending") {
+            const generateBlueprintStep = async () => {
               // 落盘：进入蓝图 pending，保证重试时不会回到阶段0/澄清
               try {
                 await writeMeta({
                   ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
                   _gen: { ...(genState || {}), stage: "blueprint_pending", seedPrompt, config: activeConfig, answers, updatedAt: Date.now() },
                 });
+                logStep("blueprint.pending", { stage: "blueprint_pending", seedPrompt });
               } catch {}
 
               sendStatus(`（1/2）生成蓝图（${provider} / ${mvpModel}）…`);
@@ -2420,6 +2133,7 @@ export async function POST(req: Request) {
                 "只输出 JSON（meta/config/protocol/blueprint/assetsPlan），严禁输出代码。",
                 2,
               );
+              logStep("blueprint.raw", bpText);
               let bpObj = parseJsonObjectLoose(bpText);
               if (!bpObj) bpObj = await repairBlueprintJson(bpText);
               if (!bpObj) throw new Error("BLUEPRINT_NOT_JSON");
@@ -2433,26 +2147,29 @@ export async function POST(req: Request) {
                 assetsPlan: (bpObj as any).assetsPlan || {},
               };
               activeConfig = cfgBp;
+              logStep("blueprint.parsed", {
+                meta: metaBp,
+                configKeys: Object.keys(activeConfig || {}),
+                protocolKeys: Object.keys((design as any)?.protocol || {}),
+                blueprintKeys: Object.keys((design as any)?.blueprint || {}),
+              });
               await writeMeta({
                 ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
                 ...metaBp,
                 _gen: { ...(genState || {}), stage: "code_pending", seedPrompt, answers, config: activeConfig, design, updatedAt: Date.now() },
               });
-            }
+            };
+            if (!design && stage !== "code_pending") await generateBlueprintStep();
 
             // 2) 代码生成：先出 index.html + style.css，再单独出 game.js
             // 这样首次生成不必一次吐出三个完整文件，严格 JSON 更稳。
             // 落盘：进入 code_pending，确保重试时复用同一份蓝图（同源，不漂移）
-            try {
-              await writeMeta({
-                ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
-                _gen: { ...(genState || {}), stage: "code_pending", seedPrompt, answers, config: activeConfig, design, updatedAt: Date.now() },
-              });
-            } catch {}
+            await markCodePending();
 
             const tryRepairJsonOnce = async (raw: string, why: string, schemaHint: string) => {
               const rawText = String(raw || "");
               if (!rawText.trim()) return null;
+              logStep("json_repair.start", { why, raw: rawText });
               sendStatus(`输出 JSON 有问题，我尝试自动修复一次…（原因：${why}）`);
               sendMeta({ provider, model, phase: "json_repair" });
               const clipped = rawText.length > 12000 ? rawText.slice(0, 12000) : rawText;
@@ -2476,12 +2193,15 @@ export async function POST(req: Request) {
                   ["deepseek/deepseek-v3.2", "qwen/qwen3.6-plus", "minimax/minimax-m2.5"],
                   90_000,
                 );
+                logStep("json_repair.raw", repairedText);
                 return parseJsonObjectLoose(repairedText);
               } catch {
+                logStep("json_repair.failed", why);
                 return null;
               }
             };
             const failWithRetry = async (assistant: string, badText = "") => {
+              logStep("generation.retryable_failure", { assistant, badText });
               await writeMeta({
                 ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
                 _gen: { ...(genState || {}), stage: "code_pending", seedPrompt, updatedAt: Date.now(), lastBad: String(badText || "").slice(0, 2000) },
@@ -2512,6 +2232,165 @@ export async function POST(req: Request) {
               if (ok) return obj;
               return (await tryRepairJsonOnce(rawText, `MISSING_${requiredPaths.join("_")}`, schemaHint)) || obj;
             };
+            const generateHtmlCssStep = async () => {
+              sendStatus(`（2/3）生成页面结构和样式（${provider} / ${mvpModel}）…`);
+              sendMeta({ provider, model, phase: "codegen_html_css" });
+              const htmlCssPayload: any = {
+                model,
+                messages: [
+                  { role: "system", content: CODEGEN_HTML_CSS_PROMPT },
+                  {
+                    role: "user",
+                    content:
+                      `【用户最早的主题】\n${seedPrompt}\n\n` +
+                      `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
+                      `${templateHint}\n` +
+                      `请只输出 index.html 和 style.css。`,
+                  },
+                ],
+                temperature: 0.2,
+                max_tokens: 2200,
+                response_format: { type: "json_object" },
+              };
+              if (provider === "openrouter" && payloadBase.provider) htmlCssPayload.provider = payloadBase.provider;
+
+              let htmlCssText = "";
+              try {
+                htmlCssText = await autoRetry(
+                  async () =>
+                    await callStreamRobust(
+                      htmlCssPayload,
+                      "阶段3：页面和样式 JSON",
+                      true,
+                      ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
+                      90_000,
+                    ),
+                  "页面和样式",
+                  "只输出 JSON，files 中仅包含 index.html 和 style.css。",
+                  2,
+                );
+              } catch (e: any) {
+                logStep("html_css.request_failed", String(e?.message || e));
+                return await failWithRetry(
+                  "我刚刚在生成页面结构和样式时遇到了网络问题。蓝图已经保存好，点“重试”会直接从写代码继续。",
+                  String(e?.message || e),
+                );
+              }
+
+              logStep("html_css.raw", htmlCssText);
+              const htmlCssObj = await parseFilesObject(htmlCssText, htmlCssSchemaHint, ["index.html", "style.css"]);
+              if (!htmlCssObj) {
+                logStep("html_css.not_json", htmlCssText);
+                return await failWithRetry(
+                  "我刚刚在生成页面结构和样式时，模型输出的 JSON 格式不对（可能内容太长被截断）。你的蓝图我已经保存好了，点“重试”会从写代码继续。",
+                  htmlCssText,
+                );
+              }
+
+              const stepMeta = safeMeta((htmlCssObj as any).meta);
+              const htmlCssFiles = Array.isArray((htmlCssObj as any).files) ? (htmlCssObj as any).files : [];
+              const html = String(htmlCssFiles.find((x: any) => String(x?.path || "") === "index.html")?.content || "");
+              const css = String(htmlCssFiles.find((x: any) => String(x?.path || "") === "style.css")?.content || "");
+              if (!html.trim() || !css.trim()) {
+                logStep("html_css.missing_files", { files: htmlCssFiles });
+                return await failWithRetry(
+                  "我生成出来的内容里没有完整找到 index.html 或 style.css。你的蓝图已保存，点“重试”继续写代码即可。",
+                  htmlCssText,
+                );
+              }
+              const htmlCssWrite = await writeDraftFilesDetailed([
+                { path: "index.html", content: html },
+                { path: "style.css", content: css },
+              ]);
+              logStep("html_css.persist", htmlCssWrite);
+              const metaAfterHtmlCss = applyPersistStatus((await readMetaObj()) || readMeta || {}, "html_css", htmlCssWrite, ["index.html", "style.css"]);
+              try {
+                await writeMeta(metaAfterHtmlCss);
+              } catch (e: any) {
+                logStep("html_css.persist_meta_failed", String(e?.message || e));
+              }
+              if (!htmlCssWrite.ok) {
+                return await failWithRetry(
+                  "页面和样式已经生成出来了，但写回数据库时没有完全成功。点“重试”我会从已生成结果继续。",
+                  JSON.stringify(htmlCssWrite.failed),
+                );
+              }
+              return { meta: stepMeta, html, css };
+            };
+            const generateGameJsStep = async (html: string, css: string) => {
+              sendStatus(`（3/3）生成核心逻辑（${provider} / ${mvpModel}）…`);
+              sendMeta({ provider, model, phase: "codegen_game_js" });
+              const gameJsPayload: any = {
+                model,
+                messages: [
+                  { role: "system", content: coderPrompt(design || { config: activeConfig }, "game.js", quality === "quality") },
+                  {
+                    role: "user",
+                    content:
+                      `【用户最早的主题】\n${seedPrompt}\n\n` +
+                      `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
+                      `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }, { path: "style.css", content: css }], null, 2)}\n\n` +
+                      `${templateHint}\n` +
+                      `请只输出 game.js 的 JSON。`,
+                  },
+                ],
+                temperature: 0.2,
+                max_tokens: 2200,
+                response_format: { type: "json_object" },
+              };
+              if (provider === "openrouter" && payloadBase.provider) gameJsPayload.provider = payloadBase.provider;
+
+              let gameJsText = "";
+              try {
+                gameJsText = await autoRetry(
+                  async () =>
+                    await callStreamRobust(
+                      gameJsPayload,
+                      "阶段4：核心逻辑 JSON",
+                      true,
+                      ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
+                      90_000,
+                    ),
+                  "核心逻辑",
+                  "只输出 JSON，结构为 {path:\"game.js\", content:\"...\"}。",
+                  2,
+                );
+              } catch (e: any) {
+                logStep("game_js.request_failed", String(e?.message || e));
+                return await failWithRetry(
+                  "我刚刚在生成核心逻辑时遇到了网络问题。蓝图和页面结构已经保存好，点“重试”会直接从写代码继续。",
+                  String(e?.message || e),
+                );
+              }
+
+              logStep("game_js.raw", gameJsText);
+              let gameJsObj: any = parseJsonObjectLoose(gameJsText);
+              if (!gameJsObj) gameJsObj = await tryRepairJsonOnce(gameJsText, "GAME_JS_NOT_JSON", gameJsSchemaHint);
+              const jsPath = String((gameJsObj as any)?.path || "").trim();
+              const jsContent = String((gameJsObj as any)?.content || "");
+              if (!gameJsObj || jsPath !== "game.js" || !jsContent.trim()) {
+                logStep("game_js.not_json", gameJsText);
+                return await failWithRetry(
+                  "我刚刚在生成核心逻辑时，模型输出的 JSON 格式不对（可能内容太长被截断）。你的蓝图和页面结构已保存，点“重试”会从写代码继续。",
+                  gameJsText,
+                );
+              }
+              const gameJsWrite = await writeDraftFilesDetailed([{ path: "game.js", content: jsContent }]);
+              logStep("game_js.persist", gameJsWrite);
+              const metaAfterGameJs = applyPersistStatus((await readMetaObj()) || readMeta || {}, "game_js", gameJsWrite, ["game.js"]);
+              try {
+                await writeMeta(metaAfterGameJs);
+              } catch (e: any) {
+                logStep("game_js.persist_meta_failed", String(e?.message || e));
+              }
+              if (!gameJsWrite.ok) {
+                return await failWithRetry(
+                  "核心逻辑已经生成出来了，但写回数据库时没有完全成功。点“重试”我会从已生成结果继续。",
+                  JSON.stringify(gameJsWrite.failed),
+                );
+              }
+              return { jsContent };
+            };
 
             const htmlCssSchemaHint =
               `只输出一个严格 JSON 对象（json_object），不要任何解释或 markdown。\n` +
@@ -2531,147 +2410,13 @@ export async function POST(req: Request) {
               `  "content": string\n` +
               `}\n`;
 
-            sendStatus(`（2/3）生成页面结构和样式（${provider} / ${mvpModel}）…`);
-            sendMeta({ provider, model, phase: "codegen_html_css" });
-            const htmlCssPayload: any = {
-              model,
-              messages: [
-                { role: "system", content: CODEGEN_HTML_CSS_PROMPT },
-                {
-                  role: "user",
-                  content:
-                    `【用户最早的主题】\n${seedPrompt}\n\n` +
-                    `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
-                    `${templateHint}\n` +
-                    `请只输出 index.html 和 style.css。`,
-                },
-              ],
-              temperature: 0.2,
-              max_tokens: 2200,
-              response_format: { type: "json_object" },
-            };
-            if (provider === "openrouter" && payloadBase.provider) htmlCssPayload.provider = payloadBase.provider;
+            const htmlCssStep = await generateHtmlCssStep();
+            if (!htmlCssStep) return;
+            const { meta, html, css } = htmlCssStep;
 
-            let htmlCssText = "";
-            try {
-              htmlCssText = await autoRetry(
-                async () =>
-                  await callStreamRobust(
-                    htmlCssPayload,
-                    "阶段3：页面和样式 JSON",
-                    true,
-                    ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
-                    90_000,
-                  ),
-                "页面和样式",
-                "只输出 JSON，files 中仅包含 index.html 和 style.css。",
-                2,
-              );
-            } catch (e: any) {
-              return await failWithRetry(
-                "我刚刚在生成页面结构和样式时遇到了网络问题。蓝图已经保存好，点“重试”会直接从写代码继续。",
-                String(e?.message || e),
-              );
-            }
-
-            const htmlCssObj = await parseFilesObject(htmlCssText, htmlCssSchemaHint, ["index.html", "style.css"]);
-            if (!htmlCssObj) {
-              return await failWithRetry(
-                "我刚刚在生成页面结构和样式时，模型输出的 JSON 格式不对（可能内容太长被截断）。你的蓝图我已经保存好了，点“重试”会从写代码继续。",
-                htmlCssText,
-              );
-            }
-
-            const meta = safeMeta((htmlCssObj as any).meta);
-            const htmlCssFiles = Array.isArray((htmlCssObj as any).files) ? (htmlCssObj as any).files : [];
-            const html = String(htmlCssFiles.find((x: any) => String(x?.path || "") === "index.html")?.content || "");
-            const css = String(htmlCssFiles.find((x: any) => String(x?.path || "") === "style.css")?.content || "");
-            if (!html.trim() || !css.trim()) {
-              return await failWithRetry(
-                "我生成出来的内容里没有完整找到 index.html 或 style.css。你的蓝图已保存，点“重试”继续写代码即可。",
-                htmlCssText,
-              );
-            }
-            const htmlCssWrite = await writeDraftFilesDetailed([
-              { path: "index.html", content: html },
-              { path: "style.css", content: css },
-            ]);
-            const metaAfterHtmlCss = applyPersistStatus((await readMetaObj()) || readMeta || {}, "html_css", htmlCssWrite, ["index.html", "style.css"]);
-            try {
-              await writeMeta(metaAfterHtmlCss);
-            } catch {}
-            if (!htmlCssWrite.ok) {
-              return await failWithRetry(
-                "页面和样式已经生成出来了，但写回数据库时没有完全成功。点“重试”我会从已生成结果继续。",
-                JSON.stringify(htmlCssWrite.failed),
-              );
-            }
-
-            sendStatus(`（3/3）生成核心逻辑（${provider} / ${mvpModel}）…`);
-            sendMeta({ provider, model, phase: "codegen_game_js" });
-            const gameJsPayload: any = {
-              model,
-              messages: [
-                { role: "system", content: coderPrompt(design || { config: activeConfig }, "game.js", quality === "quality") },
-                {
-                  role: "user",
-                  content:
-                    `【用户最早的主题】\n${seedPrompt}\n\n` +
-                    `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
-                    `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }, { path: "style.css", content: css }], null, 2)}\n\n` +
-                    `${templateHint}\n` +
-                    `请只输出 game.js 的 JSON。`,
-                },
-              ],
-              temperature: 0.2,
-              max_tokens: 2200,
-              response_format: { type: "json_object" },
-            };
-            if (provider === "openrouter" && payloadBase.provider) gameJsPayload.provider = payloadBase.provider;
-
-            let gameJsText = "";
-            try {
-              gameJsText = await autoRetry(
-                async () =>
-                  await callStreamRobust(
-                    gameJsPayload,
-                    "阶段4：核心逻辑 JSON",
-                    true,
-                    ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
-                    90_000,
-                  ),
-                "核心逻辑",
-                "只输出 JSON，结构为 {path:\"game.js\", content:\"...\"}。",
-                2,
-              );
-            } catch (e: any) {
-              return await failWithRetry(
-                "我刚刚在生成核心逻辑时遇到了网络问题。蓝图和页面结构已经保存好，点“重试”会直接从写代码继续。",
-                String(e?.message || e),
-              );
-            }
-
-            let gameJsObj: any = parseJsonObjectLoose(gameJsText);
-            if (!gameJsObj) gameJsObj = await tryRepairJsonOnce(gameJsText, "GAME_JS_NOT_JSON", gameJsSchemaHint);
-            const jsPath = String((gameJsObj as any)?.path || "").trim();
-            const jsContent = String((gameJsObj as any)?.content || "");
-            if (!gameJsObj || jsPath !== "game.js" || !jsContent.trim()) {
-              return await failWithRetry(
-                "我刚刚在生成核心逻辑时，模型输出的 JSON 格式不对（可能内容太长被截断）。你的蓝图和页面结构已保存，点“重试”会从写代码继续。",
-                gameJsText,
-              );
-            }
-            const gameJsWrite = await writeDraftFilesDetailed([{ path: "game.js", content: jsContent }]);
-            const metaAfterGameJs = applyPersistStatus((await readMetaObj()) || readMeta || {}, "game_js", gameJsWrite, ["game.js"]);
-            try {
-              await writeMeta(metaAfterGameJs);
-            } catch {}
-            if (!gameJsWrite.ok) {
-              return await failWithRetry(
-                "核心逻辑已经生成出来了，但写回数据库时没有完全成功。点“重试”我会从已生成结果继续。",
-                JSON.stringify(gameJsWrite.failed),
-              );
-            }
+            const gameJsStep = await generateGameJsStep(html, css);
+            if (!gameJsStep) return;
+            const { jsContent } = gameJsStep;
 
             const metaNow = {
               ...meta,
@@ -2707,6 +2452,11 @@ export async function POST(req: Request) {
             const indexRef = finalFiles.find((f) => f.path === "index.html")?.content || "";
             if (!/href\s*=\s*["']\.\/style\.css["']/.test(indexRef)) acceptanceErrs.push("index.html 未正确引用 ./style.css");
             if (!/src\s*=\s*["']\.\/game\.js["']/.test(indexRef)) acceptanceErrs.push("index.html 未正确引用 ./game.js");
+            logStep("final.acceptance", {
+              ok: acceptanceErrs.length === 0,
+              errors: acceptanceErrs,
+              files: finalFiles,
+            });
             if (acceptanceErrs.length) {
               return await failWithRetry(
                 "我已经把三个文件都生成出来了，但首次联调检查没通过。蓝图和代码草稿已保存，点“重试”我会继续修。",
@@ -2714,6 +2464,7 @@ export async function POST(req: Request) {
               );
             }
             await writeMeta(metaNow);
+            logStep("final.persisted", { title: metaNow.title, stage: metaNow?._gen?.stage, files: finalFiles });
 
             const metaFinal = (await readMetaObj()) || metaNow;
             const assistantText = `已生成可运行版本：${String((metaFinal as any)?.title || meta.title || "").trim() || "未命名作品"}。`;
@@ -2729,609 +2480,6 @@ export async function POST(req: Request) {
             return;
           }
 
-          // ===== 新方案：Architect -> 单文件 MVP -> （沙箱自愈）-> 拆分 -> 迭代补丁 =====
-          const hasOpenRouter = !!(process.env.OPENROUTER_API_KEY || "");
-
-          // 模型选择：优先使用前端“彩蛋”里用户选定的 model（请求 body 传入）。
-          // 这样 Architect/MVP/Refine 都同源，减少“变量/规则漂移”。
-          const chosen = String(model || "").trim() || "qwen/qwen3.6-plus";
-          const architectModel = chosen;
-          const mvpModel = chosen;
-          const refineModel = chosen;
-          const debugModel = chosen;
-
-          // 必须有 gameId 才能做“可用成果持久化 + 失败不归零”
-          if (!safeGameId || !ownerKey) throw new Error("MISSING_GAME_ID");
-
-          await ensureCreatorDraftTables();
-          const owns = await db.execute(sql`
-            select 1
-            from creator_draft_games
-            where id = ${safeGameId} and owner_key = ${ownerKey}
-            limit 1
-          `);
-          const ownRows = Array.isArray((owns as any).rows) ? (owns as any).rows : [];
-          if (!ownRows.length) throw new Error("NOT_YOUR_GAME");
-
-          const draftStore = createDraftStore(safeGameId);
-          const upsertDraftFile = async (path: string, content: string) => await draftStore.writeFile(path, content);
-          const readDraftFile = async (path: string) => await draftStore.readFile(path);
-          const readDraftFiles = async (paths: string[]) => await draftStore.readFiles(paths);
-
-          const hash12 = (s: string) => crypto.createHash("sha1").update(String(s || "")).digest("hex").slice(0, 12);
-          const showModel = () => `${provider} / ${model}`;
-
-          const readMetaObj = async () => await draftStore.readMeta();
-
-          const validateScripts = (files: Array<{ path: string; content: string }>) => {
-            const err: string[] = [];
-            const get = (p: string) => files.find((x) => x.path === p)?.content || "";
-            const jsFromHtml = (html: string) => {
-              if (!html) return "";
-              const blocks: string[] = [];
-              const re = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
-              let m: RegExpExecArray | null;
-              while ((m = re.exec(html))) {
-                const attrs = String(m[1] || "");
-                // 跳过 <script src=...>
-                if (/src\s*=/.test(attrs)) continue;
-                blocks.push(String(m[2] || ""));
-              }
-              return blocks.join("\n\n");
-            };
-            try {
-              const html = get("index.html");
-              if (html) {
-                const js = jsFromHtml(html);
-                if (js.trim()) new Script(js);
-              }
-            } catch (e: any) {
-              err.push(`index.html 内联脚本语法错误：${String(e?.message || e)}`);
-            }
-            try {
-              const js = get("game.js");
-              if (js && js.trim()) new Script(js);
-            } catch (e: any) {
-              err.push(`game.js 语法错误：${String(e?.message || e)}`);
-            }
-            return err;
-          };
-
-          // 最小验收（稳定优先）：语法可解析 +（若已拆分）引用关系正确
-          const validateAcceptance = (files: Array<{ path: string; content: string }>) => {
-            const err = [...validateScripts(files)];
-            const index = files.find((f) => f.path === "index.html")?.content || "";
-            const hasCss = !!files.find((f) => f.path === "style.css")?.content;
-            const hasJs = !!files.find((f) => f.path === "game.js")?.content;
-            if (hasCss && !/href\s*=\s*["']\.\/style\.css["']/.test(index)) err.push("index.html 未正确引用 ./style.css");
-            if (hasJs && !/src\s*=\s*["']\.\/game\.js["']/.test(index)) err.push("index.html 未正确引用 ./game.js");
-            return err;
-          };
-
-          // lastGood：稳定交付的关键（任何后续失败都回滚到最近一次通过验收的版本）
-          const readLastGood = async () => {
-            const meta = (await readMetaObj()) || {};
-            const lg = (meta as any)?._gen?.lastGood;
-            if (!lg || typeof lg !== "object") return null;
-            const files = Array.isArray(lg.files) ? lg.files : [];
-            const normalized = files
-              .map((f: any) => ({ path: String(f?.path || "").trim(), content: String(f?.content || "") }))
-              .filter((f: any) => ["index.html", "style.css", "game.js"].includes(f.path) && f.content.trim());
-            return normalized.length ? { meta, lg, files: normalized } : null;
-          };
-
-          const writeMeta = async (metaObj: any) => {
-            await upsertDraftFile("meta.json", JSON.stringify(metaObj || {}, null, 2));
-          };
-
-          const setLastGood = async (files: Array<{ path: string; content: string }>, note: string) => {
-            const metaNow = (await readMetaObj()) || {};
-            const pick = files
-              .filter((f) => ["index.html", "style.css", "game.js"].includes(f.path))
-              .map((f) => ({ path: f.path, content: String(f.content || "") }));
-            const blob = pick.map((f) => `${f.path}\n${f.content}`).join("\n\n");
-            (metaNow as any)._gen = { ...(metaNow as any)._gen, lastGood: { at: Date.now(), hash: hash12(blob), note, files: pick } };
-            await writeMeta(metaNow);
-          };
-
-          const restoreLastGood = async (reason: string) => {
-            const lg = await readLastGood();
-            if (!lg) throw new Error(`NO_LAST_GOOD:${reason}`);
-            sendStatus(`生成遇到问题（${reason}），已回滚到上一次可用版本。`);
-            for (const f of lg.files) {
-              await upsertDraftFile(f.path, f.content);
-            }
-            return lg.files;
-          };
-
-          const splitSingleFile = (html: string) => {
-            const raw = String(html || "");
-            if (!raw.includes("AI_MVP_SINGLE_FILE")) return null;
-            const styleBlocks: string[] = [];
-            const scriptBlocks: string[] = [];
-            let out = raw;
-            out = out.replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gi, (_m, c) => {
-              styleBlocks.push(String(c || ""));
-              return "";
-            });
-            out = out.replace(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi, (_m, attrs, c) => {
-              const a = String(attrs || "");
-              if (/src\s*=/.test(a)) return _m;
-              scriptBlocks.push(String(c || ""));
-              return "";
-            });
-            const css = styleBlocks.join("\n\n").trim();
-            const js = scriptBlocks.join("\n\n").trim();
-            if (!css || !js) return null;
-            // 注入外链引用：放在 </head> 前；script 放在 </body> 前
-            if (!/href\s*=\s*["']\.\/style\.css["']/.test(out)) {
-              out = out.replace(/<\/head>/i, `  <link rel="stylesheet" href="./style.css" />\n</head>`);
-            }
-            if (!/src\s*=\s*["']\.\/game\.js["']/.test(out)) {
-              out = out.replace(/<\/body>/i, `  <script src="./game.js"></script>\n</body>`);
-            }
-            return { index: out.trim() + "\n", css: css + "\n", js: js + "\n" };
-          };
-
-          const selfHeal = async (
-            phaseLabel: string,
-            curFiles: Array<{ path: string; content: string }>,
-            errMsg: string,
-            maxRound = 2,
-          ) => {
-            let files = curFiles.slice();
-            for (let i = 0; i < maxRound; i++) {
-              sendStatus(`${phaseLabel}：检测到错误，自动修复中（${i + 1}/${maxRound}）…`);
-              sendMeta({ provider, model, phase: "debug" });
-              const debugPayload: any = {
-                model,
-                messages: [
-                  { role: "system", content: DEBUG_PROMPT },
-                  {
-                    role: "user",
-                    content:
-                      `【错误】\n${errMsg}\n\n【当前文件】\n${JSON.stringify(files, null, 2)}\n\n` +
-                      `请输出修复后的 files（保持最小改动）。`,
-                  },
-                ],
-                temperature: 0.1,
-                max_tokens: 1400,
-                response_format: { type: "json_object" },
-              };
-              if (provider === "openrouter" && payloadBase.provider) debugPayload.provider = payloadBase.provider;
-              const outText = await autoRetry(
-                async () =>
-                  await callStreamRobust(debugPayload, `Debug：修复补丁`, true, [
-                    "deepseek/deepseek-v3.2",
-                    "minimax/minimax-m2.5",
-                    "qwen/qwen3.6-plus",
-                  ]),
-                "Debug 自动修复",
-                "只输出 JSON，files 里给出修复后的完整文件内容。",
-              );
-              const obj = parseJsonObjectLoose(outText);
-              const outFiles = Array.isArray((obj as any)?.files) ? (obj as any).files : [];
-              // 合并更新
-              for (const f of outFiles) {
-                const p = String((f as any)?.path || "").trim();
-                const c = String((f as any)?.content || "");
-                if (!["index.html", "style.css", "game.js"].includes(p) || !c.trim()) continue;
-                const idx = files.findIndex((x) => x.path === p);
-                if (idx >= 0) files[idx] = { path: p, content: c };
-                else files.push({ path: p, content: c });
-                await upsertDraftFile(p, c);
-              }
-              const errs = validateScripts(files);
-              if (!errs.length) return files;
-              errMsg = errs.join("\n");
-            }
-            throw new Error(`SANDBOX_FAILED:${errMsg.slice(0, 180)}`);
-          };
-
-          // ===== 读取当前工程状态 =====
-          const currentDraft0 = await readDraftFiles(["index.html", "style.css", "game.js"]);
-          const index0 = currentDraft0["index.html"] || "";
-          const style0 = currentDraft0["style.css"] || "";
-          const game0 = currentDraft0["game.js"] || "";
-          const meta0 = await readMetaObj();
-          const plan0 = meta0 && typeof (meta0 as any)._plan === "object" ? (meta0 as any)._plan : null;
-          const gen0 = meta0 && typeof (meta0 as any)._gen === "object" ? (meta0 as any)._gen : null;
-          const hasSplit0 = !!(gen0?.splitted && style0 && game0);
-
-          const firstUserText = String(messages.find((m) => m.role === "user")?.content || "").trim();
-          const userIntent = lastUserText || firstUserText;
-
-          // ===== 阶段 1：Architect（只在首次或缺失 plan 时生成）=====
-          let blueprint: any = null;
-          if (plan0 && typeof plan0 === "object" && (plan0 as any).protocol) {
-            blueprint = plan0;
-          } else {
-            sendStatus(`（1/3）架构师：生成协议蓝图（${provider} / ${architectModel}）…`);
-            if (provider === "openrouter") model = architectModel;
-            sendMeta({ provider, model, phase: "architect" });
-            const payload: any = {
-              model,
-              messages: [
-                { role: "system", content: ARCHITECT_PROMPT },
-                { role: "user", content: userIntent || "请为一个简单小游戏生成协议蓝图。" },
-              ],
-              temperature: 0.2,
-              max_tokens: 1400,
-              response_format: { type: "json_object" },
-            };
-            if (provider === "openrouter" && payloadBase.provider) payload.provider = payloadBase.provider;
-            const outText = await autoRetry(
-              async () =>
-                await callStreamRobust(payload, "阶段1：蓝图 JSON", true, [
-                  // qwen 不稳时，换 deepseek / minimax
-                  "deepseek/deepseek-v3.2",
-                  "minimax/minimax-m2.5",
-                  "qwen/qwen3.6-plus",
-                ]),
-              "架构师蓝图",
-              "只输出 JSON 对象，包含 meta/protocol/acceptance。",
-            );
-            let obj = parseJsonObjectLoose(outText);
-            if (!obj) {
-              // 兜底 1：先用“JSON 修复器”把输出纯化为严格 JSON（保持结构）
-              sendStatus("蓝图不是严格 JSON，正在自动修复为 JSON…");
-              const repairPayload: any = {
-                model,
-                messages: [
-                  { role: "system", content: "你是 JSON 修复器。只输出一个严格 JSON 对象（json_object），不要任何解释或 markdown。" },
-                  {
-                    role: "user",
-                    content:
-                      `请把下面内容修复为严格 JSON，并确保符合 Schema：\n` +
-                      `{\n  "meta":{ "title":string,"shortDesc":string,"rules":string,"creator":{"name":string}},\n` +
-                      `  "protocol":{...},\n  "acceptance":{...}\n}\n\n` +
-                      `原输出：\n${outText}\n`,
-                  },
-                ],
-                temperature: 0.0,
-                max_tokens: 1400,
-                response_format: { type: "json_object" },
-              };
-              if (provider === "openrouter" && payloadBase.provider) repairPayload.provider = payloadBase.provider;
-              const repairedText = await autoRetry(
-                async () =>
-                  await callStreamRobust(repairPayload, "阶段1：修复蓝图 JSON", true, [
-                    "deepseek/deepseek-v3.2",
-                    "minimax/minimax-m2.5",
-                    "qwen/qwen3.6-plus",
-                  ]),
-                "架构师蓝图修复",
-                "只输出严格 JSON 对象（meta/protocol/acceptance）。",
-              );
-              obj = parseJsonObjectLoose(repairedText);
-            }
-            if (!obj) {
-              // 最后兜底：不要让用户因为“蓝图不是 JSON”而完全生成失败。
-              // 用一个内置的最小蓝图继续进入 MVP 阶段（保证“至少可运行”）。
-              sendStatus("架构师输出异常（仍非 JSON），我将使用内置最小蓝图继续生成 MVP…");
-              const titleGuess = (() => {
-                const t = String(userIntent || "").replace(/\s+/g, " ").trim();
-                if (!t) return "未命名作品";
-                const s = t.replace(/[，。,.!！?？:：;；"“”'‘’()（）【】\[\]]/g, "").trim();
-                return (s.slice(0, 18) || "未命名作品") + (s.length > 18 ? "…" : "");
-              })();
-              obj = {
-                meta: { title: titleGuess, shortDesc: "一个可运行的最小可行版本（MVP），可继续迭代完善。", rules: "点击开始；完成目标后结束。", creator: { name: "创作者" } },
-                protocol: {
-                  globalState: { stateMachine: ["start", "playing", "win", "lose"], vars: [{ name: "score", type: "number", purpose: "记录得分" }] },
-                  dom: { rootId: "app", canvasId: "gameCanvas", startBtnId: "btnStart", hudIds: ["hudScore", "hudInfo"] },
-                  events: ["startGame", "resetGame", "tick", "render"],
-                  gameLoop: { tickMs: 16, functions: ["init", "reset", "update", "render"] },
-                },
-                acceptance: {
-                  mustHave: [
-                    "index.html 内含一个 <style> 和一个 <script>（单文件 MVP）",
-                    "无 JS 语法错误（可被静态解析）",
-                    "点击开始可进入 playing，结束后可回到 start/over",
-                  ],
-                },
-              };
-            }
-            const meta = safeMeta((obj as any).meta);
-            blueprint = { v: 1, baseIdea: userIntent, meta, protocol: (obj as any).protocol || {}, acceptance: (obj as any).acceptance || {} };
-            const metaOut = { ...meta, _plan: blueprint, _gen: { v: 1, stage: "architect_done", updatedAt: Date.now() } };
-            await upsertDraftFile("meta.json", JSON.stringify(metaOut, null, 2));
-          }
-
-          // ===== 阶段 2：Skeleton（单文件 MVP）=====
-          let files: Array<{ path: string; content: string }> = [];
-          const hasIndex = !!index0.trim();
-          if (!hasIndex) {
-            sendStatus(`（2/3）生成单文件 MVP（${provider} / ${mvpModel}）…`);
-            sendMeta({ provider, model: mvpModel, phase: "mvp" });
-            const payload: any = {
-              model: mvpModel,
-              messages: [
-                { role: "system", content: MVP_PROMPT },
-                { role: "user", content: `【蓝图】\n${JSON.stringify(blueprint, null, 2)}\n\n【用户需求】\n${userIntent}\n` },
-              ],
-              temperature: 0.3,
-              max_tokens: 2200,
-              response_format: { type: "json_object" },
-            };
-            if (provider === "openrouter" && payloadBase.provider) payload.provider = payloadBase.provider;
-            const outText = await autoRetry(
-              async () =>
-                await callStreamRobust(payload, "阶段2：单文件 MVP", true, [
-                  "deepseek/deepseek-v3.2",
-                  "minimax/minimax-m2.5",
-                  "qwen/qwen3.6-plus",
-                ]),
-              "单文件 MVP",
-              "只输出 JSON，files 里只包含 index.html。",
-            );
-            const obj = parseJsonObjectLoose(outText);
-            if (!obj) throw new Error("MVP_NOT_JSON");
-            const meta = safeMeta((obj as any).meta || blueprint.meta);
-            const outFiles = Array.isArray((obj as any).files) ? (obj as any).files : [];
-            const html = String(outFiles.find((x: any) => String(x?.path || "") === "index.html")?.content || "");
-            if (!html.trim()) throw new Error("MVP_EMPTY_INDEX");
-            files = [{ path: "index.html", content: html }];
-            // 写入草稿：保证失败不归零
-            await upsertDraftFile("index.html", html);
-            const metaOut = { ...meta, _plan: blueprint, _gen: { v: 1, stage: "mvp_generated", singleFile: true, updatedAt: Date.now() } };
-            await upsertDraftFile("meta.json", JSON.stringify(metaOut, null, 2));
-          } else {
-            // 已有代码：进入阶段 3（Refine/Patch）
-            files = hasSplit0
-              ? [
-                  { path: "index.html", content: index0 },
-                  { path: "style.css", content: style0 },
-                  { path: "game.js", content: game0 },
-                ]
-              : [{ path: "index.html", content: index0 }];
-          }
-
-          // ===== 沙箱静态检查 + 自愈 =====
-          {
-            const errs0 = validateAcceptance(files);
-            if (errs0.length) {
-              try {
-                files = await selfHeal("沙箱检查", files, errs0.join("\n"), 2);
-              } catch (e: any) {
-                // 稳定优先：自愈失败不阻断交付，直接回滚 lastGood（若还没有则继续抛错）
-                files = await restoreLastGood(String(e?.message || e));
-              }
-            }
-            // 只要通过验收，就立刻设置 lastGood（保证后续失败不归零）
-            const ok = !validateAcceptance(files).length;
-            if (ok) await setLastGood(files, "after_sandbox");
-          }
-
-          // ===== MVP 稳定后：自动拆分（单文件 -> 三文件）=====
-          if (!hasSplit0) {
-            const html = files.find((f) => f.path === "index.html")?.content || "";
-            const split = splitSingleFile(html);
-            if (split) {
-              sendStatus("MVP 已稳定，正在自动拆分为 index.html + style.css + game.js…");
-              const indexNew = split.index;
-              const cssNew = split.css;
-              const jsNew = split.js;
-              const splitFiles = [
-                { path: "index.html", content: indexNew },
-                { path: "style.css", content: cssNew },
-                { path: "game.js", content: jsNew },
-              ];
-              try {
-                const errs = validateAcceptance(splitFiles);
-                if (errs.length) throw new Error(`SPLIT_ACCEPTANCE_FAILED:${errs.join(" | ")}`);
-                await upsertDraftFile("index.html", indexNew);
-                await upsertDraftFile("style.css", cssNew);
-                await upsertDraftFile("game.js", jsNew);
-                files = splitFiles;
-                const metaNow = (await readMetaObj()) || {};
-                (metaNow as any)._gen = { ...(metaNow as any)._gen, stage: "split_done", splitted: true, updatedAt: Date.now() };
-                await writeMeta(metaNow);
-                await setLastGood(files, "after_split");
-              } catch (e: any) {
-                // 稳定优先：拆分失败不阻断交付，保留单文件 lastGood
-                sendStatus("拆分后检测到问题，已保留单文件版本继续运行。");
-              }
-            }
-          }
-
-          // ===== 阶段 3：Refine（在活代码上全量替换或多文件补丁）=====
-          const isFirstGen = !hasIndex;
-          if (!isFirstGen) {
-            try {
-              sendStatus(`（3/3）根据新指令迭代完善（${provider} / ${refineModel}）…`);
-              if (provider === "openrouter") model = refineModel;
-              sendMeta({ provider, model, phase: "refine" });
-              const payload: any = {
-                model,
-                messages: [
-                  { role: "system", content: REFINE_PROMPT },
-                  {
-                    role: "user",
-                    content:
-                      `【架构协议】\n${JSON.stringify(blueprint, null, 2)}\n\n` +
-                      `【当前文件】\n${JSON.stringify(files, null, 2)}\n\n` +
-                      `【用户新需求】\n${userIntent}\n\n` +
-                      `请输出修订后的 files（尽量只改必要文件）。`,
-                  },
-                ],
-                temperature: 0.3,
-                max_tokens: 2400,
-                response_format: { type: "json_object" },
-              };
-              if (provider === "openrouter" && payloadBase.provider) payload.provider = payloadBase.provider;
-              // 稳定优先：阶段3 不要无限等待/反复重试。
-              // - 单次调用超时压到 60s
-              // - 不额外重试（attempts=1）
-              const outText = await autoRetry(
-                async () =>
-                  await callStreamRobust(
-                    payload,
-                    "阶段3：迭代补丁",
-                    true,
-                    ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "qwen/qwen3.6-plus"],
-                    60_000,
-                  ),
-                "迭代补丁",
-                "只输出 JSON，files 里包含修改后的完整文件内容。",
-                1,
-              );
-              const obj = parseJsonObjectLoose(outText);
-              const outFiles = Array.isArray((obj as any)?.files) ? (obj as any).files : [];
-              for (const f of outFiles) {
-                const p = String((f as any)?.path || "").trim();
-                const c = String((f as any)?.content || "");
-                if (!["index.html", "style.css", "game.js"].includes(p) || !c.trim()) continue;
-                const idx = files.findIndex((x) => x.path === p);
-                if (idx >= 0) files[idx] = { path: p, content: c };
-                else files.push({ path: p, content: c });
-                await upsertDraftFile(p, c);
-              }
-              const errs = validateAcceptance(files);
-              if (errs.length) files = await selfHeal("迭代后沙箱检查", files, errs.join("\n"), 2);
-              if (!validateAcceptance(files).length) await setLastGood(files, "after_refine");
-            } catch (e: any) {
-              // 稳定优先：refine 失败不阻断交付，回滚 lastGood
-              files = await restoreLastGood(String(e?.message || e));
-            }
-          }
-
-          // 更新 meta.json（标题/简介等）+ 返回给前端写入
-          const metaNow = (await readMetaObj()) || {};
-          const metaClean = safeMeta((metaNow as any) || blueprint.meta);
-          (metaNow as any).title = metaClean.title || (metaNow as any).title || "未命名作品";
-          (metaNow as any).shortDesc = metaClean.shortDesc || (metaNow as any).shortDesc || "";
-          (metaNow as any).rules = metaClean.rules || (metaNow as any).rules || "";
-          (metaNow as any).creator = metaClean.creator || (metaNow as any).creator || {};
-          (metaNow as any)._plan = blueprint;
-          (metaNow as any)._gen = { ...(metaNow as any)._gen, updatedAt: Date.now() };
-          await upsertDraftFile("meta.json", JSON.stringify(metaNow, null, 2));
-
-          const assistantText =
-            `已生成可运行版本：${String((metaNow as any).title || "").trim() || "未命名作品"}。` +
-            `\n（已做静态沙箱检查与自动修复；MVP 稳定后已自动拆分为多文件。）`;
-          const finalObj = { assistant: assistantText, meta: metaNow, files: [...files, { path: "meta.json", content: JSON.stringify(metaNow, null, 2) }] };
-
-          parseCreatorJson(JSON.stringify(finalObj));
-          send("final", { ok: true, content: JSON.stringify(finalObj), repaired: false });
-          clearInterval(heartbeat);
-          controller.close();
-          return;
-        }
-
-        try {
-          resp = await callModelStream(payloadBase);
-        } catch (e: any) {
-          // 默认优先 OpenRouter，但如果 OpenRouter 网络失败，则优先回退百炼，其次直连 DeepSeek
-          const em = String(e?.message || e);
-          if (em.toLowerCase().includes("fetch_failed")) {
-            if (provider === "openrouter" && canFallbackBailian) {
-              sendStatus("OpenRouter 连接失败，我先切到阿里云百炼再试一次…");
-              await fallbackToBailian();
-              payloadBase.model = model;
-              delete payloadBase.provider;
-              resp = await callModelStream(payloadBase);
-            } else if (provider === "openrouter" && canFallbackDeepSeek) {
-              sendStatus("OpenRouter 连接失败，我先切到 DeepSeek 再试一次…");
-              await fallbackToDeepSeek();
-              payloadBase.model = model;
-              delete payloadBase.provider;
-              resp = await callModelStream(payloadBase);
-            } else {
-              throw e;
-            }
-          } else {
-            throw e;
-          }
-        }
-        // 不做“地区不可用时自动降级”：让错误显式暴露，方便用户选择用代理/用 Vercel 中转等方案解决。
-        if (!resp.ok) {
-          // response_format 可能不兼容，退回普通 stream
-          try {
-            resp.body?.cancel();
-          } catch {}
-          delete payloadBase.response_format;
-          resp = await callModelStream(payloadBase);
-        }
-        if (!resp.ok || !resp.body) {
-          const j = await resp.json().catch(() => ({}));
-          const msg = j?.error?.message || j?.message || resp.status;
-          throw new Error(`MODEL_ERROR:${msg}`);
-        }
-
-        sendStatus("AI 正在生成代码…");
-        const reader = resp.body.getReader();
-        const dec = new TextDecoder();
-        let buf = "";
-
-        try {
-          while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            buf += dec.decode(value, { stream: true });
-            let idx;
-            while ((idx = buf.indexOf("\n")) >= 0) {
-              const line = buf.slice(0, idx).trim();
-              buf = buf.slice(idx + 1);
-              if (!line) continue;
-              if (!line.startsWith("data:")) continue;
-              const dataStr = line.slice(5).trim();
-              if (dataStr === "[DONE]") break;
-              let j: any = null;
-              try {
-                j = JSON.parse(dataStr);
-              } catch {
-                continue;
-              }
-              const delta = j?.choices?.[0]?.delta?.content ?? "";
-              if (typeof delta === "string" && delta) {
-                full += delta;
-                // 把增量内容流式推给前端，让用户看到 AI 正在输出什么
-                send("delta", { text: delta });
-              }
-            }
-          }
-        } catch (e: any) {
-          // 流式传输中断：用非流式再请求一次兜底，尽量给用户结果
-          // 流式连接偶尔会中断：这里用一次非流式请求兜底，继续给用户结果
-          sendStatus("连接有点不稳定，我换个方式继续生成…");
-          const once = await callModelOnce({
-            model,
-            messages: [{ role: "system", content: systemPrompt }, ...messages],
-            temperature: 0.4,
-          });
-          full = once;
-        }
-
-        // 校验 JSON；不通过就自动修复 1 次
-        try {
-          sendStatus("AI 正在检查输出格式…");
-          parseCreatorJson(full);
-          send("final", { ok: true, content: full, repaired: false });
-          clearInterval(heartbeat);
-          controller.close();
-          return;
-        } catch (e: any) {
-          sendStatus("AI 在修复输出格式…");
-          const repairPrompt =
-            `你刚才的输出不是严格可解析的 JSON。请只输出一个 JSON 对象（不要任何额外文本），并修复格式。\n` +
-            `错误原因：${String(e?.message || e)}\n` +
-            `原输出：\n${full}\n`;
-          const repaired = await callModelOnce({
-            model,
-            messages: [
-              { role: "system", content: systemPrompt },
-              ...messages,
-              { role: "user", content: repairPrompt },
-            ],
-            temperature: 0.2,
-          });
-          parseCreatorJson(repaired);
-          send("final", { ok: true, content: repaired, repaired: true });
-          clearInterval(heartbeat);
-          controller.close();
-          return;
-        }
       } catch (e: any) {
         send("error", { ok: false, error: String(e?.message || e) });
         clearInterval(heartbeat);
