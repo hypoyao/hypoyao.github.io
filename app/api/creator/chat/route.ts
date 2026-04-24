@@ -381,28 +381,38 @@ function extractPlainCodeText(raw: string, languageHints: string[] = []) {
 }
 
 function parseSectionBlocks(raw: string) {
-  const text = String(raw || "").trim();
+  const text = String(raw || "")
+    .replace(/^\s*```[a-zA-Z0-9_-]*\s*/i, "")
+    .replace(/\s*```\s*$/i, "")
+    .trim();
   if (!text) return null;
-  const re = /===SECTION:([a-zA-Z0-9_-]+)===\s*([\s\S]*?)\s*===END===/g;
+  const re = /===\s*SECTION\s*:\s*([a-zA-Z0-9_-]+)\s*===\s*([\s\S]*?)\s*===\s*END\s*===/gi;
   const sections = new Map<string, string>();
   let m: RegExpExecArray | null;
   while ((m = re.exec(text))) {
-    const name = String(m[1] || "").trim();
-    const content = String(m[2] || "");
+    const name = String(m[1] || "").trim().toLowerCase();
+    const content = String(m[2] || "").trim();
     if (name) sections.set(name, content);
   }
   if (!sections.size) return null;
   return sections;
 }
 
+function normalizeBlueprintKvKey(raw: string) {
+  return String(raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
+}
+
 function parseKeyValueLines(raw: string) {
   const map = new Map<string, string>();
   for (const line of String(raw || "").split(/\r?\n/)) {
-    const t = line.trim();
+    const t = line.trim().replace(/^[\-\*\u2022\d\.\)\s]+/, "");
     if (!t) continue;
-    const m = t.match(/^([A-Za-z][A-Za-z0-9_]*)\s*[:=]\s*(.+)$/);
+    const m = t.match(/^([A-Za-z][A-Za-z0-9_\-\s]*)\s*[:=：]\s*(.+)$/u);
     if (!m) continue;
-    map.set(m[1], String(m[2] || "").trim());
+    map.set(normalizeBlueprintKvKey(m[1]), String(m[2] || "").trim());
   }
   return map;
 }
@@ -426,66 +436,86 @@ function parseBlueprintSectionProtocol(
   fallbackConfig: any,
   fallbackMeta: any,
 ) {
+  const pick = (kv: Map<string, string>, ...keys: string[]) => {
+    for (const key of keys) {
+      const v = kv.get(normalizeBlueprintKvKey(key));
+      if (String(v || "").trim()) return String(v || "").trim();
+    }
+    return "";
+  };
   const metaKv = parseKeyValueLines(sections.get("meta") || "");
   const configKv = parseKeyValueLines(sections.get("config") || "");
   const protocolKv = parseKeyValueLines(sections.get("protocol") || "");
   const blueprintKv = parseKeyValueLines(sections.get("blueprint") || "");
-  const assetsKv = parseKeyValueLines(sections.get("assetsPlan") || "");
+  const assetsKv = parseKeyValueLines(sections.get("assetsplan") || sections.get("assetsPlan") || "");
 
-  const title = String(metaKv.get("title") || "").trim();
-  if (!title) return null;
+  const title =
+    pick(metaKv, "title", "gameTitle", "name", "gameName", "titleText") ||
+    String((fallbackMeta as any)?.title || "").trim() ||
+    "我的小游戏";
 
   const meta = safeMeta({
     title,
-    shortDesc: String(metaKv.get("shortDesc") || (fallbackMeta as any)?.shortDesc || "").trim(),
-    rules: String(metaKv.get("rules") || (fallbackMeta as any)?.rules || "").trim(),
-    creator: { name: String(metaKv.get("creatorName") || (fallbackMeta as any)?.creator?.name || "Architect").trim() },
+    shortDesc:
+      pick(metaKv, "shortDesc", "desc", "description", "summary") ||
+      String((fallbackMeta as any)?.shortDesc || "").trim(),
+    rules: pick(metaKv, "rules", "rule", "gameRules", "gameplayRules") || String((fallbackMeta as any)?.rules || "").trim(),
+    creator: { name: pick(metaKv, "creatorName", "creator", "author") || String((fallbackMeta as any)?.creator?.name || "Architect").trim() },
   });
 
   const nextConfig = {
     ...(fallbackConfig && typeof fallbackConfig === "object" ? fallbackConfig : {}),
-    platform: String(configKv.get("platform") || (fallbackConfig as any)?.platform || "both").trim() || "both",
+    platform: pick(configKv, "platform", "device", "platformType") || String((fallbackConfig as any)?.platform || "both").trim() || "both",
     style: {
       ...(((fallbackConfig as any)?.style && typeof (fallbackConfig as any).style === "object") ? (fallbackConfig as any).style : {}),
-      theme: String(configKv.get("theme") || (fallbackConfig as any)?.style?.theme || "卡通").trim() || "卡通",
+      theme: pick(configKv, "theme", "style", "visualStyle") || String((fallbackConfig as any)?.style?.theme || "卡通").trim() || "卡通",
       colors: {
-        bg: String(configKv.get("bg") || (fallbackConfig as any)?.style?.colors?.bg || "#f8fafc").trim() || "#f8fafc",
-        accent: String(configKv.get("accent") || (fallbackConfig as any)?.style?.colors?.accent || "#2563eb").trim() || "#2563eb",
+        bg:
+          pick(configKv, "bg", "bgColor", "background", "backgroundColor") ||
+          String((fallbackConfig as any)?.style?.colors?.bg || "#f8fafc").trim() ||
+          "#f8fafc",
+        accent:
+          pick(configKv, "accent", "accentColor", "primary", "primaryColor") ||
+          String((fallbackConfig as any)?.style?.colors?.accent || "#2563eb").trim() ||
+          "#2563eb",
       },
     },
     ui: {
       ...(((fallbackConfig as any)?.ui && typeof (fallbackConfig as any).ui === "object") ? (fallbackConfig as any).ui : {}),
       texts: {
-        start: String(configKv.get("startText") || (fallbackConfig as any)?.ui?.texts?.start || "开始").trim() || "开始",
-        restart: String(configKv.get("restartText") || (fallbackConfig as any)?.ui?.texts?.restart || "重开").trim() || "重开",
+        start: pick(configKv, "startText", "start", "startLabel", "btnStartText") || String((fallbackConfig as any)?.ui?.texts?.start || "开始").trim() || "开始",
+        restart:
+          pick(configKv, "restartText", "restart", "restartLabel", "replayText", "btnRestartText") ||
+          String((fallbackConfig as any)?.ui?.texts?.restart || "重开").trim() ||
+          "重开",
       },
     },
   };
 
   const protocol = {
     dom: {
-      rootId: String(protocolKv.get("rootId") || "app").trim() || "app",
-      canvasId: String(protocolKv.get("canvasId") || "game").trim() || "game",
-      btnStartId: String(protocolKv.get("btnStartId") || "btnStart").trim() || "btnStart",
-      btnRestartId: String(protocolKv.get("btnRestartId") || "btnRestart").trim() || "btnRestart",
-      btnLeftId: String(protocolKv.get("btnLeftId") || "btnLeft").trim() || "btnLeft",
+      rootId: pick(protocolKv, "rootId", "root", "rootID") || "app",
+      canvasId: pick(protocolKv, "canvasId", "canvas", "canvasID") || "game",
+      btnStartId: pick(protocolKv, "btnStartId", "startBtnId", "startButtonId") || "btnStart",
+      btnRestartId: pick(protocolKv, "btnRestartId", "restartBtnId", "restartButtonId") || "btnRestart",
+      btnLeftId: pick(protocolKv, "btnLeftId", "leftBtnId", "leftButtonId") || "btnLeft",
     },
     state: {
-      name: String(protocolKv.get("stateName") || "G").trim() || "G",
-      vars: splitCommaList(protocolKv.get("stateVars") || "level,score,state,speed,autoCenter"),
+      name: pick(protocolKv, "stateName", "state", "storeName") || "G",
+      vars: splitCommaList(pick(protocolKv, "stateVars", "vars", "stateFields") || "level,score,state,speed,autoCenter"),
     },
   };
 
   const blueprint = {
-    type: String(blueprintKv.get("type") || "C").trim() || "C",
-    coreLoop: String(blueprintKv.get("coreLoop") || "").trim(),
-    steps: splitPipeList(blueprintKv.get("steps") || "开始 -> 游玩 -> 结束"),
-    winLose: String(blueprintKv.get("winLose") || "").trim(),
+    type: pick(blueprintKv, "type", "gameType", "template") || "C",
+    coreLoop: pick(blueprintKv, "coreLoop", "loop", "gameLoop"),
+    steps: splitPipeList(pick(blueprintKv, "steps", "flow", "sequence") || "开始 | 游玩 | 结束"),
+    winLose: pick(blueprintKv, "winLose", "winCondition", "loseCondition", "outcome"),
   };
 
   const assetsPlan = {
-    renderer: String(assetsKv.get("renderer") || "dom").trim() || "dom",
-    sprites: splitCommaList(assetsKv.get("sprites") || ""),
+    renderer: pick(assetsKv, "renderer", "render", "mode") || "dom",
+    sprites: splitCommaList(pick(assetsKv, "sprites", "elements", "items")),
   };
 
   return { meta, config: nextConfig, protocol, blueprint, assetsPlan };
