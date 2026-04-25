@@ -13,6 +13,61 @@ type GameMeta = {
   creator?: { name?: string; avatarUrl?: string; profilePath?: string };
 };
 
+type ProcessMode = "create" | "patch" | "fix" | "clarify" | "run";
+type ProcessStepStatus = "pending" | "running" | "done" | "failed" | "upgraded";
+
+type ProcessContract = {
+  topic?: string;
+  gameplay?: string;
+  platform?: string;
+  theme?: string;
+  complexity?: string;
+  keyUi?: string[];
+  mustHave?: string[];
+  forbidden?: string[];
+};
+
+type ProcessStep = {
+  id: string;
+  label: string;
+  status: ProcessStepStatus;
+  detail?: string;
+  strategy?: string;
+  fileTargets?: string[];
+  startedAt?: number;
+  finishedAt?: number;
+};
+
+type ProcessRun = {
+  id: string;
+  gameId: string;
+  mode: ProcessMode;
+  provider: string;
+  model: string;
+  status: "running" | "done" | "failed" | "stopped";
+  summary: string;
+  startedAt: number;
+  finishedAt?: number;
+  currentStepId?: string;
+  steps: ProcessStep[];
+  contract?: ProcessContract | null;
+  error?: string;
+};
+
+type ProgressEventPayload = {
+  runId?: string;
+  mode?: ProcessMode;
+  stepId?: string;
+  stepLabel?: string;
+  status?: ProcessStepStatus;
+  detail?: string;
+  strategy?: string;
+  fileTargets?: string[];
+  provider?: string;
+  model?: string;
+  error?: string;
+};
+
 function nowId() {
   return String(Date.now()) + "-" + Math.random().toString(16).slice(2);
 }
@@ -84,6 +139,97 @@ function safeJsonParse(s: string): any | null {
   return null;
 }
 
+function normalizeStringList(v: any): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.map((x) => String(x || "").trim()).filter(Boolean);
+}
+
+function formatElapsed(startedAt?: number, finishedAt?: number) {
+  if (!startedAt) return "0s";
+  const end = finishedAt || Date.now();
+  const sec = Math.max(1, Math.round((end - startedAt) / 1000));
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  const rest = sec % 60;
+  return rest ? `${min}m ${rest}s` : `${min}m`;
+}
+
+function guessProcessMode(text: string): ProcessMode {
+  const t = String(text || "").trim();
+  if (/(^\s*修复[:：]|bug|报错|错误|异常|崩溃|无法|不显示|不生效|没反应|卡住|卡死|白屏|闪退|console|控制台)/i.test(t)) {
+    return "fix";
+  }
+  return "create";
+}
+
+function processModeLabel(mode: ProcessMode) {
+  if (mode === "fix") return "修 bug";
+  if (mode === "patch") return "小改动";
+  if (mode === "clarify") return "需求澄清";
+  if (mode === "create") return "首次生成";
+  return "处理中";
+}
+
+function processStatusLabel(status: ProcessRun["status"]) {
+  if (status === "done") return "已完成";
+  if (status === "failed") return "失败";
+  if (status === "stopped") return "已停止";
+  return "进行中";
+}
+
+function summarizeStatusText(text: string) {
+  return String(text || "")
+    .replace(/^（\d+\/\d+）/, "")
+    .replace(/（已等待\s*\d+s）/g, "")
+    .replace(/\s*…$/, "")
+    .trim();
+}
+
+function inferStepFromPhase(phase: string): { id: string; label: string; mode?: ProcessMode } | null {
+  const p = String(phase || "").trim().toLowerCase();
+  if (!p) return null;
+  if (p === "clarify") return { id: "clarify", label: "需求澄清", mode: "clarify" };
+  if (p === "blueprint") return { id: "blueprint", label: "蓝图", mode: "create" };
+  if (p === "json_repair") return { id: "repair", label: "结构修复" };
+  if (p === "codegen_html") return { id: "html", label: "页面结构", mode: "create" };
+  if (p === "codegen_css") return { id: "css", label: "页面样式", mode: "create" };
+  if (p === "codegen_game_js") return { id: "game_js", label: "核心逻辑", mode: "create" };
+  if (p === "codegen_game_js_skeleton") return { id: "game_js_skeleton", label: "核心逻辑骨架", mode: "create" };
+  if (p === "codegen_game_js_complete") return { id: "game_js_complete", label: "核心逻辑补全", mode: "create" };
+  if (p === "fix") return { id: "fix", label: "Bug 修复", mode: "fix" };
+  if (p.startsWith("direct_refine_")) {
+    const kind = p.slice("direct_refine_".length);
+    const map: Record<string, string> = {
+      content: "文案与显隐",
+      layout: "布局调整",
+      visual: "样式优化",
+      behavior: "行为修改",
+      bugfix: "问题修复",
+      feature: "功能增强",
+    };
+    return { id: `direct_${kind}`, label: map[kind] || "小改动", mode: "patch" };
+  }
+  return null;
+}
+
+function inferStepFromStatusText(text: string): { id: string; label: string; mode?: ProcessMode } | null {
+  const raw = summarizeStatusText(text);
+  if (!raw) return null;
+  if (raw.includes("需求澄清")) return { id: "clarify", label: "需求澄清", mode: "clarify" };
+  if (raw.includes("生成蓝图")) return { id: "blueprint", label: "蓝图", mode: "create" };
+  if (raw.includes("收敛需求契约")) return { id: "requirement_contract", label: "需求契约", mode: "create" };
+  if (raw.includes("生成页面结构")) return { id: "html", label: "页面结构", mode: "create" };
+  if (raw.includes("生成页面样式")) return { id: "css", label: "页面样式", mode: "create" };
+  if (raw.includes("生成核心逻辑骨架")) return { id: "game_js_skeleton", label: "核心逻辑骨架", mode: "create" };
+  if (raw.includes("补全核心逻辑细节")) return { id: "game_js_complete", label: "核心逻辑补全", mode: "create" };
+  if (raw.includes("生成核心逻辑")) return { id: "game_js", label: "核心逻辑", mode: "create" };
+  if (raw.includes("修复 bug")) return { id: "fix", label: "Bug 修复", mode: "fix" };
+  if (raw.includes("小改动")) return { id: "patch", label: "小改动", mode: "patch" };
+  if (raw.includes("结构不一致") || raw.includes("验收没通过")) return { id: "validate", label: "强验收与恢复" };
+  if (raw.includes("JSON")) return { id: "repair", label: "结构修复" };
+  return null;
+}
+
 const THINK_PREFIX = "[[THINK]]";
 
 function parseSseChunk(state: { buf: string }, chunk: string) {
@@ -134,6 +280,9 @@ export default function CreateStudio({
   const [model, setModel] = useState<string>("nvidia/nemotron-3-super-120b-a12b:free");
   const [hydrated, setHydrated] = useState(false);
   const [currentModelLabel, setCurrentModelLabel] = useState<string>("");
+  const [processCurrent, setProcessCurrent] = useState<ProcessRun | null>(null);
+  const [processHistory, setProcessHistory] = useState<ProcessRun[]>([]);
+  const [processCollapsed, setProcessCollapsed] = useState(false);
   const [creatorName, setCreatorName] = useState<string>("");
   const [creatorAvatarUrl, setCreatorAvatarUrl] = useState<string>("");
   const [creatorProfilePath, setCreatorProfilePath] = useState<string>("");
@@ -159,6 +308,11 @@ export default function CreateStudio({
 
   const publishText = useMemo(() => (published ? "更新" : "发布"), [published]);
 
+  // 新的一轮运行开始时，默认展开
+  useEffect(() => {
+    if (processCurrent?.id) setProcessCollapsed(false);
+  }, [processCurrent?.id]);
+
   const openrouterModels = useMemo(
     () => [
       { id: "nvidia/nemotron-3-super-120b-a12b:free", name: "nvidia/nemotron-3-super-120b-a12b:free（默认）" },
@@ -167,6 +321,8 @@ export default function CreateStudio({
       { id: "deepseek/deepseek-v3.2", name: "deepseek/deepseek-v3.2" },
       { id: "deepseek/deepseek-v4-pro", name: "deepseek/deepseek-v4-pro（思考：最高）" },
       { id: "deepseek/deepseek-v4-flash", name: "deepseek/deepseek-v4-flash（思考：最高，较快）" },
+      { id: "tencent/hy3-preview:free", name: "tencent/hy3-preview:free（腾讯 Hy3 Preview 免费）" },
+      { id: "z-ai/glm-5.1", name: "z-ai/glm-5.1（GLM 5.1）" },
       { id: "google/gemini-2.5-flash", name: "google/gemini-2.5-flash" },
       { id: "google/gemini-2.5-flash-lite", name: "google/gemini-2.5-flash-lite" },
       { id: "minimax/minimax-m2.5", name: "minimax/minimax-m2.5" },
@@ -241,6 +397,159 @@ export default function CreateStudio({
     setCurrentModelLabel(`当前模型：${provider} / ${model}`);
   }, [provider, model]);
 
+  const archiveProcessRun = (status: ProcessRun["status"], error = "") => {
+    setProcessCurrent((prev) => {
+      if (!prev) return null;
+      const finishedAt = Date.now();
+      const finalized: ProcessRun = {
+        ...prev,
+        status,
+        error: error || prev.error || "",
+        finishedAt,
+        steps: prev.steps.map((step) =>
+          step.status === "running"
+            ? { ...step, status: status === "done" ? "done" : "failed", finishedAt }
+            : step.finishedAt
+              ? step
+              : step.status === "pending"
+                ? step
+                : { ...step, finishedAt },
+        ),
+      };
+      setProcessHistory((hist) => [finalized, ...hist].slice(0, 8));
+      return null;
+    });
+  };
+
+  const upsertProcessStep = (
+    prev: ProcessRun | null,
+    evt: {
+      runId?: string;
+      mode?: ProcessMode;
+      stepId?: string;
+      stepLabel?: string;
+      status?: ProcessStepStatus;
+      detail?: string;
+      strategy?: string;
+      fileTargets?: string[];
+      provider?: string;
+      model?: string;
+      contract?: ProcessContract | null;
+      summary?: string;
+      error?: string;
+      source?: "status" | "meta" | "progress";
+    },
+    fallback: { runId: string; gameId: string; provider: string; model: string },
+  ) => {
+    const now = Date.now();
+    const runId = String(evt.runId || prev?.id || fallback.runId);
+    let stepId = String(evt.stepId || "").trim();
+    let stepLabel = String(evt.stepLabel || "").trim();
+    const stepStatus = (evt.status || "running") as ProcessStepStatus;
+    const mode = evt.mode || prev?.mode || "run";
+    const next: ProcessRun = prev && prev.id === runId
+      ? {
+          ...prev,
+          mode,
+          provider: evt.provider || prev.provider,
+          model: evt.model || prev.model,
+          summary: evt.summary || evt.detail || prev.summary,
+          contract: evt.contract ?? prev.contract,
+          error: evt.error || prev.error,
+        }
+      : {
+          id: runId,
+          gameId: fallback.gameId,
+          mode,
+          provider: evt.provider || fallback.provider,
+          model: evt.model || fallback.model,
+          status: "running",
+          summary: evt.summary || evt.detail || "AI 正在处理…",
+          startedAt: now,
+          currentStepId: "",
+          steps: [],
+          contract: evt.contract ?? null,
+          error: evt.error || "",
+        };
+
+    // status 事件是“心跳/过程提示”，不应抢占当前步骤，也不应把其它步骤误标为完成。
+    if (evt.source === "status" && prev?.currentStepId) {
+      const cur = prev.steps.find((s) => s.id === prev.currentStepId);
+      if (cur && cur.status === "running") {
+        stepId = cur.id;
+        stepLabel = cur.label;
+      }
+    }
+
+    if (!stepId || !stepLabel) return next;
+    const steps: ProcessStep[] =
+      evt.source === "status"
+        ? next.steps.slice()
+        : next.steps.map((step) =>
+            step.status === "running" && step.id !== stepId
+              ? { ...step, status: "done" as ProcessStepStatus, finishedAt: step.finishedAt || now }
+              : step,
+          );
+    const idx = steps.findIndex((step) => step.id === stepId);
+    const nextStep: ProcessStep = idx >= 0
+      ? {
+          ...steps[idx],
+          label: stepLabel || steps[idx].label,
+          status: stepStatus,
+          detail: evt.detail || steps[idx].detail,
+          strategy: evt.strategy || steps[idx].strategy,
+          fileTargets: evt.fileTargets && evt.fileTargets.length ? evt.fileTargets : steps[idx].fileTargets,
+          startedAt: steps[idx].startedAt || now,
+          finishedAt: stepStatus === "done" || stepStatus === "failed" ? now : undefined,
+        }
+      : {
+          id: stepId,
+          label: stepLabel,
+          status: stepStatus,
+          detail: evt.detail || "",
+          strategy: evt.strategy || "",
+          fileTargets: evt.fileTargets || [],
+          startedAt: now,
+          finishedAt: stepStatus === "done" || stepStatus === "failed" ? now : undefined,
+        };
+    if (idx >= 0) steps[idx] = nextStep;
+    else steps.push(nextStep);
+
+    return {
+      ...next,
+      summary: evt.summary || evt.detail || next.summary || stepLabel,
+      currentStepId: stepId,
+      steps,
+    };
+  };
+
+  const applyProgressUpdate = (
+    evt: {
+      runId?: string;
+      mode?: ProcessMode;
+      stepId?: string;
+      stepLabel?: string;
+      status?: ProcessStepStatus;
+      detail?: string;
+      strategy?: string;
+      fileTargets?: string[];
+      provider?: string;
+      model?: string;
+      contract?: ProcessContract | null;
+      summary?: string;
+      error?: string;
+      source?: "status" | "meta" | "progress";
+    },
+    fallback: { runId: string; gameId: string; provider: string; model: string },
+  ) => {
+    setProcessCurrent((prev) => upsertProcessStep(prev, evt, fallback));
+  };
+
+  useEffect(() => {
+    setProcessCurrent(null);
+    setProcessHistory([]);
+  }, [gameId]);
+
   function act(type: "new" | "publish" | "delete") {
     const ok =
       type === "new"
@@ -308,6 +617,19 @@ export default function CreateStudio({
     const lastN = dedup.slice(-8);
     return lastN.map((t, i) => `${i + 1}. ${t}`).join("\n");
   }, [messages]);
+
+  const processCompletion = useMemo(() => {
+    if (!processCurrent?.steps?.length) return 0;
+    const total = processCurrent.steps.length;
+    const done = processCurrent.steps.filter((step) => step.status === "done").length;
+    const running = processCurrent.steps.some((step) => step.status === "running") ? 1 : 0;
+    return Math.max(8, Math.min(96, Math.round(((done + running * 0.5) / total) * 100)));
+  }, [processCurrent]);
+
+  const activeProcessStep = useMemo(() => {
+    if (!processCurrent?.steps?.length) return null;
+    return processCurrent.steps.find((step) => step.id === processCurrent.currentStepId) || processCurrent.steps[processCurrent.steps.length - 1] || null;
+  }, [processCurrent]);
 
   // === 聊天记录持久化（刷新不丢） ===
   // 1) gameId 变化时：尝试从 localStorage 恢复该项目的聊天记录
@@ -755,6 +1077,21 @@ export default function CreateStudio({
     setMsg("");
     setInput("");
     const startAt = Date.now();
+    const runId = nowId();
+    setProcessCurrent({
+      id: runId,
+      gameId: useId,
+      mode: guessProcessMode(text),
+      provider,
+      model,
+      status: "running",
+      summary: "AI 正在准备…",
+      startedAt: startAt,
+      currentStepId: "prepare",
+      steps: [{ id: "prepare", label: "准备请求", status: "running", detail: "初始化对话与连接", startedAt: startAt }],
+      contract: null,
+      error: "",
+    });
 
     // 新的一次请求：先取消上一次（理论上不会同时存在，但以防万一）
     try {
@@ -802,7 +1139,7 @@ export default function CreateStudio({
         // 只传 user/assistant；system 由服务端统一注入
         // 传 gameId：让服务端能做“分步生成断点续跑”（哪一步失败，下次从哪一步开始）
         // mode/quality 由服务端自动判断（根据用户输入与当前工程状态）
-        body: JSON.stringify({ gameId: useId, messages: [...useBase, myMsg], provider, model }),
+        body: JSON.stringify({ gameId: useId, runId, messages: [...useBase, myMsg], provider, model }),
         signal: ac.signal,
       });
       if (!r.ok) {
@@ -817,6 +1154,7 @@ export default function CreateStudio({
         const reader = r.body.getReader();
         const dec = new TextDecoder();
         const sseState = { buf: "" };
+        const progressFallback = { runId, gameId: useId, provider, model };
         const withTime = (t: string) => {
           const sec = Math.max(1, Math.floor((Date.now() - startAt) / 1000));
           return `${t}（${sec}s）`;
@@ -864,11 +1202,25 @@ export default function CreateStudio({
               if (ev.event === "status") {
                 statusRaw = String(ev.data?.text || "AI 思考中…");
                 statusLine = withTime(statusRaw);
+                const inferred = inferStepFromStatusText(statusRaw);
+                applyProgressUpdate(
+                  {
+                    mode: inferred?.mode,
+                    stepId: inferred?.id || "status",
+                    stepLabel: inferred?.label || "处理中",
+                    status: "running",
+                    detail: summarizeStatusText(statusRaw),
+                    summary: summarizeStatusText(statusRaw),
+                    source: "status",
+                  },
+                  progressFallback,
+                );
                 paintDraft(true);
               } else if (ev.event === "meta") {
                 const p = String(ev.data?.provider || "").trim();
                 const m = String(ev.data?.model || "").trim();
                 const reason = String(ev.data?.reason || "").trim();
+                const phase = String(ev.data?.phase || "").trim();
                 if (reason && p === "deepseek") {
                   // 明确提醒用户：已回退到 DeepSeek
                   statusRaw = `已回退到 DeepSeek（${m || "deepseek-v4-flash"}）`;
@@ -877,8 +1229,67 @@ export default function CreateStudio({
                   statusRaw = `当前模型：${p} / ${m}`;
                   setCurrentModelLabel(`当前模型：${p} / ${m}`);
                 }
+                const inferred = inferStepFromPhase(phase);
+                applyProgressUpdate(
+                  {
+                    provider: p || undefined,
+                    model: m || undefined,
+                    mode: inferred?.mode,
+                    stepId: inferred?.id,
+                    stepLabel: inferred?.label,
+                    status: inferred ? "running" : undefined,
+                    detail: inferred?.label ? `进入${inferred.label}` : undefined,
+                    source: "meta",
+                  },
+                  progressFallback,
+                );
                 statusLine = withTime(statusRaw);
                 paintDraft(true);
+              } else if (ev.event === "progress") {
+                const data = (ev.data || {}) as ProgressEventPayload;
+                applyProgressUpdate(
+                  {
+                    runId: String(data.runId || runId),
+                    mode: data.mode,
+                    stepId: data.stepId,
+                    stepLabel: data.stepLabel,
+                    status: data.status,
+                    detail: data.detail,
+                    strategy: data.strategy,
+                    fileTargets: normalizeStringList(data.fileTargets),
+                    provider: String(data.provider || "").trim() || undefined,
+                    model: String(data.model || "").trim() || undefined,
+                    error: String(data.error || "").trim() || undefined,
+                    summary: data.detail,
+                    source: "progress",
+                  },
+                  progressFallback,
+                );
+              } else if (ev.event === "contract") {
+                const raw = (ev.data || {}).contract || {};
+                const contract: ProcessContract = {
+                  topic: String(raw?.topic || "").trim(),
+                  gameplay: String(raw?.gameplay || "").trim(),
+                  platform: String(raw?.platform || "").trim(),
+                  theme: String(raw?.theme || "").trim(),
+                  complexity: String(raw?.complexity || "").trim(),
+                  keyUi: normalizeStringList(raw?.keyUi),
+                  mustHave: normalizeStringList(raw?.mustHave),
+                  forbidden: normalizeStringList(raw?.forbidden),
+                };
+                applyProgressUpdate(
+                  {
+                    runId,
+                    mode: "create",
+                    stepId: "requirement_contract",
+                    stepLabel: "需求契约",
+                    status: "done",
+                    detail: "已收敛本次生成约束",
+                    contract,
+                    summary: "需求契约已确定",
+                  },
+                  progressFallback,
+                );
               } else if (ev.event === "delta") {
                 const t = String(ev.data?.text || "");
                 if (t) {
@@ -979,6 +1390,7 @@ export default function CreateStudio({
         // 重新拉一下 meta，确保与 DB 同步（例如被后端裁剪/规范化）
         loadGameMeta(useId);
       }
+      archiveProcessRun("done");
     } catch (e: any) {
       // 用户主动停止
       if (e?.name === "AbortError") {
@@ -995,6 +1407,7 @@ export default function CreateStudio({
           }
           return mm;
         });
+        archiveProcessRun("stopped");
         return;
       }
       const m = String(e?.message || "未知错误");
@@ -1028,6 +1441,7 @@ export default function CreateStudio({
         }
         return mm;
       });
+      archiveProcessRun("failed", m);
     } finally {
       setBusy(false);
       abortRef.current = null;
@@ -1225,6 +1639,122 @@ export default function CreateStudio({
             <div>
               <div className="createPanelTitle">AI 聊天</div>
               <div className="createPanelSub">描述玩法、按钮、胜负条件与画面风格</div>
+              {(processCurrent || processHistory.length) ? (
+                <div className="createProcessPanel" aria-label="AI 生成过程面板">
+                  {processCurrent ? (
+                    <details
+                      className={`processRunCard ${processCollapsed ? "isCollapsed" : ""}`}
+                      open={!processCollapsed}
+                      onToggle={(e) => setProcessCollapsed(!(e.currentTarget as HTMLDetailsElement).open)}
+                    >
+                      <summary className="processRunTop" aria-label="AI 生成过程（点击收起/展开）">
+                        <div className="processRunTitle">AI 生成过程</div>
+                        <div className="processRunBadges">
+                          <span className="processBadge">{processModeLabel(processCurrent.mode)}</span>
+                          <span className={`processBadge is-${processCurrent.status}`}>{processStatusLabel(processCurrent.status)}</span>
+                          <span className="processBadge isMuted">{formatElapsed(processCurrent.startedAt)}</span>
+                        </div>
+                        <div className="processRunMetaLine">
+                          <span>{processCurrent.provider} / {processCurrent.model}</span>
+                          {activeProcessStep?.strategy ? <span>策略：{activeProcessStep.strategy}</span> : null}
+                          {activeProcessStep?.fileTargets?.length ? <span>文件：{activeProcessStep.fileTargets.join("、")}</span> : null}
+                        </div>
+                        <div className="processRunSummary">{processCurrent.summary || "AI 正在处理…"}</div>
+                        <div className="processBar" aria-hidden="true">
+                          <span style={{ width: `${processCompletion || 12}%` }} />
+                        </div>
+                      </summary>
+                      {processCurrent.steps.length ? (
+                        <div className="processSteps">
+                          {processCurrent.steps.map((step) => (
+                            <div
+                              key={step.id}
+                              className={`processStep is-${step.status} ${processCurrent.currentStepId === step.id ? "isCurrent" : ""}`}
+                            >
+                              <div className="processStepHead">
+                                <span className="processStepDot" />
+                                <span className="processStepLabel">{step.label}</span>
+                                <span className="processStepStatus">
+                                  {step.status === "running"
+                                    ? "进行中"
+                                    : step.status === "done"
+                                      ? "完成"
+                                      : step.status === "upgraded"
+                                        ? "已升级"
+                                        : step.status === "failed"
+                                          ? "失败"
+                                          : "待处理"}
+                                </span>
+                              </div>
+                              {step.detail ? <div className="processStepDetail">{step.detail}</div> : null}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      {processCurrent.contract ? (
+                        <details className="processContractBox">
+                          <summary>查看本次需求契约</summary>
+                          <div className="processContractGrid">
+                            {processCurrent.contract.topic ? <div><strong>主题</strong><span>{processCurrent.contract.topic}</span></div> : null}
+                            {processCurrent.contract.gameplay ? <div><strong>玩法</strong><span>{processCurrent.contract.gameplay}</span></div> : null}
+                            {processCurrent.contract.platform ? <div><strong>平台</strong><span>{processCurrent.contract.platform}</span></div> : null}
+                            {processCurrent.contract.theme ? <div><strong>风格</strong><span>{processCurrent.contract.theme}</span></div> : null}
+                            {processCurrent.contract.keyUi?.length ? <div><strong>关键 UI</strong><span>{processCurrent.contract.keyUi.join("、")}</span></div> : null}
+                            {processCurrent.contract.mustHave?.length ? <div><strong>Must-have</strong><span>{processCurrent.contract.mustHave.join("；")}</span></div> : null}
+                            {processCurrent.contract.forbidden?.length ? <div><strong>禁忌项</strong><span>{processCurrent.contract.forbidden.join("；")}</span></div> : null}
+                          </div>
+                        </details>
+                      ) : null}
+                    </details>
+                  ) : null}
+
+                  {processHistory.length ? (
+                    <details className="processHistoryBox" open={!processCurrent}>
+                      <summary>最近运行记录（{processHistory.length}）</summary>
+                      <div className="processHistoryList">
+                        {processHistory.map((run) => (
+                          <details key={run.id} className="processHistoryItem">
+                            <summary>
+                              <span className="processHistoryTitle">{processModeLabel(run.mode)}</span>
+                              <span className={`processBadge is-${run.status}`}>{processStatusLabel(run.status)}</span>
+                              <span className="processHistoryMeta">{formatElapsed(run.startedAt, run.finishedAt)}</span>
+                            </summary>
+                            <div className="processHistoryBody">
+                              <div className="processHistoryMetaLine">{run.provider} / {run.model}</div>
+                              <div className="processHistorySummary">{run.summary}</div>
+                              {run.error ? <div className="processHistoryError">{run.error}</div> : null}
+                              {run.steps.length ? (
+                                <div className="processSteps isHistory">
+                                  {run.steps.map((step) => (
+                                    <div key={step.id} className={`processStep is-${step.status}`}>
+                                      <div className="processStepHead">
+                                        <span className="processStepDot" />
+                                        <span className="processStepLabel">{step.label}</span>
+                                        <span className="processStepStatus">
+                                          {step.status === "running"
+                                            ? "进行中"
+                                            : step.status === "done"
+                                              ? "完成"
+                                              : step.status === "upgraded"
+                                                ? "已升级"
+                                                : step.status === "failed"
+                                                  ? "失败"
+                                                  : "待处理"}
+                                        </span>
+                                      </div>
+                                      {step.detail ? <div className="processStepDetail">{step.detail}</div> : null}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          </details>
+                        ))}
+                      </div>
+                    </details>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
 

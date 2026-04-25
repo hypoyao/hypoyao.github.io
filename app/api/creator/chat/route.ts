@@ -34,6 +34,10 @@ const OPENROUTER_MODELS = [
   // DeepSeek V4（支持 reasoning 参数；这里会自动开“最高思考强度”）
   "deepseek/deepseek-v4-pro",
   "deepseek/deepseek-v4-flash",
+  // Tencent（OpenRouter）
+  "tencent/hy3-preview:free",
+  // ZhipuAI GLM（OpenRouter）
+  "z-ai/glm-5.1",
   // Architect / Refine（优先不用 Claude：地区/链路更容易失败）
   "anthropic/claude-sonnet-4.6",
   // Planner / Review 阶段（按需自动使用）
@@ -263,6 +267,72 @@ sprites=元素1,元素2,元素3
 ===END===
 `.trim();
 
+// 蓝图增量更新：基于“已有蓝图 design”，做最小改动更新并保持协议命名稳定。
+const BLUEPRINT_UPDATE_PROMPT = `
+你现在是“小游戏设计师（蓝图增量更新模式）”。我会给你：
+1) 当前已存在的蓝图 design（包含 meta/config/protocol/blueprint/assetsPlan）
+2) 用户新增需求
+
+你的任务：在不改动核心协议命名的前提下，把新增需求合并进蓝图。
+
+【铁律】
+1) 严禁输出任何代码（HTML/CSS/JS）。
+2) 尽量保持 protocol.dom 的 id 不变（rootId/canvasId/btnStartId/btnRestartId/btnLeftId）。
+3) 尽量保持 protocol.state.name 与 vars 不变；如果必须新增变量，只能“追加”，不要删除旧变量。
+4) 只做“最小必要修改”，避免把整个游戏换成另一个玩法。
+5) 输出必须是“蓝图分段文本协议”（key=value 行），严禁输出 JSON。
+
+【输出格式（必须严格）】
+===SECTION:meta===
+title=...
+shortDesc=...
+rules=...
+creatorName=...
+===END===
+
+===SECTION:config===
+platform=pc|mobile|both
+theme=...
+bg=#...
+accent=#...
+startText=...
+restartText=...
+（可按需补充少量 config key=value）
+===END===
+
+===SECTION:protocol===
+rootId=app
+canvasId=game
+btnStartId=btnStart
+btnRestartId=btnRestart
+btnLeftId=btnLeft
+stateName=G
+stateVars=level,score,state,speed,autoCenter
+===END===
+
+===SECTION:blueprint===
+type=A|B|C|D|E|F
+coreLoop=...
+steps=开始 | 游玩 | 结束
+winLose=...
+===END===
+
+===SECTION:assetsPlan===
+renderer=canvas|dom
+sprites=...
+===END===
+`.trim();
+
+function pushDesignHistory(metaObj: any, prevDesign: any, note: string) {
+  if (!prevDesign || typeof prevDesign !== "object") return metaObj;
+  const m = metaObj && typeof metaObj === "object" ? metaObj : {};
+  const g = (m as any)._gen && typeof (m as any)._gen === "object" ? { ...(m as any)._gen } : {};
+  const hist = Array.isArray(g.designHistory) ? g.designHistory.slice(0, 20) : [];
+  hist.unshift({ at: Date.now(), note: String(note || "").slice(0, 80), design: prevDesign });
+  g.designHistory = hist.slice(0, 8);
+  return { ...m, _gen: g };
+}
+
 
 const CODEGEN_HTML_PROMPT = `
 你是“前端小游戏页面生成器”。你会收到一份已经确认好的蓝图 JSON（其中包含 meta/config/protocol/blueprint/assetsPlan）。
@@ -378,6 +448,27 @@ function extractPlainCodeText(raw: string, languageHints: string[] = []) {
   const generic = text.match(/^\s*```[a-zA-Z0-9_-]*\s*([\s\S]*?)\s*```\s*$/i);
   if (generic?.[1]) return String(generic[1]).trim();
   return text;
+}
+
+// 通用校验：检查 index.html 内联 <script>（无 src）是否可被 JS 解析
+function validateInlineScripts(html: string) {
+  const err: string[] = [];
+  const blocks: string[] = [];
+  const re = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(String(html || "")))) {
+    const attrs = String(m[1] || "");
+    if (/src\s*=/.test(attrs)) continue;
+    const code = String(m[2] || "").trim();
+    if (code) blocks.push(code);
+  }
+  try {
+    const js = blocks.join("\n\n");
+    if (js.trim()) new Script(js);
+  } catch (e: any) {
+    err.push(`index.html 内联脚本语法错误：${String(e?.message || e)}`);
+  }
+  return err;
 }
 
 function parseSectionBlocks(raw: string) {
@@ -558,6 +649,19 @@ type TemplateProfile = {
   hint: string;
 };
 
+type RequirementContract = {
+  topic: string;
+  gameplay: string;
+  platform: string;
+  templateId: string;
+  templateLabel: string;
+  theme: string;
+  keyUi: string[];
+  mustHave: string[];
+  forbidden: string[];
+  complexity: "simple" | "complex";
+};
+
 function pickTemplateProfile(text: string): TemplateProfile {
   const t = String(text || "").toLowerCase();
   if (/(英语|英文|单词|词汇|拼写|口语|听力|跟读|quiz|word|vocab|spell|memory card)/i.test(t)) {
@@ -617,6 +721,132 @@ function buildTemplateHintBlock(seedPrompt: string, latestPrompt: string, answer
     `- 模板名称：${profile.label}\n` +
     `- 模板提示：${profile.hint}\n` +
     `- 规则：优先复用这类成熟结构，不要每次从零发明页面层级、状态切换和输入系统；但如果与用户要求冲突，以用户要求为准。\n`
+  );
+}
+
+function normalizeChecklistItems(items: string[]) {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of Array.isArray(items) ? items : []) {
+    const t = String(raw || "").trim();
+    if (!t) continue;
+    const k = t.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
+  }
+  return out.slice(0, 12);
+}
+
+function inferRequirementMustHaves(seedPrompt: string, latestPrompt: string, design: any) {
+  const text = [seedPrompt, latestPrompt, JSON.stringify(design || {})].filter(Boolean).join("\n");
+  const items: string[] = [];
+  if (/(tts|朗读|跟读|speechsynthesis|语音朗读)/i.test(text)) items.push("支持示范朗读/TTS");
+  if (/(录音|麦克风|mediarecorder|录制)/i.test(text)) items.push("支持录音");
+  if (/(评分|打分|score|85分|>=\s*85|大于85)/i.test(text)) items.push("有明确评分判定");
+  if (/(进度|存档|记住|继续学习|恢复|localstorage)/i.test(text)) items.push("保存并恢复学习进度");
+  if (/(当前句子|句子|题目|题干|文案同步|显示句子)/i.test(text)) items.push("显示当前句子/题目并随进度同步");
+  if (/(开始|开始按钮|自动开始|直接开始)/i.test(text)) items.push("有清晰的开始入口或自动开始规则");
+  if (/(重开|重新开始|restart)/i.test(text)) items.push("支持重开/重新开始");
+  if (/(进度条|progress)/i.test(text)) items.push("显示进度信息");
+  if (/(得分|分数)/i.test(text)) items.push("显示分数或结果反馈");
+  const steps = Array.isArray((design as any)?.blueprint?.steps) ? (design as any).blueprint.steps : [];
+  if (steps.length) items.push(`玩法流程保持为：${steps.slice(0, 3).join(" -> ")}`);
+  const winLose = String((design as any)?.blueprint?.winLose || "").trim();
+  if (winLose) items.push(`胜负规则：${winLose}`);
+  return normalizeChecklistItems(items);
+}
+
+function inferRequirementForbidden(seedPrompt: string, latestPrompt: string, design: any) {
+  const items = [
+    "不要引入外部库或 CDN 依赖",
+    "不要修改蓝图约定的 DOM id、关键状态名和 hooks 命名",
+    "不要把业务逻辑塞进 index.html 内联脚本",
+    "不要注入 data-ai-local-behavior 或轮询式兜底脚本",
+  ];
+  const renderer = String((design as any)?.assetsPlan?.renderer || "").trim();
+  if (renderer === "canvas") items.push("不要把 canvas 游戏重写成纯 DOM 玩法");
+  return normalizeChecklistItems(items);
+}
+
+function inferRequirementKeyUi(design: any) {
+  const protocolDom = ((design as any)?.protocol?.dom && typeof (design as any).protocol.dom === "object")
+    ? (design as any).protocol.dom
+    : {};
+  const ids = [
+    protocolDom.rootId,
+    protocolDom.canvasId,
+    protocolDom.btnStartId,
+    protocolDom.btnRestartId,
+    protocolDom.btnLeftId,
+  ]
+    .map((x: any) => String(x || "").trim())
+    .filter(Boolean);
+  return normalizeChecklistItems(ids);
+}
+
+function shouldUseTwoStepGameJs(profile: TemplateProfile, contract: RequirementContract, seedPrompt: string, latestPrompt: string) {
+  if (contract.complexity === "complex") return true;
+  const text = [seedPrompt, latestPrompt, contract.gameplay, ...contract.mustHave].join("\n");
+  if (/(录音|麦克风|tts|朗读|评分|进度|存档|恢复|状态|screen|hook|gamehooks)/i.test(text)) return true;
+  return ["quiz_words", "board_turn_based"].includes(profile.id);
+}
+
+function buildRequirementContract(
+  seedPrompt: string,
+  latestPrompt: string,
+  answers: any,
+  design: any,
+): RequirementContract {
+  const summary = [seedPrompt, latestPrompt, JSON.stringify(answers || {}), JSON.stringify(design || {})].filter(Boolean).join("\n");
+  const profile = pickTemplateProfile(summary);
+  const gameplay =
+    String((design as any)?.blueprint?.coreLoop || "").trim() ||
+    String((design as any)?.meta?.shortDesc || "").trim() ||
+    String(seedPrompt || latestPrompt || "").trim();
+  const mustHave = inferRequirementMustHaves(seedPrompt, latestPrompt, design);
+  const forbidden = inferRequirementForbidden(seedPrompt, latestPrompt, design);
+  const complexity: "simple" | "complex" =
+    /(录音|麦克风|tts|朗读|评分|进度|存档|恢复|状态|screen|hook|gamehooks|下一句|关卡|回合)/i.test(
+      [seedPrompt, latestPrompt, gameplay, mustHave.join("\n")].join("\n"),
+    ) || ["quiz_words", "board_turn_based"].includes(profile.id)
+      ? "complex"
+      : "simple";
+  return {
+    topic: String((design as any)?.meta?.title || seedPrompt || latestPrompt || "我的小游戏").trim(),
+    gameplay,
+    platform: String((design as any)?.config?.platform || "both").trim() || "both",
+    templateId: profile.id,
+    templateLabel: profile.label,
+    theme: String((design as any)?.config?.style?.theme || "卡通").trim() || "卡通",
+    keyUi: inferRequirementKeyUi(design),
+    mustHave,
+    forbidden,
+    complexity,
+  };
+}
+
+function formatRequirementContractBlock(contract: RequirementContract | null | undefined) {
+  const c = contract && typeof contract === "object" ? contract : null;
+  if (!c) return "";
+  return (
+    `【需求契约（必须严格遵守）】\n` +
+    `${JSON.stringify(
+      {
+        topic: c.topic,
+        gameplay: c.gameplay,
+        platform: c.platform,
+        templateId: c.templateId,
+        templateLabel: c.templateLabel,
+        theme: c.theme,
+        keyUi: c.keyUi,
+        complexity: c.complexity,
+      },
+      null,
+      2,
+    )}\n\n` +
+    `【must-have 清单】\n${c.mustHave.map((x) => `- ${x}`).join("\n") || "- （无）"}\n\n` +
+    `【禁忌项】\n${c.forbidden.map((x) => `- ${x}`).join("\n") || "- （无）"}\n\n`
   );
 }
 
@@ -696,6 +926,140 @@ function isSentenceLikeEditIntent(text: string) {
   );
 }
 
+function trimCodeContext(path: string, content: string) {
+  const raw = String(content || "");
+  const max = path === "index.html" ? 18000 : path === "game.js" ? 12000 : 8000;
+  if (raw.length <= max) return raw;
+  const tail = path === "index.html" ? "\n<!-- ...TRUNCATED... -->" : "\n/* ...TRUNCATED... */";
+  return raw.slice(0, max) + tail;
+}
+
+function sortCodePaths(paths: string[]) {
+  const order = ["index.html", "style.css", "game.js"];
+  return Array.from(new Set((Array.isArray(paths) ? paths : []).filter((p) => order.includes(String(p || "")))))
+    .sort((a, b) => order.indexOf(a) - order.indexOf(b));
+}
+
+function mergeCodeFiles(
+  baseFiles: Array<{ path: string; content: string }>,
+  updates: Array<{ path: string; content: string }>,
+) {
+  const merged = Array.isArray(baseFiles) ? baseFiles.map((f) => ({ path: String(f.path || ""), content: String(f.content || "") })) : [];
+  for (const u of Array.isArray(updates) ? updates : []) {
+    const p = String(u?.path || "").trim();
+    const c = String(u?.content || "");
+    if (!["index.html", "style.css", "game.js"].includes(p)) continue;
+    const idx = merged.findIndex((f) => f.path === p);
+    if (idx >= 0) merged[idx] = { path: p, content: c };
+    else merged.push({ path: p, content: c });
+  }
+  return sortCodePaths(merged.map((f) => f.path)).map((path) => merged.find((f) => f.path === path) || { path, content: "" });
+}
+
+function buildReadonlyFilesContext(
+  files: Array<{ path: string; content: string }>,
+  targetPaths: string[],
+) {
+  const deny = new Set(sortCodePaths(targetPaths));
+  const readonly = sortCodePaths((Array.isArray(files) ? files : []).map((f) => String(f?.path || "")))
+    .filter((path) => !deny.has(path))
+    .map((path) => {
+      const content = files.find((f) => f.path === path)?.content || "";
+      return { path, content: trimCodeContext(path, content) };
+    })
+    .filter((f) => String(f.content || "").trim());
+  if (!readonly.length) return "";
+  return `【只读相关文件（不要输出这些文件）】\n${JSON.stringify(readonly, null, 2)}\n\n`;
+}
+
+function collectHtmlIds(html: string) {
+  const ids = new Set<string>();
+  const re = /\bid\s*=\s*["']([^"']+)["']/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(String(html || "")))) {
+    const id = String(m[1] || "").trim();
+    if (id) ids.add(id);
+  }
+  return ids;
+}
+
+function escapeRegExp(s: string) {
+  return String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function validateStructureContracts(indexHtml: string, jsCode: string) {
+  const html = String(indexHtml || "");
+  const js = String(jsCode || "");
+  const errs: string[] = [];
+  if (!html.trim() || !js.trim()) return errs;
+
+  const htmlIds = collectHtmlIds(html);
+  const referencedIds = new Set<string>();
+  for (const re of [
+    /document\.getElementById\(\s*["']([^"']+)["']\s*\)/g,
+    /querySelector(?:All)?\(\s*["']#([^"']+)["']\s*\)/g,
+  ]) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(js))) {
+      const id = String(m[1] || "").trim();
+      if (id) referencedIds.add(id);
+    }
+  }
+  for (const id of referencedIds) {
+    if (!htmlIds.has(id)) errs.push(`game.js 引用了不存在的 DOM id：${id}`);
+  }
+
+  const idToVar = new Map<string, string>();
+  for (const re of [
+    /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*document\.getElementById\(\s*["']([^"']+)["']\s*\)/g,
+    /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*document\.querySelector\(\s*["']#([^"']+)["']\s*\)/g,
+  ]) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(js))) {
+      const varName = String(m[1] || "").trim();
+      const id = String(m[2] || "").trim();
+      if (varName && id) idToVar.set(id, varName);
+    }
+  }
+  for (const id of ["btnStart", "btnRestart", "btnPlay", "btnRecord", "btnNext", "btnLeft", "btnRight"]) {
+    const varName = idToVar.get(id);
+    if (!varName) continue;
+    const eventRe = new RegExp(`${escapeRegExp(varName)}\\s*\\.\\s*(?:addEventListener\\(\\s*["']click["']|onclick\\s*=)`, "m");
+    if (!eventRe.test(js)) errs.push(`${id} 缺少 click 事件绑定`);
+  }
+
+  if (/window\.gameHooks\s*=/.test(js)) {
+    if (!/(start|restart|setAutoStart|showCurrentSentence|setCurrentSentence)\s*[:=]/.test(js)) {
+      errs.push("window.gameHooks 缺少关键接口");
+    }
+  }
+
+  const initNames = new Set<string>();
+  for (const re of [
+    /function\s+(init|setup|bootstrap|main)\b/g,
+    /(?:const|let|var)\s+(init|setup|bootstrap|main)\s*=/g,
+  ]) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(js))) {
+      const name = String(m[1] || "").trim();
+      if (name) initNames.add(name);
+    }
+  }
+  const definesInitLike = initNames.size > 0;
+  const hasNamedInitEntry = Array.from(initNames).some((name) =>
+    new RegExp(`(?:^|[^\\w$])(?:await\\s+)?${escapeRegExp(name)}\\s*\\(\\s*\\)\\s*(?:;|\\n|$)`, "m").test(js),
+  );
+  const hasInitEntry =
+    hasNamedInitEntry ||
+    /addEventListener\(\s*["'](?:DOMContentLoaded|load)["']/.test(js) ||
+    /window\.onload\s*=/.test(js) ||
+    /\(\s*function\s*\(\s*\)\s*\{[\s\S]*\}\s*\)\s*\(\s*\)\s*;?/.test(js) ||
+    /\(\s*\(\s*\)\s*=>\s*\{[\s\S]*\}\s*\)\s*\(\s*\)\s*;?/.test(js);
+  if (definesInitLike && !hasInitEntry) errs.push("game.js 缺少明确入口调用");
+
+  return errs;
+}
+
 function pickPrimaryDirectRefinePath(
   kind: IncrementalEditProfile["kind"],
   hasSplit: boolean,
@@ -726,12 +1090,76 @@ function pickPrimaryFixPath(userIntent = "", hasSplit = true) {
   return "game.js";
 }
 
+function looksLikeStateFlowBug(userIntent = "") {
+  return /(自动开始|直接开始|开始页|当前句子|当前文本|句子|进度|状态|流程|切换|screen|下一句|下一关|同步|初始化|init|start|restart|hook|gamehooks|没反应|点击无效|事件绑定|按钮没反应|页面切换)/i.test(
+    String(userIntent || ""),
+  );
+}
+
+function looksLikeDomJsCouplingBug(userIntent = "") {
+  const intent = String(userIntent || "");
+  const domLike = /(dom|html|按钮|点击|事件|id|选择器|页面|screen|显示|隐藏|节点|元素|绑定)/i.test(intent);
+  const jsLike = /(js|脚本|逻辑|state|状态|hook|gamehooks|初始化|current|句子|进度|render|update)/i.test(intent);
+  return domLike && jsLike;
+}
+
+function looksLikeNewFeatureOrUi(userIntent = "") {
+  const intent = String(userIntent || "");
+  // “新增功能/新增 UI”通常会牵涉 index + css + js 的联动
+  return /(新增|加入|添加|增加|支持|实现|做成|加上|扩展|升级).*(功能|特性|模式|系统|界面|UI|按钮|面板|弹窗|菜单|排行榜|榜单|存档|进度|音效|音乐|皮肤|主题)/i.test(
+    intent,
+  );
+}
+
+function pickExplicitOnlyTarget(userIntent = ""): Array<"index.html" | "style.css" | "game.js"> | null {
+  const s = String(userIntent || "");
+  if (/只改.*(css|样式|style\.css)/i.test(s) || /(只|仅)(需要|想)?(改|调整).*(css|样式)/i.test(s)) return ["style.css"];
+  if (/只改.*(html|结构|页面|index\.html)/i.test(s) || /(只|仅)(需要|想)?(改|调整).*(html|页面|结构)/i.test(s)) return ["index.html"];
+  if (/只改.*(js|逻辑|game\.js)/i.test(s) || /(只|仅)(需要|想)?(改|调整).*(js|逻辑)/i.test(s)) return ["game.js"];
+  return null;
+}
+
+function pickFixTargetPaths(userIntent = "", hasSplit = true) {
+  const intent = String(userIntent || "");
+  if (!hasSplit) return ["index.html"];
+  const explicit = pickExplicitOnlyTarget(intent);
+  if (explicit) return explicit;
+  const visualLike = /(颜色|字体|圆角|阴影|背景|主题色|样式|美化|动画|动效|布局|位置|居中|右上角|左上角)/i.test(intent);
+  const htmlLike = /(按钮|标题|文案|文字|提示语|显示|隐藏|不显示|页面|弹层|浮层|遮罩|html|dom)/i.test(intent);
+  const stateFlowLike = looksLikeStateFlowBug(intent);
+  const newFeatureOrUi = looksLikeNewFeatureOrUi(intent);
+
+  // 新增功能/新增 UI：默认把三文件都纳入（除非上面 explicit 指定只改某一个文件）
+  if (newFeatureOrUi) return ["index.html", "style.css", "game.js"];
+  if (visualLike && !htmlLike && !stateFlowLike) return ["style.css"];
+  if (stateFlowLike) {
+    if (visualLike) return ["style.css", "game.js"];
+    if (htmlLike || /(页面|按钮|显示|隐藏|screen|dom)/i.test(intent)) return ["index.html", "game.js"];
+    return ["game.js"];
+  }
+  if (htmlLike) return ["index.html"];
+  return ["game.js"];
+}
+
+function chooseFixStrategy(userIntent = "", hasSplit = true): "single_file_patch" | "single_file_regen" | "multi_file_regen" {
+  const targets = pickFixTargetPaths(userIntent, hasSplit);
+  if (targets.length > 1) return "multi_file_regen";
+  if (looksLikeStateFlowBug(userIntent)) return "single_file_regen";
+  return "single_file_patch";
+}
+
 function chooseDirectPatchStrategy(
   kind: IncrementalEditProfile["kind"],
   directPaths: string[],
   userIntent = "",
-): "ops_patch" | "single_file_patch" {
+): "ops_patch" | "single_file_patch" | "single_file_regen" | "multi_file_regen" {
   const intent = String(userIntent || "");
+  const stateFlowLike = looksLikeStateFlowBug(intent);
+  const couplingLike = looksLikeDomJsCouplingBug(intent);
+  const hasDomJsPair = directPaths.includes("index.html") && directPaths.includes("game.js");
+  if ((stateFlowLike || couplingLike) && hasDomJsPair) return "multi_file_regen";
+  if (kind === "bugfix" && looksLikeStateFlowBug(intent)) return directPaths.length > 1 ? "multi_file_regen" : "single_file_regen";
+  if (kind === "behavior" && looksLikeStateFlowBug(intent)) return "single_file_regen";
   if (kind === "behavior" || kind === "bugfix") return "single_file_patch";
   if (isSentenceLikeEditIntent(intent)) return "single_file_patch";
   if (directPaths.length === 1 && directPaths[0] === "game.js") return "single_file_patch";
@@ -1088,7 +1516,7 @@ export async function POST(req: Request) {
   if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED" });
   const ownerKey = ownerKeyFromSession(sess);
 
-  let body: { messages?: Msg[]; model?: string; provider?: string; promptAddon?: string; gameId?: string; mode?: string; quality?: string };
+  let body: { messages?: Msg[]; model?: string; provider?: string; promptAddon?: string; gameId?: string; runId?: string; mode?: string; quality?: string };
   try {
     body = (await req.json()) as any;
   } catch {
@@ -1096,6 +1524,7 @@ export async function POST(req: Request) {
   }
   const gameId = String((body as any)?.gameId || "").trim();
   const safeGameId = gameId && /^[a-zA-Z0-9_-]+$/.test(gameId) ? gameId : "";
+  const requestRunId = String((body as any)?.runId || "").trim() || `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const modeRaw = String((body as any)?.mode || "auto").trim().toLowerCase(); // auto | generate | fix
   const qualityRaw = String((body as any)?.quality || "auto").trim().toLowerCase(); // auto | stable | quality
 
@@ -1412,6 +1841,24 @@ export async function POST(req: Request) {
       const sendStatus = (text: string) => send("status", { text });
       const sendMeta = (data: any) => send("meta", data);
       const sendDelta = (text: string) => send("delta", { text });
+      let progressMode: "create" | "patch" | "fix" | "clarify" | "run" = "run";
+      let progressStepId = "prepare";
+      let progressStepLabel = "准备请求";
+      const sendProgress = (data: any) => {
+        if (data?.mode) progressMode = data.mode;
+        if (data?.stepId) progressStepId = String(data.stepId);
+        if (data?.stepLabel) progressStepLabel = String(data.stepLabel);
+        send("progress", {
+          runId: requestRunId,
+          gameId: safeGameId,
+          provider,
+          model,
+          mode: progressMode,
+          at: Date.now(),
+          ...data,
+        });
+      };
+      const sendContract = (contract: any) => send("contract", { runId: requestRunId, gameId: safeGameId, contract });
       const logStep = createStepLogger(safeGameId || "no-game");
       // SSE 心跳：避免部分网关/代理在“长时间无数据”时主动断开
       const heartbeat = setInterval(() => {
@@ -1434,6 +1881,13 @@ export async function POST(req: Request) {
         const mode = modeRaw === "fix" || modeRaw === "generate" ? modeRaw : looksLikeBug ? "fix" : "generate";
         const quality =
           qualityRaw === "quality" || qualityRaw === "stable" ? qualityRaw : wantsQuality ? "quality" : "stable";
+        sendProgress({
+          mode: mode === "fix" ? "fix" : "create",
+          stepId: "route",
+          stepLabel: mode === "fix" ? "进入修复流程" : "进入生成流程",
+          status: "running",
+          detail: quality === "quality" ? "以质量优先策略处理" : "以稳定优先策略处理",
+        });
 
         // 对分步生成：每一步也做“流式输出”并把 token 增量推给前端，让用户看到进度
         const callStreamToString = async (payload: any, stepTag: string, strictJson = false, timeoutMs = 180_000) => {
@@ -1690,6 +2144,13 @@ export async function POST(req: Request) {
           const totalSteps = 1;
           const step = 1;
           sendStatus(`（${step}/${totalSteps}）修复 bug：生成最小补丁…`);
+          sendProgress({
+            mode: "fix",
+            stepId: "fix_classify",
+            stepLabel: "修复策略分析",
+            status: "running",
+            detail: "正在判断主文件和修复策略",
+          });
 
           sendMeta({ provider, model, phase: "fix", gameId: safeGameId });
 
@@ -1700,15 +2161,34 @@ export async function POST(req: Request) {
             `index.html:\n${trim(indexHtml)}\n\n` +
             `style.css:\n${trim(styleCss)}\n\n` +
             `game.js:\n${trim(gameJs)}\n`;
-          const fixSingleFilePlainFallback = async (targetPath: "index.html" | "style.css" | "game.js") => {
-            const currentContent = targetPath === "index.html" ? indexHtml : targetPath === "style.css" ? styleCss : gameJs;
+          const currentFixFilesRaw = sortCodePaths(["index.html", "style.css", "game.js"]).map((path) => ({
+            path,
+            content: path === "index.html" ? indexHtml : path === "style.css" ? styleCss : gameJs,
+          }));
+          const fixTargetPaths = pickFixTargetPaths(lastUser, true);
+          const fixStrategy = chooseFixStrategy(lastUser, true);
+          const fixSingleFilePlainFallback = async (
+            targetPath: "index.html" | "style.css" | "game.js",
+            workingFiles = currentFixFilesRaw,
+            mode: "patch" | "regen" = "patch",
+          ) => {
+            const currentContent = workingFiles.find((f) => f.path === targetPath)?.content || "";
+            const readonlyContext = buildReadonlyFilesContext(workingFiles, [targetPath]);
             const lang = targetPath === "index.html" ? "html" : targetPath === "style.css" ? "css" : "js";
+            const fileSpecificHint =
+              targetPath === "index.html"
+                ? "- 保留并校准 ./style.css 与 ./game.js 的引用，确保 DOM id 与只读相关文件一致。\n"
+                : targetPath === "style.css"
+                  ? "- 保留现有选择器命名，不要无故改类名或 id 选择器。\n"
+                  : "- 保留现有 DOM id、入口函数和关键事件绑定；如果存在 window.gameHooks，请保持关键接口一致。\n";
             const plainPrompt =
               `${SINGLE_FILE_PATCH_PROMPT}\n` +
+              `- 模式：${mode === "regen" ? "重生成目标文件" : "最小补丁修复"}。\n` +
               `- 目标文件：${targetPath}\n` +
               `- 只输出 ${targetPath} 的完整内容。\n` +
               `- 如果一定要用代码块，只能输出一个 \`\`\`${lang} ... \`\`\` 代码块。\n` +
-              `- 只修和这次 bug 直接相关的问题，不要重写整个游戏。\n`;
+              `- 只修和这次 bug 直接相关的问题，不要重写整个游戏。\n` +
+              fileSpecificHint;
             const fallbackPayload: any = {
               model,
               messages: [
@@ -1717,6 +2197,7 @@ export async function POST(req: Request) {
                   role: "user",
                   content:
                     `【Bug 描述】\n${lastUser || "（用户未提供具体 bug 描述）"}\n\n` +
+                    readonlyContext +
                     `【目标文件】\npath=${targetPath}\n${currentContent}\n`,
                 },
               ],
@@ -1735,16 +2216,80 @@ export async function POST(req: Request) {
               return String(e?.message || e || "");
             }
           };
-          const primaryFixPath = pickPrimaryFixPath(lastUser, true) as "index.html" | "style.css" | "game.js";
+          const validateFixAcceptance = (files: Array<{ path: string; content: string }>) => {
+            const merged = mergeCodeFiles(currentFixFilesRaw, files);
+            const index = merged.find((f) => f.path === "index.html")?.content || "";
+            const css = merged.find((f) => f.path === "style.css")?.content || "";
+            const js = merged.find((f) => f.path === "game.js")?.content || "";
+            const errs: string[] = validateInlineScripts(index);
+            const jsErr = validateFixStandaloneJs(js);
+            if (jsErr) errs.push(`game.js 语法错误：${jsErr}`);
+            if (String(css || "").trim() && !/href\s*=\s*["']\.\/style\.css["']/.test(index)) errs.push("index.html 未正确引用 ./style.css");
+            if (String(js || "").trim() && !/src\s*=\s*["']\.\/game\.js["']/.test(index)) errs.push("index.html 未正确引用 ./game.js");
+            errs.push(...validateStructureContracts(index, js));
+            return errs;
+          };
+          const regenerateFixTargets = async (targetPaths: string[]) => {
+            let workingFiles = mergeCodeFiles(currentFixFilesRaw, []);
+            const out: Array<{ path: string; content: string }> = [];
+            for (const path of sortCodePaths(targetPaths)) {
+              sendStatus(`（${step}/${totalSteps}）修复 bug：升级为${targetPaths.length > 1 ? "双文件" : "单文件"}重生成，当前处理 ${path}…`);
+              const content = await fixSingleFilePlainFallback(path as "index.html" | "style.css" | "game.js", workingFiles, "regen");
+              if (!content.trim()) return [];
+              workingFiles = mergeCodeFiles(workingFiles, [{ path, content }]);
+              out.push({ path, content });
+            }
+            return out;
+          };
+          const inferFixRecoveryTargets = (errs: string[]) => {
+            const targets = new Set<string>();
+            for (const err of Array.isArray(errs) ? errs : []) {
+              const msg = String(err || "");
+              if (/game\.js 语法错误|game\.js 引用了不存在的 DOM id|缺少 click 事件绑定|window\.gameHooks 缺少关键接口|game\.js 缺少明确入口调用/i.test(msg)) {
+                targets.add("game.js");
+              }
+              // game.js 引用了不存在的 DOM id，本质是“JS 与 HTML 结构不一致”，必须连同 index.html 一起修
+              if (/game\.js 引用了不存在的 DOM id/i.test(msg)) {
+                targets.add("index.html");
+              }
+              if (/index\.html 内联脚本语法错误|未正确引用 \.\/style\.css|未正确引用 \.\/game\.js/i.test(msg)) {
+                targets.add("index.html");
+              }
+              if (/style\.css/i.test(msg) && !/index\.html 未正确引用 \.\/style\.css/i.test(msg)) {
+                targets.add("style.css");
+              }
+            }
+            return sortCodePaths(Array.from(targets));
+          };
+          const primaryFixPath = (fixTargetPaths[0] || pickPrimaryFixPath(lastUser, true)) as "index.html" | "style.css" | "game.js";
 
           sendStatus(`（${step}/${totalSteps}）修复 bug：优先修主文件 ${primaryFixPath}…`);
+          sendProgress({
+            mode: "fix",
+            stepId: fixStrategy === "multi_file_regen" ? "fix_multi_regen" : fixStrategy === "single_file_regen" ? "fix_single_regen" : "fix_patch",
+            stepLabel: fixStrategy === "multi_file_regen" ? "多文件重生成" : fixStrategy === "single_file_regen" ? "单文件重生成" : "单文件补丁",
+            status: "running",
+            strategy: fixStrategy,
+            fileTargets: fixTargetPaths,
+            detail: `优先处理 ${primaryFixPath}`,
+          });
           let obj: any = null;
-          const plainContent = await fixSingleFilePlainFallback(primaryFixPath);
-          if (plainContent.trim()) {
-            obj = {
-              assistant: "已按你的要求完成这次 bug 修复。",
-              files: [{ path: primaryFixPath, content: plainContent }],
-            };
+          if (fixStrategy === "single_file_patch") {
+            const plainContent = await fixSingleFilePlainFallback(primaryFixPath, currentFixFilesRaw, "patch");
+            if (plainContent.trim()) {
+              obj = {
+                assistant: "已按你的要求完成这次 bug 修复。",
+                files: [{ path: primaryFixPath, content: plainContent }],
+              };
+            }
+          } else {
+            const regeneratedFiles = await regenerateFixTargets(fixTargetPaths);
+            if (regeneratedFiles.length) {
+              obj = {
+                assistant: fixStrategy === "multi_file_regen" ? "已按你的要求重生成相关文件并修复问题。" : "已按你的要求重生成主文件并修复问题。",
+                files: regeneratedFiles,
+              };
+            }
           }
           if (!obj) {
             const fixPayload: any = {
@@ -1776,22 +2321,36 @@ export async function POST(req: Request) {
             files: Array.isArray((obj as any).files) ? (obj as any).files : [],
           };
           parseCreatorJson(JSON.stringify(normalized));
-          const normalizedGameJs = normalized.files.find((f: any) => String((f as any)?.path || "").trim() === "game.js");
-          if (normalizedGameJs) {
-            let fixJsErr = validateFixStandaloneJs(String((normalizedGameJs as any)?.content || ""));
-            if (fixJsErr) {
-              sendStatus("这次修复后的 game.js 语法还不完整，我再自动补一次闭合…");
-              const repairedFixJs = await fixSingleFilePlainFallback("game.js");
-              if (repairedFixJs.trim()) {
-                const repairedErr = validateFixStandaloneJs(repairedFixJs);
-                logStep("fix.game_js_repair_result", { before: fixJsErr, after: repairedErr || "ok" });
-                if (!repairedErr) {
-                  (normalizedGameJs as any).content = repairedFixJs;
-                  fixJsErr = "";
-                }
-              }
+          let fixAcceptanceErrs = validateFixAcceptance(normalized.files);
+          if (fixAcceptanceErrs.length) {
+            logStep("fix.invalid_after_patch", { strategy: fixStrategy, errors: fixAcceptanceErrs });
+            const inferredTargets = inferFixRecoveryTargets(fixAcceptanceErrs);
+            const upgradeTargets =
+              inferredTargets.length
+                ? inferredTargets
+                : fixTargetPaths.length > 1
+                  ? sortCodePaths(fixTargetPaths)
+                  : [primaryFixPath];
+            sendStatus(`（${step}/${totalSteps}）修复 bug：补丁验收没通过，升级为${upgradeTargets.length > 1 ? "多文件" : "单文件"}重生成…`);
+            sendProgress({
+              mode: "fix",
+              stepId: "fix_upgrade_regen",
+              stepLabel: "升级为重生成",
+              status: "upgraded",
+              strategy: upgradeTargets.length > 1 ? "multi_file_regen" : "single_file_regen",
+              fileTargets: upgradeTargets,
+              detail: fixAcceptanceErrs.join(" | ").slice(0, 180),
+            });
+            const regeneratedFiles = await regenerateFixTargets(upgradeTargets);
+            if (!regeneratedFiles.length) {
+              throw new Error(`FIXER_INVALID_FILES:${fixAcceptanceErrs.join(" | ").slice(0, 300)}`);
             }
-            if (fixJsErr) throw new Error(`FIXER_INVALID_JS:${fixJsErr}`);
+            normalized.files = regeneratedFiles;
+            fixAcceptanceErrs = validateFixAcceptance(normalized.files);
+            if (fixAcceptanceErrs.length) {
+              throw new Error(`FIXER_INVALID_FILES:${fixAcceptanceErrs.join(" | ").slice(0, 300)}`);
+            }
+            logStep("fix.recovered_by_regen", { upgradeTargets, files: regeneratedFiles });
           }
 
           // 可选：服务端也写一份，确保断点续跑时立即生效（前端也会再写一次）
@@ -1803,6 +2362,14 @@ export async function POST(req: Request) {
             }
           } catch {}
           logStep("fix.persist", normalized);
+          sendProgress({
+            mode: "fix",
+            stepId: "fix_validate",
+            stepLabel: "强验收与落库",
+            status: "done",
+            fileTargets: normalized.files.map((f: any) => String(f?.path || "").trim()).filter(Boolean),
+            detail: "修复结果已通过验收并写回草稿",
+          });
 
           send("final", { ok: true, content: JSON.stringify(normalized), repaired: false });
           clearInterval(heartbeat);
@@ -1849,22 +2416,19 @@ export async function POST(req: Request) {
               },
             });
 
-            const validateScripts = (html: string, jsExtra = "") => {
+            const validateInlineScripts = (html: string) => {
               const err: string[] = [];
-              const jsFromHtml = (h: string) => {
-                if (!h) return "";
-                const blocks: string[] = [];
-                const re = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
-                let m: RegExpExecArray | null;
-                while ((m = re.exec(h))) {
-                  const attrs = String(m[1] || "");
-                  if (/src\s*=/.test(attrs)) continue;
-                  blocks.push(String(m[2] || ""));
-                }
-                return blocks.join("\n\n");
-              };
+              const blocks: string[] = [];
+              const re = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
+              let m: RegExpExecArray | null;
+              while ((m = re.exec(String(html || "")))) {
+                const attrs = String(m[1] || "");
+                if (/src\s*=/.test(attrs)) continue;
+                const code = String(m[2] || "").trim();
+                if (code) blocks.push(code);
+              }
               try {
-                const js = [jsFromHtml(html), String(jsExtra || "")].filter(Boolean).join("\n\n");
+                const js = blocks.join("\n\n");
                 if (js.trim()) new Script(js);
               } catch (e: any) {
                 err.push(`index.html 内联脚本语法错误：${String(e?.message || e)}`);
@@ -1902,19 +2466,18 @@ export async function POST(req: Request) {
             const validateAcceptanceSimple = (files: Array<{ path: string; content: string }>) => {
               const index = files.find((f) => f.path === "index.html")?.content || "";
               const js = files.find((f) => f.path === "game.js")?.content || "";
-              const errs = validateScripts(index, js);
+              const errs = validateInlineScripts(index);
+              const jsErr = validateStandaloneJs(js);
+              if (jsErr) errs.push(`game.js 语法错误：${jsErr}`);
               const hasCss = !!files.find((f) => f.path === "style.css")?.content;
               const hasJs = !!js.trim();
               if (hasCss && !/href\s*=\s*["']\.\/style\.css["']/.test(index)) errs.push("index.html 未正确引用 ./style.css");
               if (hasJs && !/src\s*=\s*["']\.\/game\.js["']/.test(index)) errs.push("index.html 未正确引用 ./game.js");
+              errs.push(...validateStructureContracts(index, js));
               return errs;
             };
             const trimRefineFile = (path: string, content: string) => {
-              const raw = String(content || "");
-              const max = path === "index.html" ? 18000 : path === "game.js" ? 12000 : 8000;
-              if (raw.length <= max) return raw;
-              const tail = path === "index.html" ? "\n<!-- ...TRUNCATED... -->" : "\n/* ...TRUNCATED... */";
-              return raw.slice(0, max) + tail;
+              return trimCodeContext(path, content);
             };
             const repairFilesJson = async (rawText: string) =>
               await repairJsonObject(
@@ -1937,13 +2500,23 @@ export async function POST(req: Request) {
               currentContent: string,
               promptText: string,
               taskHint: string,
+              readonlyContext = "",
+              mode: "patch" | "regen" = "patch",
             ) => {
               const lang = targetPath.endsWith(".js") ? "js" : targetPath.endsWith(".css") ? "css" : "html";
+              const fileSpecificHint =
+                targetPath === "index.html"
+                  ? "- index.html 只负责页面结构与资源引用。不要新增业务内联脚本；交互逻辑保留在 ./game.js。\n- 保留并校准 ./style.css 与 ./game.js 的引用，确保 DOM id 与只读相关文件一致。\n"
+                  : targetPath.endsWith(".css")
+                    ? "- 保留现有选择器命名，不要无故改类名或 id 选择器。\n"
+                    : "- 保留现有 DOM id、入口函数和关键事件绑定；如果存在 window.gameHooks，请保持关键接口一致。\n";
               const plainPrompt =
                 `${SINGLE_FILE_PATCH_PROMPT}\n` +
+                `- 模式：${mode === "regen" ? "重生成目标文件" : "最小补丁修复"}。\n` +
                 `- 目标文件：${targetPath}\n` +
                 `- 只输出 ${targetPath} 的完整内容。\n` +
                 `- 如果一定要用代码块，只能输出一个 \`\`\`${lang} ... \`\`\` 代码块。\n` +
+                fileSpecificHint +
                 `${taskHint ? `- 任务提示：${taskHint}\n` : ""}`;
               const payload: any = {
                 model,
@@ -1953,6 +2526,7 @@ export async function POST(req: Request) {
                     role: "user",
                     content:
                       `【最早主题】\n${seedPrompt}\n\n` +
+                      readonlyContext +
                       `【当前文件】\npath=${targetPath}\n${currentContent}\n\n` +
                       `【本次修改指令】\n${promptText}\n`,
                   },
@@ -1963,39 +2537,6 @@ export async function POST(req: Request) {
               if (provider === "openrouter" && payloadBase.provider) payload.provider = payloadBase.provider;
               const out = await callStreamRobust(payload, `直接补丁：${targetPath} 纯代码`, false, 45_000);
               return extractPlainCodeText(out, [lang, targetPath.endsWith(".js") ? "javascript" : lang]);
-            };
-            const healDirectFiles = async (files: Array<{ path: string; content: string }>, errMsg: string) => {
-              sendMeta({ provider, model, phase: "direct_refine_debug" });
-              const debugPayload: any = {
-                model,
-                messages: [
-                  { role: "system", content: DEBUG_PROMPT },
-                  {
-                    role: "user",
-                    content:
-                      `【错误】\n${errMsg}\n\n` +
-                      `【当前文件】\n${JSON.stringify(files, null, 2)}\n\n` +
-                      `请输出修复后的 files（保持最小改动）。`,
-                  },
-                ],
-                temperature: 0.1,
-                max_tokens: 1400,
-                response_format: { type: "json_object" },
-              };
-              if (provider === "openrouter" && payloadBase.provider) debugPayload.provider = payloadBase.provider;
-              const debugText = await callStreamRobust(debugPayload, "直接补丁：修复校验问题", true, 60_000);
-              const debugObj = parseJsonObjectLoose(debugText);
-              const outFiles = Array.isArray((debugObj as any)?.files) ? (debugObj as any).files : [];
-              const merged = files.slice();
-              for (const f of outFiles) {
-                const p = String((f as any)?.path || "").trim();
-                const c = String((f as any)?.content || "");
-                if (!["index.html", "style.css", "game.js"].includes(p) || !c.trim()) continue;
-                const idx = merged.findIndex((x) => x.path === p);
-                if (idx >= 0) merged[idx] = { path: p, content: c };
-                else merged.push({ path: p, content: c });
-              }
-              return merged;
             };
 
             // 选择模型：始终优先使用前端“彩蛋”中用户选择的 provider/model（请求 body 传入的 model）。
@@ -2077,6 +2618,15 @@ export async function POST(req: Request) {
               const directPaths = pickDirectRefinePaths(editProfile.kind, hasCompleteSplitGame, userIntent);
               const primaryDirectPath = pickPrimaryDirectRefinePath(editProfile.kind, hasCompleteSplitGame, userIntent);
               const directPatchStrategy = chooseDirectPatchStrategy(editProfile.kind, directPaths, userIntent);
+              sendProgress({
+                mode: "patch",
+                stepId: "direct_refine_strategy",
+                stepLabel: "小改动策略分析",
+                status: "running",
+                strategy: directPatchStrategy,
+                fileTargets: directPaths,
+                detail: editProfile.hint,
+              });
               const currentFiles = currentFilesRaw
                 .filter((f) => directPaths.includes(f.path))
                 .map((f) => ({ path: f.path, content: trimRefineFile(f.path, f.content) }));
@@ -2098,17 +2648,77 @@ export async function POST(req: Request) {
                     `- 不要新增独立的开始页逻辑，不要重写 index.html，不要通过注入大段兜底脚本来绕过现有代码。\n` +
                     `- 如果要“自动开始”，请直接复用现有 start/init 流程；如果要“按进度显示当前句子”，请在现有状态更新里同步文案。\n`
                   : "";
+              const regenerateDirectTargets = async (targetPaths: string[]) => {
+                let workingFiles = mergeCodeFiles(currentFilesRaw, []);
+                const out: Array<{ path: string; content: string }> = [];
+                for (const path of sortCodePaths(targetPaths)) {
+                  const currentTarget = workingFiles.find((f) => f.path === path)?.content || "";
+                  const readonlyContext = buildReadonlyFilesContext(workingFiles, [path]);
+                  sendStatus(`这次小改动升级为${targetPaths.length > 1 ? "双文件" : "单文件"}重生成，当前处理 ${path}…`);
+                  const plainContent = await directSingleFilePlainFallback(path, currentTarget, userIntent, refineTaskHint, readonlyContext, "regen");
+                  if (!plainContent.trim()) return [];
+                  workingFiles = mergeCodeFiles(workingFiles, [{ path, content: plainContent }]);
+                  out.push({ path, content: plainContent });
+                }
+                return out;
+              };
+              const inferDirectRecoveryTargets = (errs: string[]) => {
+                const targets = new Set<string>();
+                for (const err of Array.isArray(errs) ? errs : []) {
+                  const msg = String(err || "");
+                  if (
+                    /index\.html\s*内联脚本语法错误|未正确引用 \.\/style\.css|未正确引用 \.\/game\.js/i.test(msg)
+                  ) {
+                    targets.add("index.html");
+                  }
+                  if (
+                    /game\.js 语法错误|game\.js 引用了不存在的 DOM id|缺少 click 事件绑定|window\.gameHooks 缺少关键接口|game\.js 缺少明确入口调用/i.test(
+                      msg,
+                    )
+                  ) {
+                    targets.add("game.js");
+                  }
+                  // game.js 引用了不存在的 DOM id => 必须补 HTML 结构
+                  if (/game\.js 引用了不存在的 DOM id/i.test(msg)) {
+                    targets.add("index.html");
+                  }
+                  if (/style\.css/i.test(msg) && !/index\.html 未正确引用 \.\/style\.css/i.test(msg)) {
+                    targets.add("style.css");
+                  }
+                }
+                return sortCodePaths(Array.from(targets));
+              };
 
               let refineObj: any = null;
-              if (directPatchStrategy === "single_file_patch") {
+              if (directPatchStrategy === "single_file_patch" || directPatchStrategy === "single_file_regen") {
                 const targetPath = directPaths.includes(primaryDirectPath) ? primaryDirectPath : directPaths[0];
                 const currentTarget = currentFilesRaw.find((f) => f.path === targetPath)?.content || "";
-                sendStatus(`这次小改动走“单文件补丁”模式，优先修改 ${targetPath}…`);
-                const plainContent = await directSingleFilePlainFallback(targetPath, currentTarget, userIntent, refineTaskHint);
+                const readonlyContext = buildReadonlyFilesContext(currentFilesRaw, [targetPath]);
+                sendStatus(
+                  directPatchStrategy === "single_file_regen"
+                    ? `这次小改动升级为“单文件重生成”模式，优先修改 ${targetPath}…`
+                    : `这次小改动走“单文件补丁”模式，优先修改 ${targetPath}…`,
+                );
+                const plainContent = await directSingleFilePlainFallback(
+                  targetPath,
+                  currentTarget,
+                  userIntent,
+                  refineTaskHint,
+                  readonlyContext,
+                  directPatchStrategy === "single_file_regen" ? "regen" : "patch",
+                );
                 if (plainContent.trim()) {
                   refineObj = {
                     assistant: "已按你的要求完成这次小改动。",
                     files: [{ path: targetPath, content: plainContent }],
+                  };
+                }
+              } else if (directPatchStrategy === "multi_file_regen") {
+                const regeneratedFiles = await regenerateDirectTargets(directPaths);
+                if (regeneratedFiles.length) {
+                  refineObj = {
+                    assistant: "已按你的要求重生成相关文件并完成修复。",
+                    files: regeneratedFiles,
                   };
                 }
               } else {
@@ -2156,8 +2766,9 @@ export async function POST(req: Request) {
                 if (!refineObj) {
                   const targetPath = directPaths.includes(primaryDirectPath) ? primaryDirectPath : directPaths[0];
                   const currentTarget = currentFilesRaw.find((f) => f.path === targetPath)?.content || "";
+                  const readonlyContext = buildReadonlyFilesContext(currentFilesRaw, [targetPath]);
                   sendStatus(`这次小改动的 JSON 不稳定，我改用“主文件纯代码”方式再试一次…`);
-                  const plainContent = await directSingleFilePlainFallback(targetPath, currentTarget, userIntent, refineTaskHint);
+                  const plainContent = await directSingleFilePlainFallback(targetPath, currentTarget, userIntent, refineTaskHint, readonlyContext);
                   if (plainContent.trim()) {
                     refineObj = {
                       assistant: "已按你的要求完成这次小改动。",
@@ -2179,9 +2790,19 @@ export async function POST(req: Request) {
               if (!outFiles.length && outOps.length && !appliedOpsChanged) {
                 const targetPath = directPaths.includes(primaryDirectPath) ? primaryDirectPath : directPaths[0];
                 const currentTarget = currentFilesRaw.find((f) => f.path === targetPath)?.content || "";
+                const readonlyContext = buildReadonlyFilesContext(currentFilesRaw, [targetPath]);
                 logStep("direct_refine.ops_no_match", { targetPath, ops: outOps });
                 sendStatus(`这次补丁锚点没有命中当前代码，我改用“主文件纯代码”方式再试一次…`);
-                const plainContent = await directSingleFilePlainFallback(targetPath, currentTarget, userIntent, refineTaskHint);
+                sendProgress({
+                  mode: "patch",
+                  stepId: "direct_refine_upgrade",
+                  stepLabel: "升级为主文件补丁",
+                  status: "upgraded",
+                  strategy: "single_file_patch",
+                  fileTargets: [targetPath],
+                  detail: "ops 锚点未命中当前代码",
+                });
+                const plainContent = await directSingleFilePlainFallback(targetPath, currentTarget, userIntent, refineTaskHint, readonlyContext);
                 if (plainContent.trim()) {
                   files = currentFilesRaw.map((f) => (f.path === targetPath ? { path: targetPath, content: plainContent } : f));
                 } else {
@@ -2196,21 +2817,48 @@ export async function POST(req: Request) {
                 if (idx >= 0) files[idx] = { path: p, content: c };
                 else files.push({ path: p, content: c });
               }
-              const acceptanceErrs = validateAcceptanceSimple(
-                files.filter((f) => ["index.html", "style.css", "game.js"].includes(f.path)),
-              );
-              if (acceptanceErrs.length) {
-                files = await healDirectFiles(
-                  files.filter((f) => ["index.html", "style.css", "game.js"].includes(f.path)),
-                  acceptanceErrs.join("\n"),
-                );
-              }
-              const finalAcceptanceErrs = validateAcceptanceSimple(
+              let finalAcceptanceErrs = validateAcceptanceSimple(
                 files.filter((f) => ["index.html", "style.css", "game.js"].includes(f.path)),
               );
               if (finalAcceptanceErrs.length) {
-                logStep("direct_refine.invalid_after_heal", finalAcceptanceErrs);
-                throw new Error(`DIRECT_REFINE_INVALID_FILES:${finalAcceptanceErrs.join(" | ").slice(0, 300)}`);
+                logStep("direct_refine.invalid_after_patch", { strategy: directPatchStrategy, errors: finalAcceptanceErrs });
+                const inferredTargets = inferDirectRecoveryTargets(finalAcceptanceErrs);
+                const recoveryTargets = inferredTargets.length
+                  ? inferredTargets
+                  : directPatchStrategy === "multi_file_regen"
+                    ? sortCodePaths(directPaths)
+                    : (looksLikeStateFlowBug(userIntent) || looksLikeDomJsCouplingBug(userIntent)) && directPaths.includes("index.html") && directPaths.includes("game.js")
+                      ? ["index.html", "game.js"]
+                      : [directPaths.includes(primaryDirectPath) ? primaryDirectPath : directPaths[0]];
+                if (recoveryTargets.length) {
+                  sendStatus(`这次补丁验收没通过，升级为${recoveryTargets.length > 1 ? "多文件" : "单文件"}重生成…`);
+                  sendProgress({
+                    mode: "patch",
+                    stepId: "direct_refine_validate",
+                    stepLabel: "强验收与恢复",
+                    status: "upgraded",
+                    strategy: recoveryTargets.length > 1 ? "multi_file_regen" : "single_file_regen",
+                    fileTargets: recoveryTargets,
+                    detail: finalAcceptanceErrs.join(" | ").slice(0, 180),
+                  });
+                  const regenerated = await regenerateDirectTargets(recoveryTargets);
+                  if (regenerated.length) {
+                    files = mergeCodeFiles(files, regenerated);
+                    finalAcceptanceErrs = validateAcceptanceSimple(
+                      files.filter((f) => ["index.html", "style.css", "game.js"].includes(f.path)),
+                    );
+                    if (!finalAcceptanceErrs.length) {
+                      logStep("direct_refine.recovered_by_regen", { recoveryTargets, regenerated });
+                    } else {
+                      logStep("direct_refine.recovery_failed", finalAcceptanceErrs);
+                      throw new Error(`DIRECT_REFINE_INVALID_FILES:${finalAcceptanceErrs.join(" | ").slice(0, 300)}`);
+                    }
+                  } else {
+                    throw new Error(`DIRECT_REFINE_INVALID_FILES:${finalAcceptanceErrs.join(" | ").slice(0, 300)}`);
+                  }
+                } else {
+                  throw new Error(`DIRECT_REFINE_INVALID_FILES:${finalAcceptanceErrs.join(" | ").slice(0, 300)}`);
+                }
               }
               for (const f of files) {
                 if (!["index.html", "style.css", "game.js"].includes(f.path)) continue;
@@ -2219,6 +2867,15 @@ export async function POST(req: Request) {
               logStep("direct_refine.persist", { files, ops: outOps, changed: appliedOpsChanged });
               const metaNow = (await readMetaObj()) || readMeta || {};
               await setLastGood(metaNow, files, "after_direct_refine");
+              sendProgress({
+                mode: "patch",
+                stepId: "direct_refine_validate",
+                stepLabel: "强验收与落库",
+                status: "done",
+                strategy: directPatchStrategy,
+                fileTargets: files.map((f) => f.path),
+                detail: "小改动已通过验收并写回草稿",
+              });
               const finalObj = {
                 assistant: String((refineObj as any)?.assistant || "已按你的要求完成这次小改动。").trim(),
                 meta: metaNow,
@@ -2324,6 +2981,13 @@ export async function POST(req: Request) {
             if (!stage && isVague) {
               sendStatus(`（1/3）需求澄清：给出 3 个方向供你选择（${provider} / ${mvpModel}）…`);
               sendMeta({ provider, model, phase: "clarify" });
+              sendProgress({
+                mode: "clarify",
+                stepId: "clarify",
+                stepLabel: "需求澄清",
+                status: "running",
+                detail: "正在生成可选方向与补充问题",
+              });
               const payloadClarify: any = {
                 model,
                 messages: [
@@ -2575,15 +3239,30 @@ export async function POST(req: Request) {
             let activeConfig = genState && typeof genState === "object" && (genState as any).config ? (genState as any).config : null;
             const answers = (genState as any)?.answers && typeof (genState as any).answers === "object" ? (genState as any).answers : {};
             let design = (genState as any)?.design && typeof (genState as any).design === "object" ? (genState as any).design : null;
+            let requirementContract =
+              (genState as any)?.requirementContract && typeof (genState as any).requirementContract === "object"
+                ? ((genState as any).requirementContract as RequirementContract)
+                : null;
             const templateHint = buildTemplateHintBlock(seedPrompt, userIntent, answers);
             logStep("generation.enter", {
               stage,
               hasDesign: !!design,
+              hasRequirementContract: !!requirementContract,
               hasActiveConfig: !!activeConfig,
               provider,
               model,
               quality,
             });
+
+            const shouldUpdateBlueprintFromUserIntent = (t: string) => {
+              const s = String(t || "").trim();
+              if (!s) return false;
+              if (/不(要|用)改蓝图|别改蓝图|保持蓝图不变/i.test(s)) return false;
+              // 明显是“新增/改规则/加功能”类指令：允许更新蓝图（但必须保留旧蓝图历史）
+              return /(新增|加入|添加|增加|支持|改成|改为|规则|玩法|排行榜|榜单|存档|进度|背景|关卡|模式|控制|按键|重力|UI|界面|音效|音乐|难度)/i.test(
+                s,
+              );
+            };
             const repairBlueprintProtocol = async (rawText: string) => {
               const clipped = String(rawText || "").slice(0, 12000);
               const repairPayload: any = {
@@ -2612,11 +3291,24 @@ export async function POST(req: Request) {
             const markCodePending = async () => {
               const nextMeta = {
                 ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
-                _gen: { ...(genState || {}), stage: "code_pending", seedPrompt, answers, config: activeConfig, design, updatedAt: Date.now() },
+                _gen: {
+                  ...(genState || {}),
+                  stage: "code_pending",
+                  seedPrompt,
+                  answers,
+                  config: activeConfig,
+                  design,
+                  requirementContract,
+                  updatedAt: Date.now(),
+                },
               };
               try {
                 await writeMeta(nextMeta);
-                logStep("generation.stage.code_pending", { stage: "code_pending", hasDesign: !!design });
+                logStep("generation.stage.code_pending", {
+                  stage: "code_pending",
+                  hasDesign: !!design,
+                  hasRequirementContract: !!requirementContract,
+                });
               } catch (e: any) {
                 logStep("generation.stage.code_pending_failed", String(e?.message || e));
               }
@@ -2635,6 +3327,13 @@ export async function POST(req: Request) {
 
               sendStatus(`（1/5）生成蓝图（${provider} / ${mvpModel}）…`);
               sendMeta({ provider, model, phase: "blueprint" });
+              sendProgress({
+                mode: "create",
+                stepId: "blueprint",
+                stepLabel: "蓝图",
+                status: "running",
+                detail: "正在收敛玩法协议与命名约束",
+              });
 
               const bpPayload: any = {
                 model,
@@ -2678,24 +3377,165 @@ export async function POST(req: Request) {
               const metaBp = parsedBlueprint.meta;
               const cfgBp = parsedBlueprint.config || activeConfig || {};
               activeConfig = cfgBp;
+              requirementContract = buildRequirementContract(seedPrompt, userIntent, answers, design);
               logStep("blueprint.parsed", {
                 meta: metaBp,
                 configKeys: Object.keys(activeConfig || {}),
                 protocolKeys: Object.keys((design as any)?.protocol || {}),
                 blueprintKeys: Object.keys((design as any)?.blueprint || {}),
+                requirementContract,
+              });
+              sendProgress({
+                mode: "create",
+                stepId: "blueprint",
+                stepLabel: "蓝图",
+                status: "done",
+                detail: "蓝图已生成",
               });
               await writeMeta({
                 ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
                 ...metaBp,
-                _gen: { ...(genState || {}), stage: "code_pending", seedPrompt, answers, config: activeConfig, design, updatedAt: Date.now() },
+                _gen: {
+                  ...(genState || {}),
+                  stage: "code_pending",
+                  seedPrompt,
+                  answers,
+                  config: activeConfig,
+                  design,
+                  requirementContract,
+                  updatedAt: Date.now(),
+                },
+              });
+            };
+
+            const updateBlueprintStep = async () => {
+              if (!design) return;
+              const prev = design;
+
+              // 先把旧蓝图存档（避免“改蓝图”把历史丢了）
+              try {
+                await writeMeta(
+                  pushDesignHistory(
+                    {
+                      ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
+                      _gen: { ...(genState || {}), stage: "blueprint_pending", seedPrompt, config: activeConfig, answers, design, updatedAt: Date.now() },
+                    },
+                    prev,
+                    "before_blueprint_update",
+                  ),
+                );
+              } catch {}
+
+              sendStatus(`（1/5）更新蓝图（增量）（${provider} / ${mvpModel}）…`);
+              sendMeta({ provider, model, phase: "blueprint_update" });
+              sendProgress({
+                mode: "create",
+                stepId: "blueprint_update",
+                stepLabel: "蓝图（增量）",
+                status: "running",
+                detail: "正在把新增需求合并进蓝图（保留旧蓝图历史）",
+              });
+
+              const bpPayload: any = {
+                model,
+                messages: [
+                  { role: "system", content: `${baseSystemPrompt}\n\n${CREATOR_GAME_TYPE_LIBRARY_ADDON}\n\n${BLUEPRINT_UPDATE_PROMPT}` },
+                  {
+                    role: "user",
+                    content:
+                      `【当前蓝图 design（必须尽量保持命名稳定）】\n${JSON.stringify(prev, null, 2)}\n\n` +
+                      `【用户新增需求/本轮输入】\n${userIntent}\n\n` +
+                      `${templateHint}\n` +
+                      `请输出更新后的蓝图分段文本协议（meta/config/protocol/blueprint/assetsPlan），不要输出 JSON。`,
+                  },
+                ],
+                temperature: 0.15,
+                max_tokens: 1100,
+              };
+              if (provider === "openrouter" && payloadBase.provider) bpPayload.provider = payloadBase.provider;
+
+              const bpText = await autoRetry(
+                async () => await callStreamRobust(bpPayload, "阶段2：蓝图（增量更新）", false, 90_000),
+                "蓝图（增量）",
+                "严格按 ===SECTION:...=== / ===END=== 输出 5 段 key=value 文本协议，严禁输出代码。",
+                2,
+              );
+              logStep("blueprint_update.raw", bpText);
+
+              let sec = parseSectionBlocks(bpText);
+              if (!sec) {
+                const repaired = await repairBlueprintProtocol(bpText);
+                logStep("blueprint_update.repaired", repaired);
+                sec = parseSectionBlocks(repaired);
+              }
+              if (!sec) throw new Error("BLUEPRINT_UPDATE_PROTOCOL_INVALID");
+
+              const parsedBlueprint = parseBlueprintSectionProtocol(sec, activeConfig, (prev as any)?.meta || readMeta);
+              if (!parsedBlueprint) throw new Error("BLUEPRINT_UPDATE_PROTOCOL_PARSE_FAILED");
+
+              design = parsedBlueprint;
+              activeConfig = parsedBlueprint.config || activeConfig || {};
+              requirementContract = buildRequirementContract(seedPrompt, userIntent, answers, design);
+
+              const nextMeta = pushDesignHistory(
+                {
+                  ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
+                  ...parsedBlueprint.meta,
+                  _gen: {
+                    ...(genState || {}),
+                    stage: "code_pending",
+                    seedPrompt,
+                    answers,
+                    config: activeConfig,
+                    design,
+                    requirementContract,
+                    updatedAt: Date.now(),
+                  },
+                },
+                prev,
+                "after_blueprint_update",
+              );
+              await writeMeta(nextMeta);
+
+              sendProgress({
+                mode: "create",
+                stepId: "blueprint_update",
+                stepLabel: "蓝图（增量）",
+                status: "done",
+                detail: "蓝图已更新并保存历史",
               });
             };
             if (!design && stage !== "code_pending") await generateBlueprintStep();
+            if (!design && stage !== "code_pending") await generateBlueprintStep();
+            else if (design && mode === "generate" && shouldUpdateBlueprintFromUserIntent(userIntent)) await updateBlueprintStep();
 
-            // 2) 代码生成：先出 index.html，再出 style.css，最后单独出 game.js
+
+            // 2) 代码生成：需求契约 -> index.html -> style.css -> game.js
             // 避免把 index.html + style.css 塞进同一个 JSON，降低在第二个文件附近截断的概率。
             // 落盘：进入 code_pending，确保重试时复用同一份蓝图（同源，不漂移）
             await markCodePending();
+            sendStatus(`（2/${requirementContract?.complexity === "complex" ? 6 : 5}）收敛需求契约…`);
+            logStep("requirement_contract.ready", requirementContract);
+            sendProgress({
+              mode: "create",
+              stepId: "requirement_contract",
+              stepLabel: "需求契约",
+              status: "running",
+              detail: "正在固化主题、玩法、关键 UI 与 must-have",
+            });
+            if (requirementContract) sendContract(requirementContract);
+            const requirementContractBlock = formatRequirementContractBlock(requirementContract);
+            const gameJsTwoStep = shouldUseTwoStepGameJs(
+              {
+                id: String(requirementContract?.templateId || "generic_arcade"),
+                label: String(requirementContract?.templateLabel || "通用轻量模板"),
+                hint: "",
+              },
+              requirementContract || buildRequirementContract(seedPrompt, userIntent, answers, design),
+              seedPrompt,
+              userIntent,
+            );
+            const generationTotalSteps = gameJsTwoStep ? 6 : 5;
 
             const tryRepairJsonOnce = async (raw: string, why: string, schemaHint: string) => {
               const rawText = String(raw || "");
@@ -2757,8 +3597,16 @@ export async function POST(req: Request) {
               return (await tryRepairJsonOnce(rawText, `MISSING_${requiredPaths.join("_")}`, schemaHint)) || obj;
             };
             const generateHtmlStep = async () => {
-              sendStatus(`（2/5）生成页面结构（${provider} / ${mvpModel}）…`);
+              sendStatus(`（3/${generationTotalSteps}）生成页面结构（${provider} / ${mvpModel}）…`);
               sendMeta({ provider, model, phase: "codegen_html" });
+              sendProgress({
+                mode: "create",
+                stepId: "html",
+                stepLabel: "页面结构",
+                status: "running",
+                fileTargets: ["index.html"],
+                detail: "生成 index.html",
+              });
               const htmlPayload: any = {
                 model,
                 messages: [
@@ -2768,6 +3616,7 @@ export async function POST(req: Request) {
                     content:
                       `【用户最早的主题】\n${seedPrompt}\n\n` +
                       `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
+                      requirementContractBlock +
                       `${templateHint}\n` +
                       `请只输出 index.html 纯文本，不要输出 JSON。`,
                   },
@@ -2817,12 +3666,28 @@ export async function POST(req: Request) {
                   JSON.stringify(htmlWrite.failed),
                 );
               }
+              sendProgress({
+                mode: "create",
+                stepId: "html",
+                stepLabel: "页面结构",
+                status: "done",
+                fileTargets: ["index.html"],
+                detail: "index.html 已生成并落库",
+              });
               const stepMeta = safeMeta((design as any)?.meta || (readMeta as any) || {});
               return { meta: stepMeta, html };
             };
             const generateCssStep = async (html: string) => {
-              sendStatus(`（3/5）生成页面样式（${provider} / ${mvpModel}）…`);
+              sendStatus(`（4/${generationTotalSteps}）生成页面样式（${provider} / ${mvpModel}）…`);
               sendMeta({ provider, model, phase: "codegen_css" });
+              sendProgress({
+                mode: "create",
+                stepId: "css",
+                stepLabel: "页面样式",
+                status: "running",
+                fileTargets: ["style.css"],
+                detail: "生成 style.css",
+              });
               const cssPayload: any = {
                 model,
                 messages: [
@@ -2832,6 +3697,7 @@ export async function POST(req: Request) {
                     content:
                       `【用户最早的主题】\n${seedPrompt}\n\n` +
                       `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
+                      requirementContractBlock +
                       `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }], null, 2)}\n\n` +
                       `${templateHint}\n` +
                       `请只输出 style.css 纯文本，不要输出 JSON。`,
@@ -2881,111 +3747,189 @@ export async function POST(req: Request) {
                   JSON.stringify(cssWrite.failed),
                 );
               }
+              sendProgress({
+                mode: "create",
+                stepId: "css",
+                stepLabel: "页面样式",
+                status: "done",
+                fileTargets: ["style.css"],
+                detail: "style.css 已生成并落库",
+              });
               return { css: cssContent };
             };
             const generateGameJsStep = async (html: string, css: string) => {
-              sendStatus(`（4/5）生成核心逻辑骨架（${provider} / ${mvpModel}）…`);
-              sendMeta({ provider, model, phase: "codegen_game_js_skeleton" });
-              const gameJsSkeletonPayload: any = {
-                model,
-                messages: [
-                  { role: "system", content: `${baseSystemPrompt}\n\n${CODEGEN_GAMEJS_SKELETON_PROMPT}` },
-                  {
-                    role: "user",
-                    content:
-                      `【用户最早的主题】\n${seedPrompt}\n\n` +
-                      `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
-                      `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }, { path: "style.css", content: css }], null, 2)}\n\n` +
-                      `${templateHint}\n` +
-                      `请先输出一个结构完整、函数齐全、带启动入口的 game.js 骨架纯文本，不要输出 JSON。`,
-                  },
-                ],
-                temperature: 0.2,
-                max_tokens: 1400,
-              };
-              if (provider === "openrouter" && payloadBase.provider) gameJsSkeletonPayload.provider = payloadBase.provider;
+              let jsContent = "";
+              if (!gameJsTwoStep) {
+                sendStatus(`（5/${generationTotalSteps}）生成核心逻辑（${provider} / ${mvpModel}）…`);
+                sendMeta({ provider, model, phase: "codegen_game_js" });
+                sendProgress({
+                  mode: "create",
+                  stepId: "game_js",
+                  stepLabel: "核心逻辑",
+                  status: "running",
+                  fileTargets: ["game.js"],
+                  detail: "一次性生成完整 game.js",
+                });
+                const gameJsPayload: any = {
+                  model,
+                  messages: [
+                    { role: "system", content: `${baseSystemPrompt}\n\n${CODEGEN_GAMEJS_PROMPT}` },
+                    {
+                      role: "user",
+                      content:
+                        `【用户最早的主题】\n${seedPrompt}\n\n` +
+                        `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
+                        requirementContractBlock +
+                        `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }, { path: "style.css", content: css }], null, 2)}\n\n` +
+                        `${templateHint}\n` +
+                        `请输出完整的 game.js 纯文本，不要输出 JSON。`,
+                    },
+                  ],
+                  temperature: 0.2,
+                  max_tokens: 2200,
+                };
+                if (provider === "openrouter" && payloadBase.provider) gameJsPayload.provider = payloadBase.provider;
 
-              let skeletonText = "";
-              try {
-                skeletonText = await autoRetry(
-                  async () =>
-                    await callStreamRobust(gameJsSkeletonPayload, "阶段5：核心逻辑骨架 JS", false, 90_000),
-                  "核心逻辑骨架",
-                  "只输出 game.js 骨架纯文本，不要解释，不要 JSON。",
-                  2,
-                );
-              } catch (e: any) {
-                logStep("game_js_skeleton.request_failed", String(e?.message || e));
-                return await failWithRetry(
-                  "我刚刚在生成核心逻辑骨架时遇到了网络问题。蓝图和页面结构已经保存好，点“重试”会直接从写代码继续。",
-                  String(e?.message || e),
-                );
+                let gameJsText = "";
+                try {
+                  gameJsText = await autoRetry(
+                    async () =>
+                      await callStreamRobust(gameJsPayload, "阶段5：核心逻辑 JS", false, 90_000),
+                    "核心逻辑",
+                    "只输出 game.js 纯文本，不要解释，不要 JSON。",
+                    2,
+                  );
+                } catch (e: any) {
+                  logStep("game_js.request_failed", String(e?.message || e));
+                  return await failWithRetry(
+                    "我刚刚在生成核心逻辑时遇到了网络问题。蓝图和页面结构已经保存好，点“重试”会直接从写代码继续。",
+                    String(e?.message || e),
+                  );
+                }
+                logStep("game_js.raw", gameJsText);
+                jsContent = extractPlainCodeText(gameJsText, ["js", "javascript"]);
+              } else {
+                sendStatus(`（5/${generationTotalSteps}）生成核心逻辑骨架（${provider} / ${mvpModel}）…`);
+                sendMeta({ provider, model, phase: "codegen_game_js_skeleton" });
+                sendProgress({
+                  mode: "create",
+                  stepId: "game_js_skeleton",
+                  stepLabel: "核心逻辑骨架",
+                  status: "running",
+                  fileTargets: ["game.js"],
+                  detail: "先生成结构完整的 game.js 骨架",
+                });
+                const gameJsSkeletonPayload: any = {
+                  model,
+                  messages: [
+                    { role: "system", content: `${baseSystemPrompt}\n\n${CODEGEN_GAMEJS_SKELETON_PROMPT}` },
+                    {
+                      role: "user",
+                      content:
+                        `【用户最早的主题】\n${seedPrompt}\n\n` +
+                        `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
+                        requirementContractBlock +
+                        `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }, { path: "style.css", content: css }], null, 2)}\n\n` +
+                        `${templateHint}\n` +
+                        `请先输出一个结构完整、函数齐全、带启动入口的 game.js 骨架纯文本，不要输出 JSON。`,
+                    },
+                  ],
+                  temperature: 0.2,
+                  max_tokens: 1400,
+                };
+                if (provider === "openrouter" && payloadBase.provider) gameJsSkeletonPayload.provider = payloadBase.provider;
+
+                let skeletonText = "";
+                try {
+                  skeletonText = await autoRetry(
+                    async () =>
+                      await callStreamRobust(gameJsSkeletonPayload, "阶段5：核心逻辑骨架 JS", false, 90_000),
+                    "核心逻辑骨架",
+                    "只输出 game.js 骨架纯文本，不要解释，不要 JSON。",
+                    2,
+                  );
+                } catch (e: any) {
+                  logStep("game_js_skeleton.request_failed", String(e?.message || e));
+                  return await failWithRetry(
+                    "我刚刚在生成核心逻辑骨架时遇到了网络问题。蓝图和页面结构已经保存好，点“重试”会直接从写代码继续。",
+                    String(e?.message || e),
+                  );
+                }
+
+                logStep("game_js_skeleton.raw", skeletonText);
+                const skeletonJs = extractPlainCodeText(skeletonText, ["js", "javascript"]);
+                if (!skeletonJs.trim()) {
+                  logStep("game_js_skeleton.empty", skeletonText);
+                  return await failWithRetry(
+                    "我刚刚在生成核心逻辑骨架时，没有拿到有效的 JS 内容。你的蓝图和页面结构已保存，点“重试”会从写代码继续。",
+                    skeletonText,
+                  );
+                }
+                const skeletonErr = validateStandaloneJs(skeletonJs);
+                if (skeletonErr) {
+                  logStep("game_js_skeleton.syntax_error", skeletonErr);
+                  return await failWithRetry(
+                    "我刚刚生成的核心逻辑骨架没有闭合完整。蓝图和页面结构已保存，点“重试”我会直接从 JS 继续。",
+                    skeletonErr,
+                  );
+                }
+
+                sendStatus(`（6/${generationTotalSteps}）补全核心逻辑细节（${provider} / ${mvpModel}）…`);
+                sendMeta({ provider, model, phase: "codegen_game_js_complete" });
+                sendProgress({
+                  mode: "create",
+                  stepId: "game_js_complete",
+                  stepLabel: "核心逻辑补全",
+                  status: "running",
+                  fileTargets: ["game.js"],
+                  detail: "基于骨架补全业务细节与 must-have",
+                });
+                const gameJsCompletePayload: any = {
+                  model,
+                  messages: [
+                    { role: "system", content: `${baseSystemPrompt}\n\n${CODEGEN_GAMEJS_COMPLETE_PROMPT}` },
+                    {
+                      role: "user",
+                      content:
+                        `【用户最早的主题】\n${seedPrompt}\n\n` +
+                        `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
+                        requirementContractBlock +
+                        `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }, { path: "style.css", content: css }], null, 2)}\n\n` +
+                        `【当前 game.js 骨架】\n${skeletonJs}\n\n` +
+                        `${templateHint}\n` +
+                        `请基于这份骨架和上面的 must-have checklist 补全完整的 game.js 纯文本，不要输出 JSON。`,
+                    },
+                  ],
+                  temperature: 0.2,
+                  max_tokens: 2200,
+                };
+                if (provider === "openrouter" && payloadBase.provider) gameJsCompletePayload.provider = payloadBase.provider;
+
+                let gameJsText = "";
+                try {
+                  gameJsText = await autoRetry(
+                    async () =>
+                      await callStreamRobust(gameJsCompletePayload, "阶段6：补全核心逻辑 JS", false, 90_000),
+                    "核心逻辑补全",
+                    "基于已有骨架补全 game.js 纯文本，不要解释，不要 JSON。",
+                    2,
+                  );
+                } catch (e: any) {
+                  logStep("game_js_complete.request_failed", String(e?.message || e));
+                  return await failWithRetry(
+                    "我刚刚在补全核心逻辑时遇到了网络问题。蓝图和页面结构已经保存好，点“重试”会直接从写代码继续。",
+                    String(e?.message || e),
+                  );
+                }
+
+                logStep("game_js_complete.raw", gameJsText);
+                jsContent = extractPlainCodeText(gameJsText, ["js", "javascript"]);
               }
-
-              logStep("game_js_skeleton.raw", skeletonText);
-              let skeletonJs = extractPlainCodeText(skeletonText, ["js", "javascript"]);
-              if (!skeletonJs.trim()) {
-                logStep("game_js_skeleton.empty", skeletonText);
-                return await failWithRetry(
-                  "我刚刚在生成核心逻辑骨架时，没有拿到有效的 JS 内容。你的蓝图和页面结构已保存，点“重试”会从写代码继续。",
-                  skeletonText,
-                );
-              }
-              let skeletonErr = validateStandaloneJs(skeletonJs);
-              if (skeletonErr) {
-                logStep("game_js_skeleton.syntax_error", skeletonErr);
-                return await failWithRetry(
-                  "我刚刚生成的核心逻辑骨架没有闭合完整。蓝图和页面结构已保存，点“重试”我会直接从 JS 继续。",
-                  skeletonErr,
-                );
-              }
-
-              sendStatus(`（5/5）补全核心逻辑细节（${provider} / ${mvpModel}）…`);
-              sendMeta({ provider, model, phase: "codegen_game_js_complete" });
-              const gameJsCompletePayload: any = {
-                model,
-                messages: [
-                  { role: "system", content: `${baseSystemPrompt}\n\n${CODEGEN_GAMEJS_COMPLETE_PROMPT}` },
-                  {
-                    role: "user",
-                    content:
-                      `【用户最早的主题】\n${seedPrompt}\n\n` +
-                      `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
-                      `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }, { path: "style.css", content: css }], null, 2)}\n\n` +
-                      `【当前 game.js 骨架】\n${skeletonJs}\n\n` +
-                      `${templateHint}\n` +
-                      `请基于这份骨架补全完整的 game.js 纯文本，不要输出 JSON。`,
-                  },
-                ],
-                temperature: 0.2,
-                max_tokens: 2200,
-              };
-              if (provider === "openrouter" && payloadBase.provider) gameJsCompletePayload.provider = payloadBase.provider;
-
-              let gameJsText = "";
-              try {
-                gameJsText = await autoRetry(
-                  async () =>
-                    await callStreamRobust(gameJsCompletePayload, "阶段6：补全核心逻辑 JS", false, 90_000),
-                  "核心逻辑补全",
-                  "基于已有骨架补全 game.js 纯文本，不要解释，不要 JSON。",
-                  2,
-                );
-              } catch (e: any) {
-                logStep("game_js_complete.request_failed", String(e?.message || e));
-                return await failWithRetry(
-                  "我刚刚在补全核心逻辑时遇到了网络问题。蓝图和页面结构已经保存好，点“重试”会直接从写代码继续。",
-                  String(e?.message || e),
-                );
-              }
-
-              logStep("game_js_complete.raw", gameJsText);
-              let jsContent = extractPlainCodeText(gameJsText, ["js", "javascript"]);
               if (!jsContent.trim()) {
-                logStep("game_js_complete.empty", gameJsText);
+                logStep("game_js.empty", { twoStep: gameJsTwoStep });
                 return await failWithRetry(
-                  "我刚刚在补全核心逻辑时，没有拿到有效的 JS 内容。你的蓝图和页面结构已保存，点“重试”会从写代码继续。",
-                  gameJsText,
+                  "我刚刚在生成核心逻辑时，没有拿到有效的 JS 内容。你的蓝图和页面结构已保存，点“重试”会从写代码继续。",
+                  "",
                 );
               }
               let jsSyntaxErr = validateStandaloneJs(jsContent);
@@ -3046,6 +3990,14 @@ export async function POST(req: Request) {
                   JSON.stringify(gameJsWrite.failed),
                 );
               }
+              sendProgress({
+                mode: "create",
+                stepId: gameJsTwoStep ? "game_js_complete" : "game_js",
+                stepLabel: gameJsTwoStep ? "核心逻辑补全" : "核心逻辑",
+                status: "done",
+                fileTargets: ["game.js"],
+                detail: "game.js 已生成并落库",
+              });
               return { jsContent };
             };
 
@@ -3068,6 +4020,7 @@ export async function POST(req: Request) {
                 v: 1,
                 stage: "code_done",
                 ...(activeConfig ? { config: activeConfig } : {}),
+                ...(requirementContract ? { requirementContract } : {}),
                 clarify: undefined,
                 persist: {
                   step: "finalized",
@@ -3086,15 +4039,15 @@ export async function POST(req: Request) {
               { path: "game.js", content: jsContent },
             ];
             let stableFiles = finalFiles;
-            const acceptanceErrs: string[] = [];
-            try {
-              if (jsContent.trim()) new Script(jsContent);
-            } catch (e: any) {
-              acceptanceErrs.push(`game.js 语法错误：${String(e?.message || e)}`);
-            }
-            const indexRef = finalFiles.find((f) => f.path === "index.html")?.content || "";
-            if (!/href\s*=\s*["']\.\/style\.css["']/.test(indexRef)) acceptanceErrs.push("index.html 未正确引用 ./style.css");
-            if (!/src\s*=\s*["']\.\/game\.js["']/.test(indexRef)) acceptanceErrs.push("index.html 未正确引用 ./game.js");
+            const acceptanceErrs = validateAcceptanceSimple(finalFiles);
+            sendProgress({
+              mode: "create",
+              stepId: "validate",
+              stepLabel: "验收与落库",
+              status: "running",
+              fileTargets: ["index.html", "style.css", "game.js"],
+              detail: "执行最终强验收",
+            });
             logStep("final.acceptance", {
               ok: acceptanceErrs.length === 0,
               errors: acceptanceErrs,
@@ -3108,6 +4061,14 @@ export async function POST(req: Request) {
             }
             await writeMeta(metaNow);
             logStep("final.persisted", { title: metaNow.title, stage: metaNow?._gen?.stage, files: finalFiles });
+            sendProgress({
+              mode: "create",
+              stepId: "validate",
+              stepLabel: "验收与落库",
+              status: "done",
+              fileTargets: ["index.html", "style.css", "game.js"],
+              detail: "三个文件已通过验收并写回草稿",
+            });
 
             const metaFinal = (await readMetaObj()) || metaNow;
             const assistantText = `已生成可运行版本：${String((metaFinal as any)?.title || meta.title || "").trim() || "未命名作品"}。`;
@@ -3124,6 +4085,15 @@ export async function POST(req: Request) {
           }
 
       } catch (e: any) {
+        try {
+          sendProgress({
+            stepId: progressStepId || "error",
+            stepLabel: progressStepLabel || "执行失败",
+            status: "failed",
+            error: String(e?.message || e || "").slice(0, 300),
+            detail: String(e?.message || e || "").slice(0, 180),
+          });
+        } catch {}
         send("error", { ok: false, error: String(e?.message || e) });
         clearInterval(heartbeat);
         controller.close();

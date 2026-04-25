@@ -197,6 +197,289 @@
   color: rgba(100, 116, 139, 0.92);
 }
 
+.createProcessPanel {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.processRunCard,
+.processHistoryBox {
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+.processRunCard {
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.processRunTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.processRunTitle {
+  font-size: 13px;
+  font-weight: 1000;
+  color: rgba(15, 23, 42, 0.88);
+}
+
+.processRunBadges {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.processBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  padding: 3px 8px;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  background: rgba(248, 250, 252, 0.95);
+  color: rgba(15, 23, 42, 0.82);
+  font-size: 11px;
+  font-weight: 1000;
+}
+
+.processBadge.is-running {
+  border-color: rgba(37, 99, 235, 0.18);
+  background: rgba(219, 234, 254, 0.92);
+  color: rgba(29, 78, 216, 0.92);
+}
+
+.processBadge.is-done {
+  border-color: rgba(22, 163, 74, 0.18);
+  background: rgba(220, 252, 231, 0.92);
+  color: rgba(21, 128, 61, 0.92);
+}
+
+.processBadge.is-failed,
+.processBadge.is-stopped {
+  border-color: rgba(220, 38, 38, 0.18);
+  background: rgba(254, 226, 226, 0.92);
+  color: rgba(185, 28, 28, 0.92);
+}
+
+.processBadge.isMuted {
+  color: rgba(71, 85, 105, 0.92);
+}
+
+.processRunMetaLine,
+.processHistoryMetaLine {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  font-weight: 900;
+  color: rgba(100, 116, 139, 0.94);
+}
+
+.processRunSummary,
+.processHistorySummary {
+  font-size: 13px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.84);
+  line-height: 1.55;
+}
+
+.processBar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(226, 232, 240, 0.78);
+  overflow: hidden;
+}
+
+.processBar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(37, 99, 235, 0.88), rgba(14, 165, 233, 0.88));
+  transition: width 180ms ease;
+}
+
+.processSteps {
+  display: grid;
+  gap: 8px;
+}
+
+.processStep {
+  border-radius: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(248, 250, 252, 0.88);
+  padding: 8px 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.processStep.isCurrent,
+.processStep.is-running {
+  border-color: rgba(37, 99, 235, 0.16);
+  background: rgba(239, 246, 255, 0.94);
+}
+
+.processStep.is-upgraded {
+  border-color: rgba(217, 119, 6, 0.16);
+  background: rgba(255, 247, 237, 0.94);
+}
+
+.processStep.is-failed {
+  border-color: rgba(220, 38, 38, 0.16);
+  background: rgba(254, 242, 242, 0.94);
+}
+
+.processStepHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.processStepDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.9);
+  flex: 0 0 auto;
+}
+
+.processStep.is-running .processStepDot,
+.processStep.isCurrent .processStepDot {
+  background: rgba(37, 99, 235, 0.92);
+}
+
+.processStep.is-done .processStepDot {
+  background: rgba(22, 163, 74, 0.92);
+}
+
+.processStep.is-upgraded .processStepDot {
+  background: rgba(217, 119, 6, 0.92);
+}
+
+.processStep.is-failed .processStepDot {
+  background: rgba(220, 38, 38, 0.92);
+}
+
+.processStepLabel {
+  flex: 1 1 auto;
+  font-size: 12px;
+  font-weight: 1000;
+  color: rgba(15, 23, 42, 0.86);
+}
+
+.processStepStatus {
+  font-size: 11px;
+  font-weight: 1000;
+  color: rgba(71, 85, 105, 0.92);
+}
+
+.processStepDetail {
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(71, 85, 105, 0.94);
+  padding-left: 16px;
+}
+
+.processContractBox,
+.processHistoryBox,
+.processHistoryItem {
+  overflow: hidden;
+}
+
+.processContractBox > summary,
+.processHistoryBox > summary,
+.processHistoryItem > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 1000;
+  color: rgba(15, 23, 42, 0.84);
+}
+
+.processContractBox > summary::-webkit-details-marker,
+.processHistoryBox > summary::-webkit-details-marker,
+.processHistoryItem > summary::-webkit-details-marker {
+  display: none;
+}
+
+.processContractGrid {
+  padding: 0 12px 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.processContractGrid > div {
+  display: grid;
+  gap: 3px;
+}
+
+.processContractGrid strong {
+  font-size: 11px;
+  color: rgba(100, 116, 139, 0.92);
+}
+
+.processContractGrid span {
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(15, 23, 42, 0.84);
+}
+
+.processHistoryList {
+  padding: 0 10px 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.processHistoryItem {
+  border-radius: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(248, 250, 252, 0.88);
+}
+
+.processHistoryItem > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.processHistoryTitle {
+  font-size: 12px;
+  font-weight: 1000;
+  color: rgba(15, 23, 42, 0.84);
+}
+
+.processHistoryMeta {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 900;
+  color: rgba(100, 116, 139, 0.92);
+}
+
+.processHistoryBody {
+  padding: 0 12px 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.processHistoryError {
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(254, 242, 242, 0.94);
+  color: rgba(185, 28, 28, 0.92);
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 900;
+}
+
 .chatList {
   padding: 12px;
   overflow: auto;
