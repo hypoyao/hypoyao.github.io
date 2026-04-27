@@ -35,28 +35,6 @@ function safeGameId(id: string) {
   return s;
 }
 
-function toKeywordFromPrompt(s: string) {
-  const t = (s || "").replace(/\r/g, "").trim();
-  if (!t) return "";
-  const m1 = t.match(/(?:我想|想)?做(?:一个|个)?\s*([^\n，。,.]{1,24}?游戏)/);
-  const m2 = t.match(/([^\n，。,.]{1,24}?游戏)/);
-  let k = (m1?.[1] || m2?.[1] || "").trim();
-  if (!k) {
-    const first =
-      t
-        .split("\n")
-        .map((x) => x.trim())
-        .find((x) => x && !x.startsWith("#")) || "";
-    k = first.trim();
-  }
-  k = k.replace(/（.*?）/g, "").trim();
-  if (k.length > 14) {
-    k = k.slice(0, 14);
-    if (!k.endsWith("游戏") && t.includes("游戏")) k = k.replace(/\s+$/g, "") + "…";
-  }
-  return k;
-}
-
 function stripDangerousLocalBehaviorArtifacts(path: string, content: string) {
   const rel = String(path || "").trim();
   const raw = String(content || "");
@@ -106,33 +84,6 @@ export async function POST(req: Request) {
       `);
     }
 
-    // Neon/网络抖动时偶发会报 “Failed query: ...”，这里做一次轻量重试，避免用户直接看到 WRITE_INTERNAL。
-    const execTitleSelect = async () =>
-      await db.execute(sql`
-        select title
-        from creator_draft_games
-        where id = ${gid} and owner_key = ${ownerKey}
-        limit 1
-      `);
-    let titleRows: any = null;
-    try {
-      titleRows = await execTitleSelect();
-    } catch (e1: any) {
-      // 兼容旧表缺列/进程内 ensure 缓存：强制迁移一次，再重试
-      try {
-        await ensureCreatorDraftTables(true);
-      } catch {}
-      try {
-        titleRows = await execTitleSelect();
-      } catch (e2: any) {
-        // 仍失败：降级处理（不阻塞写文件），title 冻结逻辑与 updated_at 更新会尽量继续执行
-        titleRows = { rows: [] } as any;
-      }
-    }
-    const titleList = Array.isArray((titleRows as any).rows) ? (titleRows as any).rows : [];
-    const existingTitle = String(titleList?.[0]?.title || "").trim();
-    const shouldFreezeTitleFromFirstPrompt = !existingTitle;
-
     const written: string[] = [];
     let updatedTitle = "";
     for (const f of files) {
@@ -159,10 +110,15 @@ export async function POST(req: Request) {
       `);
       written.push(`/games/${gid}/${rel}`);
 
-      // 只在“第一次写入用户需求”时固化标题，后续增量修改不再覆盖。
-      if (shouldFreezeTitleFromFirstPrompt && rel === "prompt.md" && !updatedTitle) {
-        const k = toKeywordFromPrompt(content);
-        if (k) updatedTitle = k;
+      // 标题只认正式的 meta.json，避免 prompt.md 的临时文本过早把标题锁死。
+      if (rel === "meta.json" && !updatedTitle) {
+        try {
+          const obj = content ? JSON.parse(content) : null;
+          const title = String((obj as any)?.title || "").trim();
+          if (title) updatedTitle = title.slice(0, 80);
+        } catch {
+          // ignore invalid meta.json
+        }
       }
     }
 
@@ -173,7 +129,7 @@ export async function POST(req: Request) {
       await db.execute(sql`
         update creator_draft_games
         set updated_at = now(),
-            title = case when ${shouldFreezeTitleFromFirstPrompt} and ${updatedTitle} <> '' then ${updatedTitle} else title end
+            title = case when ${updatedTitle} <> '' then ${updatedTitle} else title end
         where id = ${gid} and owner_key = ${ownerKey}
       `);
     } catch {

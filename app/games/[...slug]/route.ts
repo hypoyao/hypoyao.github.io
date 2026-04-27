@@ -214,6 +214,7 @@ async function buildShellHtml(gameId: string) {
   const embedIndex = `${embedBase}index.html`;
   const publishHref = `/publish?id=${encodeURIComponent(gameId)}`;
   const editHref = `/create?id=${encodeURIComponent(gameId)}`;
+  const barEditHtml = `<a class="btnPrimary barEditBtn" href="${escHtml(editHref)}" aria-label="返回编程界面">返回编程</a>`;
   const actionHtml = isPublished
     ? `<a class="iconBtn" href="${escHtml(editHref)}" title="编辑" aria-label="编辑">
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -247,6 +248,7 @@ async function buildShellHtml(gameId: string) {
     .barActions{display:flex;align-items:center;gap:8px}
     .bar a{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:12px;border:1px solid var(--line);text-decoration:none;color:inherit;background:rgba(248,250,252,1)}
     .bar a svg{width:18px;height:18px;display:block}
+    .barEditBtn{height:36px;padding:0 12px;border-radius:12px;font-size:12px}
     .frame{width:100%;height:100%;border:0;background:white}
     .info{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:12px;min-height:0;overflow:auto}
     .infoHead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
@@ -270,6 +272,7 @@ async function buildShellHtml(gameId: string) {
       <div class="bar">
         <div class="barTitle">${safeTitle}</div>
         <div class="barActions">
+          ${barEditHtml}
           <a href="${escHtml(rawIndex)}" target="_blank" rel="noopener noreferrer" title="在新标签页打开游戏" aria-label="在新标签页打开游戏">
             <!-- 更接近“在新窗口打开”的标准图标：方框 + 右上角外开箭头 -->
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">

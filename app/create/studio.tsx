@@ -38,6 +38,13 @@ type ProcessStep = {
   finishedAt?: number;
 };
 
+type ProcessLog = {
+  id: string;
+  text: string;
+  at: number;
+  source?: "status" | "meta" | "progress";
+};
+
 type ProcessRun = {
   id: string;
   gameId: string;
@@ -50,6 +57,9 @@ type ProcessRun = {
   finishedAt?: number;
   currentStepId?: string;
   steps: ProcessStep[];
+  logs: ProcessLog[];
+  draftPreview?: string;
+  draftUpdatedAt?: number;
   contract?: ProcessContract | null;
   error?: string;
 };
@@ -78,6 +88,13 @@ function chatKey(gid: string) {
   return `creatorStudio:chat:${gid || "draft"}`;
 }
 
+function hasRenderableMessageContent(content: unknown) {
+  const text = typeof content === "string" ? content : "";
+  if (!text) return false;
+  if (text.startsWith(THINK_PREFIX)) return true;
+  return !!text.trim();
+}
+
 function safeLoadChat(gid: string): { messages: ChatMsg[] } | null {
   try {
     if (typeof window === "undefined") return null;
@@ -88,7 +105,7 @@ function safeLoadChat(gid: string): { messages: ChatMsg[] } | null {
     const arr = Array.isArray(j?.messages) ? j.messages : null;
     if (!arr) return null;
     const messages: ChatMsg[] = arr
-      .filter((m: any) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+      .filter((m: any) => m && (m.role === "user" || m.role === "assistant") && hasRenderableMessageContent(m.content))
       .map((m: any) => ({ role: m.role, content: String(m.content) }));
     if (!messages.length) return null;
     return { messages };
@@ -103,7 +120,7 @@ function safeSaveChat(gid: string, messages: ChatMsg[]) {
     const MAX_MSG = 40;
     const MAX_LEN = 4000;
     const trimmed = (messages || [])
-      .filter((m) => m?.role === "user" || m?.role === "assistant")
+      .filter((m) => (m?.role === "user" || m?.role === "assistant") && hasRenderableMessageContent(m?.content))
       .slice(-MAX_MSG)
       .map((m) => ({ role: m.role, content: String(m.content || "").slice(0, MAX_LEN) }));
     window.localStorage.setItem(
@@ -144,16 +161,6 @@ function normalizeStringList(v: any): string[] {
   return v.map((x) => String(x || "").trim()).filter(Boolean);
 }
 
-function formatElapsed(startedAt?: number, finishedAt?: number) {
-  if (!startedAt) return "0s";
-  const end = finishedAt || Date.now();
-  const sec = Math.max(1, Math.round((end - startedAt) / 1000));
-  if (sec < 60) return `${sec}s`;
-  const min = Math.floor(sec / 60);
-  const rest = sec % 60;
-  return rest ? `${min}m ${rest}s` : `${min}m`;
-}
-
 function guessProcessMode(text: string): ProcessMode {
   const t = String(text || "").trim();
   if (/(^\s*修复[:：]|bug|报错|错误|异常|崩溃|无法|不显示|不生效|没反应|卡住|卡死|白屏|闪退|console|控制台)/i.test(t)) {
@@ -162,27 +169,30 @@ function guessProcessMode(text: string): ProcessMode {
   return "create";
 }
 
-function processModeLabel(mode: ProcessMode) {
-  if (mode === "fix") return "修 bug";
-  if (mode === "patch") return "小改动";
-  if (mode === "clarify") return "需求澄清";
-  if (mode === "create") return "首次生成";
-  return "处理中";
-}
-
-function processStatusLabel(status: ProcessRun["status"]) {
-  if (status === "done") return "已完成";
-  if (status === "failed") return "失败";
-  if (status === "stopped") return "已停止";
-  return "进行中";
-}
-
 function summarizeStatusText(text: string) {
   return String(text || "")
     .replace(/^（\d+\/\d+）/, "")
     .replace(/（已等待\s*\d+s）/g, "")
     .replace(/\s*…$/, "")
     .trim();
+}
+
+function isInternalCreatorCommand(text: string) {
+  const t = String(text || "").trim();
+  if (!t) return true;
+  return /^@(retry|answers?|choice|select|clarify|stop)\b/i.test(t);
+}
+
+function normalizeCreatorStepText(text: string) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+function looksLikeDraftGameIdTitle(title: string, gameId: string) {
+  const t = String(title || "").trim();
+  const gid = String(gameId || "").trim();
+  if (!t) return true;
+  if (gid && t === gid) return true;
+  return /^g-\d{8}-[a-z0-9]+$/i.test(t);
 }
 
 function inferStepFromPhase(phase: string): { id: string; label: string; mode?: ProcessMode } | null {
@@ -212,6 +222,26 @@ function inferStepFromPhase(phase: string): { id: string; label: string; mode?: 
   return null;
 }
 
+function statusTextFromPhase(phase: string) {
+  const p = String(phase || "").trim().toLowerCase();
+  if (!p) return "AI 正在生成代码";
+  if (p === "clarify") return "AI 正在理解需求";
+  if (p === "blueprint" || p === "blueprint_update") return "AI 正在生成蓝图";
+  if (p === "json_repair") return "AI 正在修复结构";
+  if (p === "fix") return "AI 正在修复问题";
+  if (p.startsWith("direct_refine_")) return "AI 正在修改代码";
+  if (
+    p === "codegen_html" ||
+    p === "codegen_css" ||
+    p === "codegen_game_js" ||
+    p === "codegen_game_js_skeleton" ||
+    p === "codegen_game_js_complete"
+  ) {
+    return "AI 正在生成代码";
+  }
+  return "AI 正在生成代码";
+}
+
 function inferStepFromStatusText(text: string): { id: string; label: string; mode?: ProcessMode } | null {
   const raw = summarizeStatusText(text);
   if (!raw) return null;
@@ -228,6 +258,58 @@ function inferStepFromStatusText(text: string): { id: string; label: string; mod
   if (raw.includes("结构不一致") || raw.includes("验收没通过")) return { id: "validate", label: "强验收与恢复" };
   if (raw.includes("JSON")) return { id: "repair", label: "结构修复" };
   return null;
+}
+
+function expectedProcessSteps(mode: ProcessMode, currentSteps: ProcessStep[]) {
+  if (mode === "clarify") return [{ id: "clarify", label: "需求澄清" }];
+  if (mode === "fix") {
+    return [
+      { id: "fix_classify", label: "修复策略分析" },
+      { id: "fix_patch", label: "补丁/重生成" },
+      { id: "fix_upgrade_regen", label: "升级恢复" },
+      { id: "fix_validate", label: "强验收与落库" },
+    ];
+  }
+  if (mode === "patch") {
+    return [
+      { id: "direct_refine_strategy", label: "小改动策略分析" },
+      { id: "direct_refine_patch", label: "补丁/重生成" },
+      { id: "direct_refine_upgrade", label: "升级恢复" },
+      { id: "direct_refine_validate", label: "强验收与落库" },
+    ];
+  }
+  if (mode === "create") {
+    const hasTwoStepJs = currentSteps.some((s) => s.id === "game_js_skeleton" || s.id === "game_js_complete");
+    const jsSteps = hasTwoStepJs
+      ? [
+          { id: "game_js_skeleton", label: "核心逻辑骨架" },
+          { id: "game_js_complete", label: "核心逻辑补全" },
+        ]
+      : [{ id: "game_js", label: "核心逻辑" }];
+    return [
+      { id: "blueprint", label: "蓝图" },
+      { id: "requirement_contract", label: "需求契约" },
+      { id: "html", label: "页面结构" },
+      { id: "css", label: "页面样式" },
+      ...jsSteps,
+      { id: "validate", label: "验收与落库" },
+    ];
+  }
+  return [{ id: "prepare", label: "准备请求" }];
+}
+
+function mergeProcessStepsWithPending(mode: ProcessMode, steps: ProcessStep[]) {
+  const ordered = expectedProcessSteps(mode, steps);
+  const existed = new Map<string, ProcessStep>();
+  for (const step of Array.isArray(steps) ? steps : []) existed.set(step.id, step);
+  const merged: ProcessStep[] = ordered.map((base) => {
+    const hit = existed.get(base.id);
+    return hit || { id: base.id, label: base.label, status: "pending" };
+  });
+  for (const step of Array.isArray(steps) ? steps : []) {
+    if (!ordered.some((b) => b.id === step.id)) merged.push(step);
+  }
+  return merged;
 }
 
 const THINK_PREFIX = "[[THINK]]";
@@ -281,8 +363,6 @@ export default function CreateStudio({
   const [hydrated, setHydrated] = useState(false);
   const [currentModelLabel, setCurrentModelLabel] = useState<string>("");
   const [processCurrent, setProcessCurrent] = useState<ProcessRun | null>(null);
-  const [processHistory, setProcessHistory] = useState<ProcessRun[]>([]);
-  const [processCollapsed, setProcessCollapsed] = useState(false);
   const [creatorName, setCreatorName] = useState<string>("");
   const [creatorAvatarUrl, setCreatorAvatarUrl] = useState<string>("");
   const [creatorProfilePath, setCreatorProfilePath] = useState<string>("");
@@ -296,22 +376,38 @@ export default function CreateStudio({
   );
   const [loggedIn, setLoggedIn] = useState(false);
   const [published, setPublished] = useState(false);
+  const [deletingGameId, setDeletingGameId] = useState<string>("");
   const [speechSupported, setSpeechSupported] = useState(false);
   const [listening, setListening] = useState(false);
   const speechRef = useRef<any>(null);
   const speechBaseRef = useRef<string>("");
   const inputRef = useRef<string>("");
+  const activeRunIdRef = useRef<string>("");
   const bootRef = useRef(false);
   const [lastFailedText, setLastFailedText] = useState<string>("");
   const abortRef = useRef<AbortController | null>(null);
   const opMenuRef = useRef<HTMLDetailsElement | null>(null);
 
   const publishText = useMemo(() => (published ? "更新" : "发布"), [published]);
+  const deletingBusy = !!deletingGameId;
+  const uiBusy = busy || deletingBusy;
+  const currentGameTitle = useMemo(() => {
+    const metaTitle = String(gameMeta?.title || "").trim();
+    if (metaTitle && !looksLikeDraftGameIdTitle(metaTitle, gameId)) return metaTitle;
+    const projectTitle = String((projects || []).find((p) => p.gameId === gameId)?.title || "").trim();
+    if (projectTitle) return projectTitle;
+    return "未命名作品";
+  }, [gameId, gameMeta?.title, projects]);
+  const currentCreatorName = String(creatorName || "").trim() || String(gameMeta?.creator?.name || "").trim() || "创作者";
+  const currentCreatorAvatarUrl = String(creatorAvatarUrl || "").trim() || String(gameMeta?.creator?.avatarUrl || "").trim();
+  const currentCreatorProfilePath = String(creatorProfilePath || "").trim() || String(gameMeta?.creator?.profilePath || "").trim();
 
-  // 新的一轮运行开始时，默认展开
-  useEffect(() => {
-    if (processCurrent?.id) setProcessCollapsed(false);
-  }, [processCurrent?.id]);
+  const applyMeProfile = (me: any) => {
+    setLoggedIn(!!me?.loggedIn);
+    if (me?.creator?.name) setCreatorName(String(me.creator.name));
+    if (me?.creator?.avatarUrl) setCreatorAvatarUrl(String(me.creator.avatarUrl));
+    if (me?.creator?.profilePath) setCreatorProfilePath(String(me.creator.profilePath));
+  };
 
   const openrouterModels = useMemo(
     () => [
@@ -400,23 +496,31 @@ export default function CreateStudio({
   const archiveProcessRun = (status: ProcessRun["status"], error = "") => {
     setProcessCurrent((prev) => {
       if (!prev) return null;
+      if (activeRunIdRef.current === prev.id) activeRunIdRef.current = "";
       const finishedAt = Date.now();
+      const endText = status === "done" ? "执行完成" : status === "stopped" ? "执行已停止" : `执行失败：${error || prev.error || "未知错误"}`;
+      const finalLogs = (() => {
+        const logs = Array.isArray(prev.logs) ? prev.logs.slice() : [];
+        const last = logs[logs.length - 1];
+        if (!last || last.text !== endText) logs.push({ id: nowId(), text: endText, at: finishedAt, source: "progress" });
+        return logs.slice(-24);
+      })();
       const finalized: ProcessRun = {
         ...prev,
         status,
         error: error || prev.error || "",
         finishedAt,
+        logs: finalLogs,
         steps: prev.steps.map((step) =>
           step.status === "running"
             ? { ...step, status: status === "done" ? "done" : "failed", finishedAt }
             : step.finishedAt
               ? step
               : step.status === "pending"
-                ? step
-                : { ...step, finishedAt },
+              ? step
+              : { ...step, finishedAt },
         ),
       };
-      setProcessHistory((hist) => [finalized, ...hist].slice(0, 8));
       return null;
     });
   };
@@ -468,9 +572,23 @@ export default function CreateStudio({
           startedAt: now,
           currentStepId: "",
           steps: [],
+          logs: [],
+          draftPreview: "",
+          draftUpdatedAt: now,
           contract: evt.contract ?? null,
           error: evt.error || "",
         };
+
+    const logText = String(evt.detail || evt.summary || "").trim();
+    const prevLogs = Array.isArray(next.logs) ? next.logs : [];
+    const logs =
+      !logText
+        ? prevLogs
+        : (() => {
+            const last = prevLogs[prevLogs.length - 1];
+            if (last && last.text === logText) return prevLogs;
+            return [...prevLogs, { id: nowId(), text: logText, at: now, source: evt.source }].slice(-24);
+          })();
 
     // status 事件是“心跳/过程提示”，不应抢占当前步骤，也不应把其它步骤误标为完成。
     if (evt.source === "status" && prev?.currentStepId) {
@@ -481,7 +599,7 @@ export default function CreateStudio({
       }
     }
 
-    if (!stepId || !stepLabel) return next;
+    if (!stepId || !stepLabel) return { ...next, logs };
     const steps: ProcessStep[] =
       evt.source === "status"
         ? next.steps.slice()
@@ -515,11 +633,13 @@ export default function CreateStudio({
     if (idx >= 0) steps[idx] = nextStep;
     else steps.push(nextStep);
 
+    const mergedSteps = mergeProcessStepsWithPending(mode, steps);
     return {
       ...next,
       summary: evt.summary || evt.detail || next.summary || stepLabel,
       currentStepId: stepId,
-      steps,
+      steps: mergedSteps,
+      logs,
     };
   };
 
@@ -547,7 +667,6 @@ export default function CreateStudio({
 
   useEffect(() => {
     setProcessCurrent(null);
-    setProcessHistory([]);
   }, [gameId]);
 
   function act(type: "new" | "publish" | "delete") {
@@ -596,7 +715,10 @@ export default function CreateStudio({
     { role: "assistant", content: "你好！把你想做的小游戏告诉我吧（玩法、按钮、胜负条件、画面风格）。" },
   ]);
 
-  const viewMessages = useMemo(() => messages, [messages]);
+  const viewMessages = useMemo(
+    () => messages.filter((m) => hasRenderableMessageContent(m?.content)),
+    [messages],
+  );
 
   // 防止切换 gameId 时把“旧项目 messages”误保存到“新项目”
   // 只有当 messages 已确认属于当前 gameId 时，才允许写入 localStorage。
@@ -606,30 +728,20 @@ export default function CreateStudio({
   const creatorStepsText = useMemo(() => {
     const userMsgs = (messages || [])
       .filter((m) => m?.role === "user")
-      .map((m) => String(m.content || "").trim())
-      .filter(Boolean);
+      .map((m) => normalizeCreatorStepText(m.content))
+      .filter((t) => t && !isInternalCreatorCommand(t));
     if (!userMsgs.length) return "";
-    // 去重（避免重复重试导致相同文本堆叠）
+    // 全局去重：同一句真实需求只保留一次，避免 retry 后重复堆叠。
     const dedup: string[] = [];
+    const seen = new Set<string>();
     for (const t of userMsgs) {
-      if (!dedup.length || dedup[dedup.length - 1] !== t) dedup.push(t);
+      if (seen.has(t)) continue;
+      seen.add(t);
+      dedup.push(t);
     }
     const lastN = dedup.slice(-8);
     return lastN.map((t, i) => `${i + 1}. ${t}`).join("\n");
   }, [messages]);
-
-  const processCompletion = useMemo(() => {
-    if (!processCurrent?.steps?.length) return 0;
-    const total = processCurrent.steps.length;
-    const done = processCurrent.steps.filter((step) => step.status === "done").length;
-    const running = processCurrent.steps.some((step) => step.status === "running") ? 1 : 0;
-    return Math.max(8, Math.min(96, Math.round(((done + running * 0.5) / total) * 100)));
-  }, [processCurrent]);
-
-  const activeProcessStep = useMemo(() => {
-    if (!processCurrent?.steps?.length) return null;
-    return processCurrent.steps.find((step) => step.id === processCurrent.currentStepId) || processCurrent.steps[processCurrent.steps.length - 1] || null;
-  }, [processCurrent]);
 
   // === 聊天记录持久化（刷新不丢） ===
   // 1) gameId 变化时：尝试从 localStorage 恢复该项目的聊天记录
@@ -800,14 +912,14 @@ export default function CreateStudio({
         const meP = fetch("/api/me", { cache: "no-store" })
           .then((x) => x.json())
           .catch(() => null);
+        void meP.then((me) => {
+          if (me) applyMeProfile(me);
+        });
 
         // 从游戏页“编辑”跳转过来：固定打开指定项目（优先级最高）
         if (fixedGameId) {
           const me = await meP;
-          setLoggedIn(!!me?.loggedIn);
-          if (me?.creator?.name) setCreatorName(String(me.creator.name));
-          if (me?.creator?.avatarUrl) setCreatorAvatarUrl(String(me.creator.avatarUrl));
-          if (me?.creator?.profilePath) setCreatorProfilePath(String(me.creator.profilePath));
+          if (me) applyMeProfile(me);
           setGameId(fixedGameId);
           updatePreviewUrl(`${entryOf(fixedGameId)}?t=${encodeURIComponent(nowId())}`, { enable: false });
           // 刷新项目列表（避免下拉框里没有该项目）
@@ -817,10 +929,7 @@ export default function CreateStudio({
 
         if (isFromHome) {
           const me = await meP;
-          setLoggedIn(!!me?.loggedIn);
-          if (me?.creator?.name) setCreatorName(String(me.creator.name));
-          if (me?.creator?.avatarUrl) setCreatorAvatarUrl(String(me.creator.avatarUrl));
-          if (me?.creator?.profilePath) setCreatorProfilePath(String(me.creator.profilePath));
+          if (me) applyMeProfile(me);
           // 只在“从其它页面跳转过来且明确带 auto=1”时自动启动；
           // 启动后立刻把 URL 里的 auto=1 去掉，避免用户刷新页面时重复启动。
           try {
@@ -888,10 +997,7 @@ export default function CreateStudio({
         }
 
         const me = await meP;
-        setLoggedIn(!!me?.loggedIn);
-        if (me?.creator?.name) setCreatorName(String(me.creator.name));
-        if (me?.creator?.avatarUrl) setCreatorAvatarUrl(String(me.creator.avatarUrl));
-        if (me?.creator?.profilePath) setCreatorProfilePath(String(me.creator.profilePath));
+        if (me) applyMeProfile(me);
       } catch {}
       try {
         const gid = await newGame();
@@ -1078,6 +1184,7 @@ export default function CreateStudio({
     setInput("");
     const startAt = Date.now();
     const runId = nowId();
+    activeRunIdRef.current = runId;
     setProcessCurrent({
       id: runId,
       gameId: useId,
@@ -1089,6 +1196,9 @@ export default function CreateStudio({
       startedAt: startAt,
       currentStepId: "prepare",
       steps: [{ id: "prepare", label: "准备请求", status: "running", detail: "初始化对话与连接", startedAt: startAt }],
+      logs: [{ id: nowId(), text: "初始化对话与连接", at: startAt, source: "progress" }],
+      draftPreview: "",
+      draftUpdatedAt: startAt,
       contract: null,
       error: "",
     });
@@ -1155,21 +1265,30 @@ export default function CreateStudio({
         const dec = new TextDecoder();
         const sseState = { buf: "" };
         const progressFallback = { runId, gameId: useId, provider, model };
+        const isRunActive = () => activeRunIdRef.current === runId;
         const withTime = (t: string) => {
           const sec = Math.max(1, Math.floor((Date.now() - startAt) / 1000));
           return `${t}（${sec}s）`;
         };
         let draft = "";
         let lastPaint = 0;
+        let lastPreview = "";
         let statusRaw = "AI 正在准备…";
         let statusLine = withTime(statusRaw);
 
         const paintDraft = (force = false) => {
+          if (!isRunActive()) return;
           const now = Date.now();
           if (!force && now - lastPaint < 80) return;
           lastPaint = now;
           // 避免太长卡 UI：只展示最后 6000 字符
           const shown = draft.length > 6000 ? "…（已省略前面内容）\n" + draft.slice(-6000) : draft;
+          if (shown !== lastPreview) {
+            lastPreview = shown;
+            setProcessCurrent((prev) =>
+              prev && prev.id === runId ? { ...prev, draftPreview: shown, draftUpdatedAt: now } : prev,
+            );
+          }
           setMessages((m) => {
             const mm = m.slice();
             for (let i = mm.length - 1; i >= 0; i--) {
@@ -1188,6 +1307,7 @@ export default function CreateStudio({
 
         // 计时器：即使长时间没有 status/delta，也要让 “xxs” 动起来
         const timeTicker = setInterval(() => {
+          if (!isRunActive()) return;
           statusLine = withTime(statusRaw);
           paintDraft(true);
         }, 500);
@@ -1196,39 +1316,40 @@ export default function CreateStudio({
           while (true) {
             const { value, done } = await reader.read();
             if (done) break;
+            if (!isRunActive()) break;
             const chunk = dec.decode(value, { stream: true });
-            const events = parseSseChunk(sseState, chunk);
-            for (const ev of events) {
-              if (ev.event === "status") {
-                statusRaw = String(ev.data?.text || "AI 思考中…");
-                statusLine = withTime(statusRaw);
-                const inferred = inferStepFromStatusText(statusRaw);
-                applyProgressUpdate(
-                  {
-                    mode: inferred?.mode,
-                    stepId: inferred?.id || "status",
-                    stepLabel: inferred?.label || "处理中",
-                    status: "running",
-                    detail: summarizeStatusText(statusRaw),
-                    summary: summarizeStatusText(statusRaw),
-                    source: "status",
-                  },
-                  progressFallback,
-                );
-                paintDraft(true);
-              } else if (ev.event === "meta") {
+              const events = parseSseChunk(sseState, chunk);
+              for (const ev of events) {
+                if (!isRunActive()) break;
+                if (ev.event === "status") {
+                  statusRaw = String(ev.data?.text || "AI 思考中…");
+                  statusLine = withTime(statusRaw);
+                  const inferred = inferStepFromStatusText(statusRaw);
+                  applyProgressUpdate(
+                    {
+                      mode: inferred?.mode,
+                      stepId: inferred?.id || "status",
+                      stepLabel: inferred?.label || "处理中",
+                      status: "running",
+                      detail: summarizeStatusText(statusRaw),
+                      summary: summarizeStatusText(statusRaw),
+                      source: "status",
+                    },
+                    progressFallback,
+                  );
+                  paintDraft(true);
+                } else if (ev.event === "meta") {
                 const p = String(ev.data?.provider || "").trim();
                 const m = String(ev.data?.model || "").trim();
                 const reason = String(ev.data?.reason || "").trim();
                 const phase = String(ev.data?.phase || "").trim();
                 if (reason && p === "deepseek") {
-                  // 明确提醒用户：已回退到 DeepSeek
-                  statusRaw = `已回退到 DeepSeek（${m || "deepseek-v4-flash"}）`;
+                  statusRaw = "AI 正在继续生成代码";
                   if (m) setCurrentModelLabel(`当前模型：deepseek / ${m}`);
                 } else if (p && m) {
-                  statusRaw = `当前模型：${p} / ${m}`;
                   setCurrentModelLabel(`当前模型：${p} / ${m}`);
                 }
+                if (!reason) statusRaw = statusTextFromPhase(phase);
                 const inferred = inferStepFromPhase(phase);
                 applyProgressUpdate(
                   {
@@ -1265,6 +1386,14 @@ export default function CreateStudio({
                   },
                   progressFallback,
                 );
+                if (
+                  String(data.stepId || "").trim() &&
+                  ["blueprint", "blueprint_update"].includes(String(data.stepId || "").trim()) &&
+                  String(data.status || "").trim() === "done"
+                ) {
+                  void loadGameMeta(useId);
+                  void refreshProjects();
+                }
               } else if (ev.event === "contract") {
                 const raw = (ev.data || {}).contract || {};
                 const contract: ProcessContract = {
@@ -1317,6 +1446,7 @@ export default function CreateStudio({
       }
 
       if (!finalContent) throw new Error("EMPTY_MODEL_RESPONSE");
+      if (activeRunIdRef.current === runId) activeRunIdRef.current = "";
       const parsed = safeJsonParse(finalContent);
       if (!parsed) throw new Error("AI_OUTPUT_NOT_JSON");
       // 若服务端返回可点击的澄清 UI（A/B/C 方案、问题选项等），保存在状态里用于渲染
@@ -1365,33 +1495,44 @@ export default function CreateStudio({
 
       // 作品信息模块（独立于游戏区）：写入 meta.json 以便跨刷新保留
       let metaObj: GameMeta | null = null;
+      let metaPersist: Record<string, any> | null = null;
       const metaRaw = (parsed as any)?.meta;
       if (metaRaw && typeof metaRaw === "object") {
+        const currentMeta = gameMeta && typeof gameMeta === "object" ? gameMeta : {};
         const creator = metaRaw?.creator && typeof metaRaw.creator === "object" ? metaRaw.creator : {};
-        metaObj = {
-          title: String(metaRaw?.title || "").trim() || String(projects.find((p) => p.gameId === useId)?.title || "").trim() || useId,
-          shortDesc: String(metaRaw?.shortDesc || "").trim(),
-          rules: String(metaRaw?.rules || "").trim(),
+        const currentCreator = currentMeta?.creator && typeof currentMeta.creator === "object" ? currentMeta.creator : {};
+        const fallbackProjectTitle = String(projects.find((p) => p.gameId === useId)?.title || "").trim();
+        metaPersist = {
+          ...(currentMeta as Record<string, any>),
+          ...(metaRaw as Record<string, any>),
+          title: String(metaRaw?.title || "").trim() || String(currentMeta?.title || "").trim() || fallbackProjectTitle || useId,
+          shortDesc: String(metaRaw?.shortDesc || "").trim() || String(currentMeta?.shortDesc || "").trim(),
+          rules: String(metaRaw?.rules || "").trim() || String(currentMeta?.rules || "").trim(),
           creator: {
-            name: String(creator?.name || "").trim() || creatorName || "创作者",
-            avatarUrl: String(creator?.avatarUrl || "").trim() || creatorAvatarUrl || "",
-            profilePath: String(creator?.profilePath || "").trim() || creatorProfilePath || "",
+            ...(currentCreator as Record<string, any>),
+            ...(creator as Record<string, any>),
+            name: String(creator?.name || "").trim() || String(currentCreator?.name || "").trim() || creatorName || "创作者",
+            avatarUrl: String(creator?.avatarUrl || "").trim() || String(currentCreator?.avatarUrl || "").trim() || creatorAvatarUrl || "",
+            profilePath: String(creator?.profilePath || "").trim() || String(currentCreator?.profilePath || "").trim() || creatorProfilePath || "",
           },
         };
+        metaObj = metaPersist as GameMeta;
         setGameMeta(metaObj);
       }
 
       const files = (Array.isArray(parsed.files) ? parsed.files : []) as ModelFile[];
       const toWrite: ModelFile[] = files.slice();
-      if (metaObj) toWrite.push({ path: "meta.json", content: JSON.stringify(metaObj, null, 2) });
+      if (metaPersist) toWrite.push({ path: "meta.json", content: JSON.stringify(metaPersist, null, 2) });
       if (toWrite.length) {
         await writeFiles(toWrite, useId);
         updatePreviewUrl(`${entryOf(useId)}?t=${encodeURIComponent(nowId())}`, { enable: true });
         // 重新拉一下 meta，确保与 DB 同步（例如被后端裁剪/规范化）
-        loadGameMeta(useId);
+        await loadGameMeta(useId);
+        void refreshProjects();
       }
       archiveProcessRun("done");
     } catch (e: any) {
+      if (activeRunIdRef.current === runId) activeRunIdRef.current = "";
       // 用户主动停止
       if (e?.name === "AbortError") {
         setMsg("已停止。你可以修改一下，再点发送～");
@@ -1443,6 +1584,7 @@ export default function CreateStudio({
       });
       archiveProcessRun("failed", m);
     } finally {
+      if (activeRunIdRef.current === runId) activeRunIdRef.current = "";
       setBusy(false);
       abortRef.current = null;
     }
@@ -1479,6 +1621,7 @@ export default function CreateStudio({
   }
 
   function stopAi() {
+    activeRunIdRef.current = "";
     try {
       abortRef.current?.abort();
     } catch {}
@@ -1546,9 +1689,10 @@ export default function CreateStudio({
       } else if (type === "delete") {
         if (!gameId) return;
         (async () => {
+          const deletingId = gameId;
+          setDeletingGameId(deletingId);
           try {
             setMsg("");
-            const deletingId = gameId;
             const r = await fetch("/api/creator/delete", {
               method: "POST",
               headers: { "content-type": "application/json" },
@@ -1578,6 +1722,8 @@ export default function CreateStudio({
             setMessages([{ role: "assistant", content: "我帮你新建了一个空白小游戏～你想做什么？" }]);
           } catch (err: any) {
             setMsg(`删除失败：${err?.message || "未知错误"}`);
+          } finally {
+            setDeletingGameId((cur) => (cur === deletingId ? "" : cur));
           }
         })();
       }
@@ -1600,7 +1746,7 @@ export default function CreateStudio({
                 setGameId(gid);
                 if (gid) updatePreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`, { enable: false });
               }}
-              disabled={busy}
+              disabled={uiBusy}
               aria-label="选择历史游戏"
               style={{ padding: "8px 10px", fontSize: 13, fontWeight: 900 }}
             >
@@ -1608,7 +1754,7 @@ export default function CreateStudio({
               {projects.map((p) => (
                 <option key={p.gameId} value={p.gameId}>
                   {(p.title && p.title.trim()) ? p.title.trim() : p.gameId}
-                  {p.published ? "  · 已发布" : "  · 草稿"}
+                  {p.published ? "" : "  · 待发布"}
                 </option>
               ))}
             </select>
@@ -1616,185 +1762,114 @@ export default function CreateStudio({
 
           <details className="createMenu" ref={opMenuRef}>
             <summary className="createMenuBtn" aria-label="更多操作">
-              操作 ▾
+              {deletingBusy ? "删除中…" : "操作 ▾"}
             </summary>
             <div className="createMenuPanel" role="menu" aria-label="创作操作菜单">
-              <button className="createMenuItem" type="button" onClick={() => act("new")} disabled={busy}>
+              <button className="createMenuItem" type="button" onClick={() => act("new")} disabled={uiBusy}>
                 新建游戏
               </button>
-              <button className="createMenuItem" type="button" onClick={() => act("publish")} disabled={busy || !gameId}>
+              <button className="createMenuItem" type="button" onClick={() => act("publish")} disabled={uiBusy || !gameId}>
                 {publishText}
               </button>
-              <button className="createMenuItem" type="button" onClick={() => act("delete")} disabled={busy || !gameId}>
-                删除游戏
+              <button className="createMenuItem" type="button" onClick={() => act("delete")} disabled={uiBusy || !gameId}>
+                {deletingBusy ? "删除中…" : "删除游戏"}
               </button>
             </div>
           </details>
         </div>
+        {deletingBusy ? (
+          <div className="createBusyHint" role="status" aria-live="polite">
+            正在删除游戏…
+          </div>
+        ) : null}
       </div>
 
       <section className="createGrid">
         <div className="createPanel isChat" aria-label="chat">
           <div className="createPanelHeader">
             <div>
-              <div className="createPanelTitle">AI 聊天</div>
-              <div className="createPanelSub">描述玩法、按钮、胜负条件与画面风格</div>
-              {(processCurrent || processHistory.length) ? (
-                <div className="createProcessPanel" aria-label="AI 生成过程面板">
-                  {processCurrent ? (
-                    <details
-                      className={`processRunCard ${processCollapsed ? "isCollapsed" : ""}`}
-                      open={!processCollapsed}
-                      onToggle={(e) => setProcessCollapsed(!(e.currentTarget as HTMLDetailsElement).open)}
-                    >
-                      <summary className="processRunTop" aria-label="AI 生成过程（点击收起/展开）">
-                        <div className="processRunTitle">AI 生成过程</div>
-                        <div className="processRunBadges">
-                          <span className="processBadge">{processModeLabel(processCurrent.mode)}</span>
-                          <span className={`processBadge is-${processCurrent.status}`}>{processStatusLabel(processCurrent.status)}</span>
-                          <span className="processBadge isMuted">{formatElapsed(processCurrent.startedAt)}</span>
-                        </div>
-                        <div className="processRunMetaLine">
-                          <span>{processCurrent.provider} / {processCurrent.model}</span>
-                          {activeProcessStep?.strategy ? <span>策略：{activeProcessStep.strategy}</span> : null}
-                          {activeProcessStep?.fileTargets?.length ? <span>文件：{activeProcessStep.fileTargets.join("、")}</span> : null}
-                        </div>
-                        <div className="processRunSummary">{processCurrent.summary || "AI 正在处理…"}</div>
-                        <div className="processBar" aria-hidden="true">
-                          <span style={{ width: `${processCompletion || 12}%` }} />
-                        </div>
-                      </summary>
-                      {processCurrent.steps.length ? (
-                        <div className="processSteps">
-                          {processCurrent.steps.map((step) => (
-                            <div
-                              key={step.id}
-                              className={`processStep is-${step.status} ${processCurrent.currentStepId === step.id ? "isCurrent" : ""}`}
-                            >
-                              <div className="processStepHead">
-                                <span className="processStepDot" />
-                                <span className="processStepLabel">{step.label}</span>
-                                <span className="processStepStatus">
-                                  {step.status === "running"
-                                    ? "进行中"
-                                    : step.status === "done"
-                                      ? "完成"
-                                      : step.status === "upgraded"
-                                        ? "已升级"
-                                        : step.status === "failed"
-                                          ? "失败"
-                                          : "待处理"}
-                                </span>
-                              </div>
-                              {step.detail ? <div className="processStepDetail">{step.detail}</div> : null}
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                      {processCurrent.contract ? (
-                        <details className="processContractBox">
-                          <summary>查看本次需求契约</summary>
-                          <div className="processContractGrid">
-                            {processCurrent.contract.topic ? <div><strong>主题</strong><span>{processCurrent.contract.topic}</span></div> : null}
-                            {processCurrent.contract.gameplay ? <div><strong>玩法</strong><span>{processCurrent.contract.gameplay}</span></div> : null}
-                            {processCurrent.contract.platform ? <div><strong>平台</strong><span>{processCurrent.contract.platform}</span></div> : null}
-                            {processCurrent.contract.theme ? <div><strong>风格</strong><span>{processCurrent.contract.theme}</span></div> : null}
-                            {processCurrent.contract.keyUi?.length ? <div><strong>关键 UI</strong><span>{processCurrent.contract.keyUi.join("、")}</span></div> : null}
-                            {processCurrent.contract.mustHave?.length ? <div><strong>Must-have</strong><span>{processCurrent.contract.mustHave.join("；")}</span></div> : null}
-                            {processCurrent.contract.forbidden?.length ? <div><strong>禁忌项</strong><span>{processCurrent.contract.forbidden.join("；")}</span></div> : null}
-                          </div>
-                        </details>
-                      ) : null}
-                    </details>
-                  ) : null}
-
-                  {processHistory.length ? (
-                    <details className="processHistoryBox" open={!processCurrent}>
-                      <summary>最近运行记录（{processHistory.length}）</summary>
-                      <div className="processHistoryList">
-                        {processHistory.map((run) => (
-                          <details key={run.id} className="processHistoryItem">
-                            <summary>
-                              <span className="processHistoryTitle">{processModeLabel(run.mode)}</span>
-                              <span className={`processBadge is-${run.status}`}>{processStatusLabel(run.status)}</span>
-                              <span className="processHistoryMeta">{formatElapsed(run.startedAt, run.finishedAt)}</span>
-                            </summary>
-                            <div className="processHistoryBody">
-                              <div className="processHistoryMetaLine">{run.provider} / {run.model}</div>
-                              <div className="processHistorySummary">{run.summary}</div>
-                              {run.error ? <div className="processHistoryError">{run.error}</div> : null}
-                              {run.steps.length ? (
-                                <div className="processSteps isHistory">
-                                  {run.steps.map((step) => (
-                                    <div key={step.id} className={`processStep is-${step.status}`}>
-                                      <div className="processStepHead">
-                                        <span className="processStepDot" />
-                                        <span className="processStepLabel">{step.label}</span>
-                                        <span className="processStepStatus">
-                                          {step.status === "running"
-                                            ? "进行中"
-                                            : step.status === "done"
-                                              ? "完成"
-                                              : step.status === "upgraded"
-                                                ? "已升级"
-                                                : step.status === "failed"
-                                                  ? "失败"
-                                                  : "待处理"}
-                                        </span>
-                                      </div>
-                                      {step.detail ? <div className="processStepDetail">{step.detail}</div> : null}
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : null}
-                            </div>
-                          </details>
-                        ))}
-                      </div>
-                    </details>
-                  ) : null}
-                </div>
-              ) : null}
+              <div className="createPanelName" title={currentGameTitle}>{currentGameTitle}</div>
             </div>
           </div>
 
         <div className="chatList" ref={listRef}>
-          {viewMessages.map((m, idx) => (
+          {viewMessages.map((m, idx) => {
+            const isThinkingMessage = m.role === "assistant" && typeof m.content === "string" && m.content.startsWith(THINK_PREFIX);
+            let thinkSummary = "";
+            let thinkDetail = "";
+            if (isThinkingMessage) {
+              const rest = m.content.slice(THINK_PREFIX.length).trimStart();
+              const nl = rest.indexOf("\n");
+              thinkSummary = nl >= 0 ? rest.slice(0, nl).trim() : "正在思考…";
+              thinkDetail = nl >= 0 ? rest.slice(nl + 1) : "";
+            }
+            const thinkingRun = isThinkingMessage && idx === viewMessages.length - 1 ? processCurrent : null;
+            const thinkLogs = Array.isArray(thinkingRun?.logs)
+              ? thinkingRun.logs
+                  .map((log) => ({
+                    id: String(log?.id || ""),
+                    text: String(log?.text || "").trim(),
+                    at: Number(log?.at || 0),
+                  }))
+                  .filter((log) => log.text)
+                  .filter((log, logIdx, arr) => logIdx === 0 || log.text !== arr[logIdx - 1].text)
+              : [];
+            const combinedThinkingDetail = [
+              thinkLogs.length ? thinkLogs.map((log) => log.text).join("\n") : "",
+              thinkDetail,
+            ]
+              .filter(Boolean)
+              .join("\n\n")
+              .trim();
+            const hasThinkingDetail = !!combinedThinkingDetail;
+            const hasThinkingPanel = hasThinkingDetail;
+            const shouldAutoOpenThinking = busy && idx === viewMessages.length - 1 && isThinkingMessage && !hasThinkingDetail;
+            return (
             <div
               key={idx}
               className={
                 `chatMsg ${m.role === "user" ? "isUser" : "isAi"} ` +
-                `${m.role === "assistant" && typeof m.content === "string" && m.content.startsWith(THINK_PREFIX) ? "isThinking" : ""}`
+                `${isThinkingMessage ? "isThinking" : ""}`
               }
             >
               {busy &&
               idx === viewMessages.length - 1 &&
-              m.role === "assistant" &&
-              typeof m.content === "string" &&
-              m.content.startsWith(THINK_PREFIX) ? (
+              isThinkingMessage ? (
                 <button className="chatStopLink" type="button" onClick={stopAi} aria-label="停止AI任务">
                   停止
                 </button>
               ) : null}
-              {m.role === "assistant" && typeof m.content === "string" && m.content.startsWith(THINK_PREFIX) ? (
+              {isThinkingMessage ? (
                 (() => {
-                  const rest = m.content.slice(THINK_PREFIX.length).trimStart();
-                  const nl = rest.indexOf("\n");
-                  const summary = nl >= 0 ? rest.slice(0, nl).trim() : "AI 正在思考…";
-                  const detail = nl >= 0 ? rest.slice(nl + 1) : "";
                   return (
-                    <details className="thinkBox">
-                      <summary className="thinkSummary">AI · {summary}</summary>
-                      <pre className="thinkBody">{detail || "（暂无输出）"}</pre>
+                    <details className="thinkBox" open={shouldAutoOpenThinking}>
+                      <summary className="thinkSummary">
+                        <span className="thinkSummaryText">{thinkSummary}</span>
+                        <span className="thinkSummaryMeta">
+                          {hasThinkingPanel ? (
+                            <span className="thinkChevron" aria-hidden="true">
+                              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                                <path
+                                  d="M5.25 3 8.75 7 5.25 11"
+                                  stroke="currentColor"
+                                  strokeWidth="1.8"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                              </svg>
+                            </span>
+                          ) : null}
+                        </span>
+                      </summary>
+                      {hasThinkingDetail ? <pre className="thinkBody">{combinedThinkingDetail}</pre> : null}
                     </details>
                   );
                 })()
               ) : (
                 <>
-                  <div className="chatRole">{m.role === "user" ? "我" : "AI"}</div>
                   <div className="chatText">{m.content}</div>
                   {/* 需求澄清：可点击选项（多轮选择，最多 3 次） */}
-                  {m.role === "assistant" && idx === viewMessages.length - 1 && clarifyUi && !busy ? (
+                  {m.role === "assistant" && idx === viewMessages.length - 1 && clarifyUi && !uiBusy ? (
                     <div
                       className="chatInlineActions"
                       style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}
@@ -1855,7 +1930,7 @@ export default function CreateStudio({
                                     const id = String(o?.id || "").trim() || String(["A", "B", "C"][i] || "A");
                                     const label = String(o?.title || o?.label || "").trim() || `方案${id}`;
                                     return (
-                                      <button key={i} className="btn btnGray" type="button" onClick={() => applyChoice(id)} disabled={busy}>
+                                      <button key={i} className="btn btnGray" type="button" onClick={() => applyChoice(id)} disabled={uiBusy}>
                                         方案{id}：{label}
                                       </button>
                                     );
@@ -1876,7 +1951,7 @@ export default function CreateStudio({
                                         {choices.slice(0, 4).map((c: any, ci: number) => {
                                           const cc = String(c || "").trim();
                                           return (
-                                            <button key={ci} className="btn btnGray" type="button" onClick={() => applyAnswer(qid, cc)} disabled={busy}>
+                                            <button key={ci} className="btn btnGray" type="button" onClick={() => applyAnswer(qid, cc)} disabled={uiBusy}>
                                               {cc}
                                             </button>
                                           );
@@ -1889,11 +1964,11 @@ export default function CreateStudio({
 
                               {hasChoice ? (
                                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                                  <button className="btn" type="button" onClick={skipToCoding} disabled={busy}>
+                                  <button className="btn" type="button" onClick={skipToCoding} disabled={uiBusy}>
                                     开始生成（跳过剩余选择）
                                   </button>
                                   {(turn >= maxTurns || nextIdx < 0) ? (
-                                    <button className="btn" type="button" onClick={startCoding} disabled={busy}>
+                                    <button className="btn" type="button" onClick={startCoding} disabled={uiBusy}>
                                       开始生成
                                     </button>
                                   ) : null}
@@ -1914,7 +1989,7 @@ export default function CreateStudio({
                             const label = String(o?.label || "").trim() || `方案${id || i + 1}`;
                             const payload = String(o?.payload || (id ? `@choice ${id}` : `@choice A`)).trim();
                             return (
-                              <button key={i} className="btn btnGray" type="button" onClick={() => sendText(payload)} disabled={busy}>
+                              <button key={i} className="btn btnGray" type="button" onClick={() => sendText(payload)} disabled={uiBusy}>
                                 {id ? `方案${id}：` : ""}
                                 {label}
                               </button>
@@ -1937,7 +2012,7 @@ export default function CreateStudio({
                                     const cc = String(c || "").trim();
                                     const payload = `@answer ${qid} ${cc}`;
                                     return (
-                                      <button key={ci} className="btn btnGray" type="button" onClick={() => sendText(payload)} disabled={busy}>
+                                      <button key={ci} className="btn btnGray" type="button" onClick={() => sendText(payload)} disabled={uiBusy}>
                                         {cc}
                                       </button>
                                     );
@@ -1955,7 +2030,7 @@ export default function CreateStudio({
                             const label = String(a?.label || "").trim() || "确认";
                             const payload = String(a?.payload || label).trim();
                             return (
-                              <button key={ai} className="btn" type="button" onClick={() => sendText(payload)} disabled={busy}>
+                              <button key={ai} className="btn" type="button" onClick={() => sendText(payload)} disabled={uiBusy}>
                                 {label}
                               </button>
                             );
@@ -1970,7 +2045,7 @@ export default function CreateStudio({
                     </div>
                   ) : null}
                   {/* 失败时：在最后一个 AI 气泡后面给“重试”按钮（更符合用户预期） */}
-                  {m.role === "assistant" && idx === viewMessages.length - 1 && lastFailedText && !busy ? (
+                  {m.role === "assistant" && idx === viewMessages.length - 1 && lastFailedText && !uiBusy ? (
                     <div className="chatInlineActions">
                       <button className="chatInlineRetry" type="button" onClick={() => sendText(lastFailedText)}>
                         重试
@@ -1980,7 +2055,7 @@ export default function CreateStudio({
                 </>
               )}
             </div>
-          ))}
+          )})}
         </div>
 
         <div className="chatComposer">
@@ -1989,7 +2064,7 @@ export default function CreateStudio({
               <div className="desc" style={{ color: "rgba(220,38,38,0.95)", margin: 0 }}>
                 {msg}
               </div>
-              {lastFailedText && !busy ? (
+              {lastFailedText && !uiBusy ? (
                 <button className="btn btnGray" type="button" onClick={() => sendText(lastFailedText)}>
                   重试
                 </button>
@@ -2002,7 +2077,7 @@ export default function CreateStudio({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               rows={4}
-              disabled={busy}
+              disabled={uiBusy}
               placeholder="描述你的需求或问题：玩法/按钮/胜负条件/画面风格；或直接描述 bug（复现步骤、期望/实际、设备/报错）"
             />
             <div className="sendCol">
@@ -2011,7 +2086,7 @@ export default function CreateStudio({
                 type="button"
                 onClick={toggleSpeech}
                 // 不因“不支持”而禁用：手机端可点击后给出提示（用键盘语音输入）
-                disabled={busy}
+                disabled={uiBusy}
                 aria-label={listening ? "停止语音输入" : "语音输入"}
                 title={listening ? "停止语音输入" : "语音输入"}
               >
@@ -2033,7 +2108,7 @@ export default function CreateStudio({
                   </svg>
                 )}
               </button>
-              <button className="btn sendBtn" type="button" onClick={send} disabled={busy || !input.trim()} aria-label="发送">
+              <button className="btn sendBtn" type="button" onClick={send} disabled={uiBusy || !input.trim()} aria-label="发送">
                 ➤ 发送
               </button>
             </div>
@@ -2050,7 +2125,7 @@ export default function CreateStudio({
                 <select
                   className="restInput modelEggSelect"
                   value={provider}
-                  disabled={busy}
+                  disabled={uiBusy}
                   onChange={(e) => {
                     const p = (e.target.value || "openrouter") as any;
                     if (p !== "deepseek" && p !== "openrouter" && p !== "bailian" && p !== "tencent") return;
@@ -2073,7 +2148,7 @@ export default function CreateStudio({
                 <select
                   className="restInput modelEggSelect"
                   value={model}
-                  disabled={busy}
+                  disabled={uiBusy}
                   onChange={(e) => setModel(e.target.value)}
                   aria-label="选择模型"
                 >
@@ -2154,7 +2229,7 @@ export default function CreateStudio({
                           if (!gameId) return;
                           updatePreviewUrl(`${entryOf(gameId)}?t=${encodeURIComponent(nowId())}`, { enable: true });
                         }}
-                        disabled={!gameId}
+                        disabled={!gameId || uiBusy}
                       >
                         加载预览
                       </button>
@@ -2166,7 +2241,7 @@ export default function CreateStudio({
 
             <aside className="metaPanel" aria-label="meta">
               {/* 右侧信息栏：标题直接显示作品名称，节省空间 */}
-              <div className="metaTitle">{(gameMeta?.title || "").trim() || "未命名作品"}</div>
+              <div className="metaTitle">{currentGameTitle}</div>
               <div className="metaBlock">
                 <div className="metaLabel">简介</div>
                 <div className="metaValue">{gameMeta?.shortDesc || "（待补充）"}</div>
@@ -2178,20 +2253,20 @@ export default function CreateStudio({
               <div className="metaBlock">
                 <div className="metaLabel">创作者</div>
                 <div className="metaValue" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  {(gameMeta?.creator?.avatarUrl || creatorAvatarUrl) ? (
+                  {currentCreatorAvatarUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={String(gameMeta?.creator?.avatarUrl || creatorAvatarUrl)}
+                      src={currentCreatorAvatarUrl}
                       alt="创作者头像"
                       style={{ width: 22, height: 22, borderRadius: 999, objectFit: "cover" }}
                     />
                   ) : null}
-                  {gameMeta?.creator?.profilePath || creatorProfilePath ? (
-                    <a href={String(gameMeta?.creator?.profilePath || creatorProfilePath)} className="metaLink">
-                      {gameMeta?.creator?.name || creatorName || "创作者"}
+                  {currentCreatorProfilePath ? (
+                    <a href={currentCreatorProfilePath} className="metaLink">
+                      {currentCreatorName}
                     </a>
                   ) : (
-                    <span>{gameMeta?.creator?.name || creatorName || "创作者"}</span>
+                    <span>{currentCreatorName}</span>
                   )}
                 </div>
               </div>

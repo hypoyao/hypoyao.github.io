@@ -223,13 +223,14 @@ const BLUEPRINT_PROMPT = `
 2) 你必须先把“关键命名/协议”定下来，后续写代码必须一模一样（比如：canvasId、按钮id、全局对象名、关键变量名）。
 3) 蓝图要短、清楚、孩子能读懂；不要写长篇。
 4) 必须紧扣【用户最早的主题】，不能跑题。
+5) 必须从“用户最早主题”的关键词里提炼一个适合作品展示的短标题，写到 meta.title；这个标题会被固定下来，后续不要随意改名。
 
 【输出要求：分段文本协议（更稳，严禁 JSON）】
 你必须严格按下面格式输出 5 个段落。每一段都只允许写简单的 key=value 行，段落外禁止任何解释文字。
 不要输出 JSON，不要输出 markdown 标题，不要写“下面是蓝图”之类说明。
 
 ===SECTION:meta===
-title=...
+title=从用户需求关键词提炼出的稳定短标题（不要写“我的小游戏”这种泛标题）
 shortDesc=...
 rules=...
 creatorName=...
@@ -281,10 +282,11 @@ const BLUEPRINT_UPDATE_PROMPT = `
 3) 尽量保持 protocol.state.name 与 vars 不变；如果必须新增变量，只能“追加”，不要删除旧变量。
 4) 只做“最小必要修改”，避免把整个游戏换成另一个玩法。
 5) 输出必须是“蓝图分段文本协议”（key=value 行），严禁输出 JSON。
+6) meta.title 视为已固定标题，除非我明确要求改名，否则必须保持原样。
 
 【输出格式（必须严格）】
 ===SECTION:meta===
-title=...
+title=保持当前固定标题，不要改名
 shortDesc=...
 rules=...
 creatorName=...
@@ -450,9 +452,7 @@ function extractPlainCodeText(raw: string, languageHints: string[] = []) {
   return text;
 }
 
-// 通用校验：检查 index.html 内联 <script>（无 src）是否可被 JS 解析
-function validateInlineScripts(html: string) {
-  const err: string[] = [];
+function collectInlineScriptBlocks(html: string) {
   const blocks: string[] = [];
   const re = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
   let m: RegExpExecArray | null;
@@ -462,13 +462,661 @@ function validateInlineScripts(html: string) {
     const code = String(m[2] || "").trim();
     if (code) blocks.push(code);
   }
+  return blocks;
+}
+
+// 通用校验：检查 index.html 内联 <script>（无 src）是否可被 JS 解析
+function validateInlineScripts(html: string) {
+  const err: string[] = [];
   try {
-    const js = blocks.join("\n\n");
+    const js = collectInlineScriptBlocks(html).join("\n\n");
     if (js.trim()) new Script(js);
   } catch (e: any) {
     err.push(`index.html 内联脚本语法错误：${String(e?.message || e)}`);
   }
   return err;
+}
+
+function validateStandaloneJsSyntax(jsCode: string) {
+  try {
+    if (String(jsCode || "").trim()) new Script(String(jsCode || ""));
+    return "";
+  } catch (e: any) {
+    return String(e?.message || e || "");
+  }
+}
+
+function hasExpectedAssetReference(indexHtml: string, relPath: string, attr: "href" | "src") {
+  const safePath = escapeRegExp(String(relPath || "").replace(/^\.\//, ""));
+  const re = new RegExp(`${attr}\\s*=\\s*["'](?:\\.\\/)?${safePath}(?:\\?[^"']*)?["']`, "i");
+  return re.test(String(indexHtml || ""));
+}
+
+type AcceptanceReport = {
+  blockers: string[];
+  warnings: string[];
+};
+
+type SandboxSelfCheckResult = {
+  blockers: string[];
+  warnings: string[];
+};
+
+function pushUniqueIssue(list: string[], raw: string) {
+  const msg = String(raw || "").trim();
+  if (!msg) return;
+  if (!list.includes(msg)) list.push(msg);
+}
+
+function formatSandboxValue(value: any): string {
+  if (value == null) return String(value);
+  if (typeof value === "string") return value;
+  if (value instanceof Error) return value.message || String(value);
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {}
+  }
+  return String(value);
+}
+
+type HtmlElementSeed = {
+  tagName: string;
+  id: string;
+  classes: string[];
+};
+
+function parseHtmlElementSeeds(html: string): HtmlElementSeed[] {
+  const seeds: HtmlElementSeed[] = [];
+  const re = /<([a-zA-Z][\w:-]*)\b([^>]*)>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(String(html || "")))) {
+    const tagName = String(m[1] || "").toLowerCase();
+    if (!tagName || ["script", "style"].includes(tagName)) continue;
+    const attrs = String(m[2] || "");
+    const id = String(attrs.match(/\bid\s*=\s*["']([^"']+)["']/i)?.[1] || "").trim();
+    const classes = String(attrs.match(/\bclass\s*=\s*["']([^"']+)["']/i)?.[1] || "")
+      .split(/\s+/)
+      .map((x) => x.trim())
+      .filter(Boolean);
+    seeds.push({ tagName, id, classes });
+  }
+  return seeds;
+}
+
+function createCanvasContextProxy(canvas: any) {
+  let proxy: any = null;
+  const fn = () => undefined;
+  proxy = new Proxy(fn as any, {
+    get(_target, prop) {
+      if (prop === "canvas") return canvas;
+      if (prop === Symbol.toPrimitive) return () => 0;
+      return proxy;
+    },
+    apply() {
+      return undefined;
+    },
+    set() {
+      return true;
+    },
+  });
+  return proxy;
+}
+
+async function runSandboxSelfCheck(indexHtml: string, jsCode: string): Promise<SandboxSelfCheckResult> {
+  const blockers: string[] = [];
+  const warnings: string[] = [];
+  const seeds = parseHtmlElementSeeds(indexHtml);
+  const byId = new Map<string, any>();
+  const allElements: any[] = [];
+  const classMap = new Map<string, any[]>();
+  const scheduledTasks: Array<() => any> = [];
+  const documentListeners = new Map<string, Function[]>();
+  const windowListeners = new Map<string, Function[]>();
+  const storageData = new Map<string, string>();
+  let documentRef: any = null;
+  let sandboxRef: any = null;
+
+  const registerClass = (cls: string, el: any) => {
+    const list = classMap.get(cls) || [];
+    if (!list.includes(el)) list.push(el);
+    classMap.set(cls, list);
+  };
+
+  const unregisterClasses = (el: any) => {
+    for (const [cls, list] of classMap.entries()) {
+      const next = list.filter((x) => x !== el);
+      if (next.length) classMap.set(cls, next);
+      else classMap.delete(cls);
+    }
+  };
+
+  class FakeClassList {
+    owner: any;
+    valuesSet: Set<string>;
+    constructor(owner: any, values: string[] = []) {
+      this.owner = owner;
+      this.valuesSet = new Set(values);
+      this.sync();
+    }
+    private sync() {
+      unregisterClasses(this.owner);
+      const values = Array.from(this.valuesSet);
+      this.owner.className = values.join(" ");
+      for (const cls of values) registerClass(cls, this.owner);
+    }
+    add(...tokens: string[]) {
+      for (const token of tokens) if (token) this.valuesSet.add(String(token));
+      this.sync();
+    }
+    remove(...tokens: string[]) {
+      for (const token of tokens) this.valuesSet.delete(String(token));
+      this.sync();
+    }
+    contains(token: string) {
+      return this.valuesSet.has(String(token));
+    }
+    toggle(token: string, force?: boolean) {
+      const key = String(token);
+      if (force === true) this.valuesSet.add(key);
+      else if (force === false) this.valuesSet.delete(key);
+      else if (this.valuesSet.has(key)) this.valuesSet.delete(key);
+      else this.valuesSet.add(key);
+      this.sync();
+      return this.valuesSet.has(key);
+    }
+    values() {
+      return Array.from(this.valuesSet);
+    }
+    toString() {
+      return Array.from(this.valuesSet).join(" ");
+    }
+  }
+
+  const makeNodeList = (list: any[]) => {
+    const arr = list.slice();
+    (arr as any).item = (i: number) => arr[i] || null;
+    return arr as any;
+  };
+
+  const queueTask = (fn: any) => {
+    if (typeof fn === "function" && scheduledTasks.length < 48) scheduledTasks.push(fn);
+    return scheduledTasks.length;
+  };
+
+  const invokeHandlers = async (handlers: Function[], thisArg: any, event: any) => {
+    for (const handler of handlers) {
+      try {
+        const res = handler.call(thisArg, event);
+        if (res && typeof (res as any).then === "function") await res;
+      } catch (e: any) {
+        pushUniqueIssue(blockers, `沙盒自检运行报错：${formatSandboxValue(e?.message || e).slice(0, 220)}`);
+      }
+    }
+  };
+
+  const queryElements = (selector: string) => {
+    const raw = String(selector || "").trim();
+    if (!raw) return [];
+    const selectors = raw.split(",").map((x) => x.trim()).filter(Boolean);
+    const out: any[] = [];
+    for (const sel of selectors) {
+      if (sel === "body" && documentRef?.body) {
+        out.push(documentRef.body);
+        continue;
+      }
+      if ((sel === "html" || sel === ":root") && documentRef?.documentElement) {
+        out.push(documentRef.documentElement);
+        continue;
+      }
+      if (sel.startsWith("#")) {
+        const hit = byId.get(sel.slice(1));
+        if (hit) out.push(hit);
+        continue;
+      }
+      if (sel.startsWith(".")) {
+        for (const hit of classMap.get(sel.slice(1)) || []) if (!out.includes(hit)) out.push(hit);
+        continue;
+      }
+      const lower = sel.toLowerCase();
+      for (const el of allElements) {
+        if (String(el.tagName || "").toLowerCase() === lower && !out.includes(el)) out.push(el);
+      }
+    }
+    return out;
+  };
+
+  class FakeElement {
+    id: string;
+    tagName: string;
+    className = "";
+    classList: FakeClassList;
+    style: Record<string, any>;
+    dataset: Record<string, string>;
+    children: any[];
+    parentNode: any;
+    ownerDocument: any;
+    eventListeners: Map<string, Function[]>;
+    hidden: boolean;
+    disabled: boolean;
+    value: string;
+    textContent: string;
+    innerHTML: string;
+    width: number;
+    height: number;
+    clientWidth: number;
+    clientHeight: number;
+    attributes: Map<string, string>;
+    constructor(tagName: string, id = "", classes: string[] = []) {
+      this.id = id;
+      this.tagName = String(tagName || "div").toUpperCase();
+      this.style = new Proxy<Record<string, any>>({}, {
+        get(target, prop: string) {
+          return prop in target ? target[prop] : "";
+        },
+        set(target, prop: string, value) {
+          target[prop] = value;
+          return true;
+        },
+      });
+      this.dataset = {};
+      this.children = [];
+      this.parentNode = null;
+      this.ownerDocument = null;
+      this.eventListeners = new Map();
+      this.hidden = false;
+      this.disabled = false;
+      this.value = "";
+      this.textContent = "";
+      this.innerHTML = "";
+      this.width = 320;
+      this.height = 180;
+      this.clientWidth = 320;
+      this.clientHeight = 180;
+      this.attributes = new Map();
+      this.classList = new FakeClassList(this, classes);
+    }
+    addEventListener(type: string, handler: any) {
+      const key = String(type || "");
+      const arr = this.eventListeners.get(key) || [];
+      if (typeof handler === "function") arr.push(handler);
+      this.eventListeners.set(key, arr);
+    }
+    removeEventListener(type: string, handler: any) {
+      const key = String(type || "");
+      const arr = (this.eventListeners.get(key) || []).filter((fn) => fn !== handler);
+      this.eventListeners.set(key, arr);
+    }
+    dispatchEvent(evt: any) {
+      const event = evt && typeof evt === "object" ? evt : { type: String(evt || "") };
+      event.target = event.target || this;
+      event.currentTarget = this;
+      event.preventDefault = event.preventDefault || (() => undefined);
+      event.stopPropagation = event.stopPropagation || (() => undefined);
+      const handlers = this.eventListeners.get(String(event.type || "")) || [];
+      void invokeHandlers(handlers, this, event);
+      const inlineHandler = (this as any)[`on${String(event.type || "")}`];
+      if (typeof inlineHandler === "function") void invokeHandlers([inlineHandler], this, event);
+      return true;
+    }
+    click() {
+      this.dispatchEvent({ type: "click" });
+    }
+    focus() {}
+    blur() {}
+    appendChild(child: any) {
+      if (child && typeof child === "object") {
+        child.parentNode = this;
+        child.ownerDocument = documentRef;
+        this.children.push(child);
+        if (!allElements.includes(child)) allElements.push(child);
+        if (child.id) byId.set(child.id, child);
+      }
+      return child;
+    }
+    removeChild(child: any) {
+      this.children = this.children.filter((x) => x !== child);
+      return child;
+    }
+    setAttribute(name: string, value: any) {
+      const key = String(name || "");
+      const text = String(value ?? "");
+      this.attributes.set(key, text);
+      if (key === "id") {
+        this.id = text;
+        byId.set(text, this);
+      } else if (key === "class") {
+        this.classList = new FakeClassList(this, text.split(/\s+/).filter(Boolean));
+      } else if (key.startsWith("data-")) {
+        const dataKey = key
+          .slice(5)
+          .replace(/-([a-z])/g, (_m, c) => String(c || "").toUpperCase());
+        this.dataset[dataKey] = text;
+      }
+    }
+    getAttribute(name: string) {
+      const key = String(name || "");
+      if (key === "id") return this.id || null;
+      if (key === "class") return this.className || null;
+      return this.attributes.get(key) || null;
+    }
+    querySelector(selector: string) {
+      return queryElements(selector)[0] || null;
+    }
+    querySelectorAll(selector: string) {
+      return makeNodeList(queryElements(selector));
+    }
+    getContext() {
+      return createCanvasContextProxy(this);
+    }
+    getBoundingClientRect() {
+      return {
+        x: 0,
+        y: 0,
+        left: 0,
+        top: 0,
+        right: this.clientWidth,
+        bottom: this.clientHeight,
+        width: this.clientWidth,
+        height: this.clientHeight,
+      };
+    }
+  }
+
+  const bodyEl = new FakeElement("body");
+  const headEl = new FakeElement("head");
+  const htmlEl = new FakeElement("html");
+  allElements.push(htmlEl, headEl, bodyEl);
+
+  documentRef = {
+    readyState: "loading",
+    body: bodyEl,
+    head: headEl,
+    documentElement: htmlEl,
+    createElement(tag: string) {
+      const el = new FakeElement(tag);
+      el.ownerDocument = documentRef;
+      allElements.push(el);
+      return el;
+    },
+    createTextNode(text: string) {
+      return { nodeType: 3, textContent: String(text || "") };
+    },
+    getElementById(id: string) {
+      return byId.get(String(id || "")) || null;
+    },
+    querySelector(selector: string) {
+      return queryElements(selector)[0] || null;
+    },
+    querySelectorAll(selector: string) {
+      return makeNodeList(queryElements(selector));
+    },
+    addEventListener(type: string, handler: any) {
+      const key = String(type || "");
+      const arr = documentListeners.get(key) || [];
+      if (typeof handler === "function") arr.push(handler);
+      documentListeners.set(key, arr);
+    },
+    removeEventListener(type: string, handler: any) {
+      const key = String(type || "");
+      const arr = (documentListeners.get(key) || []).filter((fn) => fn !== handler);
+      documentListeners.set(key, arr);
+    },
+    dispatchEvent(event: any) {
+      const handlers = documentListeners.get(String(event?.type || "")) || [];
+      void invokeHandlers(handlers, documentRef, event);
+      return true;
+    },
+  };
+  bodyEl.ownerDocument = documentRef;
+  headEl.ownerDocument = documentRef;
+  htmlEl.ownerDocument = documentRef;
+  htmlEl.appendChild(headEl);
+  htmlEl.appendChild(bodyEl);
+
+  for (const seed of seeds) {
+    if (seed.tagName === "html" || seed.tagName === "head" || seed.tagName === "body") continue;
+    const el = new FakeElement(seed.tagName, seed.id, seed.classes);
+    el.ownerDocument = documentRef;
+    allElements.push(el);
+    if (seed.id) byId.set(seed.id, el);
+  }
+
+  const createStorage = () => ({
+    getItem(key: string) {
+      return storageData.has(String(key || "")) ? storageData.get(String(key || "")) || "" : null;
+    },
+    setItem(key: string, value: any) {
+      storageData.set(String(key || ""), String(value ?? ""));
+    },
+    removeItem(key: string) {
+      storageData.delete(String(key || ""));
+    },
+    clear() {
+      storageData.clear();
+    },
+  });
+
+  class SandboxEvent {
+    type: string;
+    detail: any;
+    target: any;
+    currentTarget: any;
+    constructor(type: string, init?: any) {
+      this.type = String(type || "");
+      this.detail = init?.detail;
+      this.target = null;
+      this.currentTarget = null;
+    }
+    preventDefault() {}
+    stopPropagation() {}
+  }
+
+  const consoleProxy = {
+    log() {},
+    info() {},
+    debug() {},
+    warn: (...args: any[]) => pushUniqueIssue(warnings, `沙盒 console.warn：${args.map(formatSandboxValue).join(" ").slice(0, 220)}`),
+    error: (...args: any[]) => pushUniqueIssue(blockers, `沙盒 console.error：${args.map(formatSandboxValue).join(" ").slice(0, 220)}`),
+  };
+
+  sandboxRef = {
+    console: consoleProxy,
+    document: documentRef,
+    navigator: {
+      userAgent: "codex-sandbox",
+      mediaDevices: {
+        async getUserMedia() {
+          return {
+            getTracks: () => [{ stop() {} }],
+          };
+        },
+      },
+    },
+    location: { href: "http://localhost/", origin: "http://localhost", pathname: "/", search: "", hash: "" },
+    history: { pushState() {}, replaceState() {} },
+    localStorage: createStorage(),
+    sessionStorage: createStorage(),
+    innerWidth: 390,
+    innerHeight: 844,
+    devicePixelRatio: 2,
+    performance: { now: () => 0 },
+    matchMedia() {
+      return {
+        matches: false,
+        addEventListener() {},
+        removeEventListener() {},
+        addListener() {},
+        removeListener() {},
+      };
+    },
+    requestAnimationFrame(fn: any) {
+      return queueTask(() => (typeof fn === "function" ? fn(16) : undefined));
+    },
+    cancelAnimationFrame() {},
+    setTimeout(fn: any) {
+      return queueTask(fn);
+    },
+    clearTimeout() {},
+    setInterval(fn: any) {
+      return queueTask(fn);
+    },
+    clearInterval() {},
+    queueMicrotask(fn: any) {
+      queueTask(fn);
+    },
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      async text() {
+        return "";
+      },
+      async json() {
+        return {};
+      },
+      async arrayBuffer() {
+        return new ArrayBuffer(0);
+      },
+    }),
+    SpeechSynthesisUtterance: function (this: any, text = "") {
+      this.text = text;
+      this.lang = "";
+      this.rate = 1;
+    },
+    speechSynthesis: {
+      speak() {},
+      cancel() {},
+      pause() {},
+      resume() {},
+    },
+    MediaRecorder: class {
+      ondataavailable: ((evt: any) => void) | null = null;
+      onstop: (() => void) | null = null;
+      start() {}
+      stop() {
+        if (typeof this.onstop === "function") this.onstop();
+      }
+    },
+    Audio: function (this: any) {
+      this.currentTime = 0;
+      this.src = "";
+      this.play = async () => undefined;
+      this.pause = () => undefined;
+      this.addEventListener = () => undefined;
+      this.removeEventListener = () => undefined;
+    },
+    Image: function () {
+      return new FakeElement("img");
+    },
+    URL: {
+      createObjectURL() {
+        return "blob:codex-sandbox";
+      },
+      revokeObjectURL() {},
+    },
+    Event: SandboxEvent,
+    CustomEvent: SandboxEvent,
+    KeyboardEvent: SandboxEvent,
+    MouseEvent: SandboxEvent,
+    HTMLElement: FakeElement,
+    HTMLCanvasElement: FakeElement,
+    Node: FakeElement,
+    alert() {},
+    confirm() {
+      return true;
+    },
+    prompt() {
+      return "";
+    },
+    addEventListener(type: string, handler: any) {
+      const key = String(type || "");
+      const arr = windowListeners.get(key) || [];
+      if (typeof handler === "function") arr.push(handler);
+      windowListeners.set(key, arr);
+    },
+    removeEventListener(type: string, handler: any) {
+      const key = String(type || "");
+      const arr = (windowListeners.get(key) || []).filter((fn) => fn !== handler);
+      windowListeners.set(key, arr);
+    },
+    dispatchEvent(event: any) {
+      const handlers = windowListeners.get(String(event?.type || "")) || [];
+      void invokeHandlers(handlers, sandboxRef, event);
+      return true;
+    },
+  } as any;
+
+  sandboxRef.window = sandboxRef;
+  sandboxRef.self = sandboxRef;
+  sandboxRef.globalThis = sandboxRef;
+  documentRef.defaultView = sandboxRef;
+
+  const runCode = async (code: string, filename: string) => {
+    if (!String(code || "").trim()) return;
+    try {
+      const script = new Script(String(code || ""), { filename });
+      script.runInNewContext(sandboxRef, { timeout: 800 });
+      await Promise.resolve();
+    } catch (e: any) {
+      pushUniqueIssue(blockers, `沙盒自检运行报错：${filename} - ${formatSandboxValue(e?.message || e).slice(0, 220)}`);
+    }
+  };
+
+  const flushScheduled = async (limit = 24) => {
+    let count = 0;
+    while (scheduledTasks.length && count < limit) {
+      const task = scheduledTasks.shift();
+      count += 1;
+      if (typeof task === "function") {
+        await invokeHandlers([task], sandboxRef, new SandboxEvent("task"));
+        await Promise.resolve();
+      }
+    }
+  };
+
+  for (const [i, block] of collectInlineScriptBlocks(indexHtml).entries()) {
+    await runCode(block, `index.inline.${i + 1}.js`);
+  }
+  if (String(jsCode || "").trim()) await runCode(jsCode, "game.js");
+
+  documentRef.readyState = "interactive";
+  await invokeHandlers(documentListeners.get("DOMContentLoaded") || [], documentRef, new SandboxEvent("DOMContentLoaded"));
+  documentRef.readyState = "complete";
+  if (typeof sandboxRef.onload === "function") {
+    await invokeHandlers([sandboxRef.onload], sandboxRef, new SandboxEvent("load"));
+  }
+  await invokeHandlers(windowListeners.get("load") || [], sandboxRef, new SandboxEvent("load"));
+  await invokeHandlers(documentListeners.get("load") || [], documentRef, new SandboxEvent("load"));
+  await flushScheduled();
+
+  return {
+    blockers,
+    warnings,
+  };
+}
+
+async function buildAcceptanceReport(indexHtml: string, styleCss: string, jsCode: string): Promise<AcceptanceReport> {
+  const blockers: string[] = [];
+  const warnings: string[] = [];
+  blockers.push(...validateInlineScripts(indexHtml));
+  const jsErr = validateStandaloneJsSyntax(jsCode);
+  if (jsErr) blockers.push(`game.js 语法错误：${jsErr}`);
+  if (String(styleCss || "").trim() && !hasExpectedAssetReference(indexHtml, "style.css", "href")) {
+    blockers.push("index.html 未正确引用 ./style.css");
+  }
+  if (String(jsCode || "").trim() && !hasExpectedAssetReference(indexHtml, "game.js", "src")) {
+    blockers.push("index.html 未正确引用 ./game.js");
+  }
+  warnings.push(...validateStructureContracts(indexHtml, jsCode));
+  if (!blockers.length) {
+    const sandbox = await runSandboxSelfCheck(indexHtml, jsCode);
+    for (const msg of sandbox.blockers) pushUniqueIssue(blockers, msg);
+    for (const msg of sandbox.warnings) pushUniqueIssue(warnings, msg);
+  }
+  return {
+    blockers,
+    warnings: warnings.filter((msg, idx) => warnings.indexOf(msg) === idx && !blockers.includes(msg)),
+  };
 }
 
 function parseSectionBlocks(raw: string) {
@@ -620,6 +1268,88 @@ function safeMeta(meta: any) {
     shortDesc: String(m.shortDesc || "").trim().slice(0, 120),
     rules: String(m.rules || "").trim().slice(0, 600),
     creator: { name: String(creator.name || "").trim().slice(0, 24) },
+  };
+}
+
+function normalizeGameTitle(raw: string) {
+  return String(raw || "")
+    .replace(/\r/g, " ")
+    .split("\n")[0]
+    .replace(/^["'“”《〈【\[]+|["'“”》〉】\]]+$/g, "")
+    .replace(/^(title|标题)\s*[:：]\s*/i, "")
+    .trim()
+    .slice(0, 80);
+}
+
+function isPlaceholderGameTitle(raw: string) {
+  const title = normalizeGameTitle(raw);
+  return !title || /^(我的小游戏|未命名作品|未命名游戏|小游戏|游戏)$/i.test(title);
+}
+
+function deriveGameTitleFromPrompt(prompt: string) {
+  const text = String(prompt || "").replace(/\r/g, "").trim();
+  if (!text) return "";
+  const m1 = text.match(/(?:我想|想)?做(?:一个|个|一款)?\s*([^\n，。,.]{2,24}?)(?:小游戏|游戏|h5)/);
+  const m2 = text.match(/([^\n，。,.]{2,24}?)(?:小游戏|游戏)/);
+  let picked = String(m1?.[1] || m2?.[1] || "").trim();
+  if (!picked) {
+    picked =
+      text
+        .split("\n")
+        .map((x) => x.trim())
+        .find((x) => x && !x.startsWith("#")) || "";
+  }
+  picked = picked.replace(/^(一个|个|一款|做|生成|创建|写)\s*/g, "").replace(/（.*?）/g, "").trim();
+  if (!picked) return "";
+  if (picked.length > 18) picked = picked.slice(0, 18).trim();
+  if (!/(挑战|闯关|冒险|练习|训练|课堂|大作战|之旅|派对|工坊|乐园|任务|冲刺|计划|游戏)$/u.test(picked)) {
+    if (/(口语|英语|单词|词汇|听力|跟读)/.test(picked)) picked += "挑战";
+    else if (/(数学|口算|算术|加减|乘除)/.test(picked)) picked += "训练营";
+    else picked += "游戏";
+  }
+  return normalizeGameTitle(picked);
+}
+
+function pickLockedGameTitle(metaObj: any, draftTitle: string) {
+  const gen = metaObj?._gen && typeof metaObj._gen === "object" ? metaObj._gen : {};
+  const hasFixedTitle = !isPlaceholderGameTitle(String(gen.fixedTitle || ""));
+  const allowMetaTitle = hasFixedTitle || (!String(gen.titleCandidate || "").trim() && String(gen.stage || "").trim() !== "clarify");
+  const candidates = [String(gen.fixedTitle || "")];
+  if (allowMetaTitle) candidates.push(String(metaObj?.title || ""));
+  candidates.push(String(draftTitle || ""));
+  for (const item of candidates) {
+    const title = normalizeGameTitle(item);
+    if (!isPlaceholderGameTitle(title)) return title;
+  }
+  return "";
+}
+
+function applyLockedGameTitle(metaObj: any, options: { preferredTitle?: string; fallbackPrompt?: string; draftTitle?: string; source?: string }) {
+  const base = metaObj && typeof metaObj === "object" ? { ...metaObj } : {};
+  const creator = base.creator && typeof base.creator === "object" ? { ...base.creator } : {};
+  const gen = base._gen && typeof base._gen === "object" ? { ...base._gen } : {};
+  const lockedTitle = pickLockedGameTitle(base, options.draftTitle || "");
+  const nextTitle =
+    lockedTitle ||
+    normalizeGameTitle(options.preferredTitle || "") ||
+    deriveGameTitleFromPrompt(options.fallbackPrompt || "") ||
+    "我的小游戏";
+  const titleSource = String(gen.titleSource || options.source || (lockedTitle ? "existing" : "blueprint")).trim() || "blueprint";
+  return {
+    ...base,
+    title: nextTitle,
+    shortDesc: String(base.shortDesc || "").trim().slice(0, 120),
+    rules: String(base.rules || "").trim().slice(0, 600),
+    creator: {
+      ...creator,
+      name: String(creator.name || "Architect").trim().slice(0, 24) || "Architect",
+    },
+    _gen: {
+      ...gen,
+      fixedTitle: nextTitle,
+      titleLockedAt: Number(gen.titleLockedAt) > 0 ? Number(gen.titleLockedAt) : Date.now(),
+      titleSource,
+    },
   };
 }
 
@@ -850,6 +1580,28 @@ function formatRequirementContractBlock(contract: RequirementContract | null | u
   );
 }
 
+function buildStyleConsistencyBlock(indexHtml: string, styleCss: string, design: any) {
+  const html = String(indexHtml || "");
+  const css = String(styleCss || "");
+  const theme = String((design as any)?.config?.style?.theme || "").trim();
+  const colors = Array.from(new Set((css.match(/#[0-9a-fA-F]{3,8}/g) || []).map((x) => x.toLowerCase()))).slice(0, 8);
+  const styleSignals: string[] = [];
+  if (/border-radius\s*:/i.test(css)) styleSignals.push("保留圆角组件风格");
+  if (/box-shadow\s*:/i.test(css)) styleSignals.push("保留卡片阴影层次");
+  if (/linear-gradient\s*\(/i.test(css)) styleSignals.push("保留渐变背景基调");
+  if (/transition\s*:/i.test(css) || /animation\s*:/i.test(css)) styleSignals.push("保留现有动效节奏");
+  if (/\bid\s*=\s*["'](?:startScreen|gameScreen|endScreen|app)["']/i.test(html)) {
+    styleSignals.push("保留当前页面分区与信息密度");
+  }
+  const lines = [
+    `- 视觉主题：${theme || "沿用当前页面风格，不要改成另一套设计语言"}`,
+    `- 颜色锚点：${colors.length ? colors.join(", ") : "沿用现有主色、背景色和强调色"}`,
+    `- 风格特征：${styleSignals.length ? styleSignals.join("；") : "保持当前布局和组件形态"}`,
+    "- 只在满足这次需求的必要范围内调整视觉，不要重做整体 UI。",
+  ];
+  return `【原有风格约束（必须保持）】\n${lines.join("\n")}\n\n`;
+}
+
 type IncrementalEditProfile = {
   kind: "content" | "layout" | "visual" | "behavior" | "bugfix" | "feature";
   confidence: number;
@@ -859,7 +1611,8 @@ type IncrementalEditProfile = {
 function classifyIncrementalEdit(text: string): IncrementalEditProfile | null {
   const t = String(text || "").trim();
   if (!t) return null;
-  if (/^(做|生成|创建|写|帮我做一个|给我做一个)/.test(t)) return null;
+  // 明显是“新建/从零做一个游戏”的表达：不要走小改动链
+  if (/^(做|生成|创建|写|帮我做一个|给我做一个|我想做|我想做一个|想做|想做一个|新建|新建一个|创建一个|创建一个新|做一个新)/.test(t)) return null;
   const giantFeatureSignals =
     /(从头|重做|重新做|整个游戏|完全重写|做一个新|换成另一个游戏|新增一个模式|加入排行榜系统|联机|多人|存档|关卡编辑器)/i.test(t);
   if (giantFeatureSignals || t.length > 160) return null;
@@ -869,6 +1622,13 @@ function classifyIncrementalEdit(text: string): IncrementalEditProfile | null {
       kind: "bugfix",
       confidence: 0.95,
       hint: "优先定位并修复当前行为问题，不改主题，不新增无关功能。",
+    };
+  }
+  if (looksLikeCoupledContentIntent(t)) {
+    return {
+      kind: /(顺序|摆放|位置|布局|居中|左对齐|右对齐|左右|上下|底部|顶部)/i.test(t) ? "layout" : "behavior",
+      confidence: 0.93,
+      hint: "这句话表面像改文案或按钮，实际牵涉页面结构、事件或状态流。优先联动相关文件一起改，不要走纯补丁。",
     };
   }
   if (/(去掉|删除|隐藏|显示|保留|按钮|标题|文案|文字|提示语|开始游戏|重新开始|得分文案|分数文案)/i.test(t)) {
@@ -924,6 +1684,45 @@ function isSentenceLikeEditIntent(text: string) {
   return /(sentence|sentences|句子|当前句子|当前文本|台词|文案|题目|题干|字幕|提示语|显示句子|显示文本)/i.test(
     String(text || ""),
   );
+}
+
+function looksLikePureCopyOrVisibilityEdit(userIntent = "") {
+  const intent = String(userIntent || "");
+  if (!/(去掉|删除|隐藏|显示|保留|标题|文案|文字|提示语|按钮文案|按钮文字|简介|规则|副标题|待发布|占位|占位文案)/i.test(intent)) {
+    return false;
+  }
+  return !/(点击|顺序|摆放|位置|布局|左右|上下|移动|跳|自动开始|直接开始|开始页|当前句子|进度|状态|流程|初始化|事件|绑定|ai|bot|opponent|玩家|对战|敌人|回合|逻辑|判定|碰撞|速度|难度|倒计时)/i.test(
+    intent,
+  );
+}
+
+function looksLikeIsolatedStyleEdit(userIntent = "") {
+  const intent = String(userIntent || "");
+  if (!/(颜色|字体|圆角|阴影|背景|主题色|样式|美化|更好看|更精致|动画|动效|图标|边框|透明度)/i.test(intent)) {
+    return false;
+  }
+  return !/(按钮|点击|顺序|摆放|位置|布局|左右|上下|移动|跳|开始页|当前句子|进度|状态|流程|初始化|事件|绑定|ai|bot|opponent|玩家|对战|敌人|回合|逻辑|判定)/i.test(
+    intent,
+  );
+}
+
+function looksLikeCoupledContentIntent(userIntent = "") {
+  const intent = String(userIntent || "");
+  return /(按钮|标题|文案|文字|提示语|开始游戏|重新开始|得分文案|分数文案|去掉|删除|隐藏|显示|保留)/i.test(intent) &&
+    /(点击|顺序|摆放|位置|布局|左右|上下|移动|跳|自动开始|直接开始|开始页|当前句子|进度|状态|流程|初始化|事件|绑定|ai|bot|opponent|玩家|对战|敌人|回合|逻辑|判定|碰撞|速度|难度|倒计时)/i.test(
+      intent,
+    );
+}
+
+function looksLikeStarterDraft(indexHtml: string, styleCss: string, gameJs: string) {
+  const html = String(indexHtml || "");
+  const css = String(styleCss || "");
+  const js = String(gameJs || "");
+  if (!html.trim() || !css.trim() || !js.trim()) return false;
+  const htmlSignals = [/<title>我的小游戏<\/title>/, /在左侧对话生成\/修改这个游戏。/, /<div id=['"]app['"]/].every((re) => re.test(html));
+  const cssSignals = [/linear-gradient\(180deg,#f8fafc,#eef2ff\)/, /#app\{padding:14px/].every((re) => re.test(css));
+  const jsSignals = [/准备就绪\s*✅/, /document\.getElementById\(['"]app['"]\)/].every((re) => re.test(js));
+  return htmlSignals && cssSignals && jsSignals;
 }
 
 function trimCodeContext(path: string, content: string) {
@@ -1021,11 +1820,15 @@ function validateStructureContracts(indexHtml: string, jsCode: string) {
       if (varName && id) idToVar.set(id, varName);
     }
   }
+  const interactiveEventNames = ["click", "pointerdown", "pointerup", "touchstart", "touchend", "mousedown", "mouseup"];
   for (const id of ["btnStart", "btnRestart", "btnPlay", "btnRecord", "btnNext", "btnLeft", "btnRight"]) {
     const varName = idToVar.get(id);
     if (!varName) continue;
-    const eventRe = new RegExp(`${escapeRegExp(varName)}\\s*\\.\\s*(?:addEventListener\\(\\s*["']click["']|onclick\\s*=)`, "m");
-    if (!eventRe.test(js)) errs.push(`${id} 缺少 click 事件绑定`);
+    const eventRe = new RegExp(
+      `${escapeRegExp(varName)}\\s*\\.\\s*(?:addEventListener\\(\\s*["'](?:${interactiveEventNames.join("|")})["']|on(?:${interactiveEventNames.join("|")})\\s*=)`,
+      "m",
+    );
+    if (!eventRe.test(js)) errs.push(`${id} 缺少交互事件绑定`);
   }
 
   if (/window\.gameHooks\s*=/.test(js)) {
@@ -1099,7 +1902,7 @@ function looksLikeStateFlowBug(userIntent = "") {
 function looksLikeDomJsCouplingBug(userIntent = "") {
   const intent = String(userIntent || "");
   const domLike = /(dom|html|按钮|点击|事件|id|选择器|页面|screen|显示|隐藏|节点|元素|绑定)/i.test(intent);
-  const jsLike = /(js|脚本|逻辑|state|状态|hook|gamehooks|初始化|current|句子|进度|render|update)/i.test(intent);
+  const jsLike = /(js|脚本|逻辑|state|状态|hook|gamehooks|初始化|current|句子|进度|render|update|ai|bot|opponent|玩家|对战|敌人|回合)/i.test(intent);
   return domLike && jsLike;
 }
 
@@ -1137,15 +1940,21 @@ function pickFixTargetPaths(userIntent = "", hasSplit = true) {
     if (htmlLike || /(页面|按钮|显示|隐藏|screen|dom)/i.test(intent)) return ["index.html", "game.js"];
     return ["game.js"];
   }
-  if (htmlLike) return ["index.html"];
+  if (htmlLike) return looksLikePureCopyOrVisibilityEdit(intent) ? ["index.html"] : ["index.html", "game.js"];
   return ["game.js"];
 }
 
 function chooseFixStrategy(userIntent = "", hasSplit = true): "single_file_patch" | "single_file_regen" | "multi_file_regen" {
+  const intent = String(userIntent || "");
   const targets = pickFixTargetPaths(userIntent, hasSplit);
   if (targets.length > 1) return "multi_file_regen";
-  if (looksLikeStateFlowBug(userIntent)) return "single_file_regen";
-  return "single_file_patch";
+  const only = targets[0];
+  if (only === "style.css" && looksLikeIsolatedStyleEdit(intent)) return "single_file_patch";
+  if (only === "index.html" && looksLikePureCopyOrVisibilityEdit(intent)) return "single_file_patch";
+  if (looksLikeStateFlowBug(intent) || looksLikeDomJsCouplingBug(intent) || looksLikeNewFeatureOrUi(intent)) {
+    return "single_file_regen";
+  }
+  return only === "game.js" ? "single_file_regen" : "single_file_patch";
 }
 
 function chooseDirectPatchStrategy(
@@ -1156,32 +1965,38 @@ function chooseDirectPatchStrategy(
   const intent = String(userIntent || "");
   const stateFlowLike = looksLikeStateFlowBug(intent);
   const couplingLike = looksLikeDomJsCouplingBug(intent);
-  const hasDomJsPair = directPaths.includes("index.html") && directPaths.includes("game.js");
-  if ((stateFlowLike || couplingLike) && hasDomJsPair) return "multi_file_regen";
-  if (kind === "bugfix" && looksLikeStateFlowBug(intent)) return directPaths.length > 1 ? "multi_file_regen" : "single_file_regen";
-  if (kind === "behavior" && looksLikeStateFlowBug(intent)) return "single_file_regen";
-  if (kind === "behavior" || kind === "bugfix") return "single_file_patch";
-  if (isSentenceLikeEditIntent(intent)) return "single_file_patch";
-  if (directPaths.length === 1 && directPaths[0] === "game.js") return "single_file_patch";
-  return "ops_patch";
+  if (directPaths.length > 1) return "multi_file_regen";
+  const only = directPaths[0] || "game.js";
+  if (kind === "bugfix" || kind === "feature") return "single_file_regen";
+  if (kind === "behavior") return "single_file_regen";
+  if (stateFlowLike || couplingLike) return "single_file_regen";
+  if (kind === "layout") return only === "style.css" ? "single_file_patch" : "single_file_regen";
+  if (kind === "visual") return only === "style.css" && looksLikeIsolatedStyleEdit(intent) ? "single_file_patch" : "single_file_regen";
+  if (kind === "content") {
+    if (only === "index.html" && looksLikePureCopyOrVisibilityEdit(intent)) return "ops_patch";
+    if (only === "style.css" && looksLikeIsolatedStyleEdit(intent)) return "single_file_patch";
+    return "single_file_regen";
+  }
+  return only === "index.html" && looksLikePureCopyOrVisibilityEdit(intent) ? "ops_patch" : "single_file_regen";
 }
 
 function pickDirectRefinePaths(kind: IncrementalEditProfile["kind"], hasSplit: boolean, userIntent = "") {
   const intent = String(userIntent || "");
   if (!hasSplit) return ["index.html"];
-  if (kind === "visual") return ["index.html", "style.css"];
+  if (kind === "visual") return looksLikeIsolatedStyleEdit(intent) ? ["style.css"] : ["index.html", "style.css"];
   if (kind === "layout") return ["index.html", "style.css"];
   if (kind === "content") {
-    // “句子/题目/文案同步”这类学习游戏改动，经常真实只落在 game.js 的状态与渲染逻辑里。
-    // 这里优先收敛到单文件，减少 JSON 输出体积，也更容易命中纯代码 fallback。
-    if (isSentenceLikeEditIntent(intent)) return ["game.js"];
+    if (looksLikePureCopyOrVisibilityEdit(intent)) return ["index.html"];
+    if (isSentenceLikeEditIntent(intent) && !looksLikeStateFlowBug(intent)) return ["game.js"];
     return ["index.html", "game.js"];
   }
   if (kind === "behavior") {
-    // 行为类小改动默认只改 game.js，避免把页面结构和玩法逻辑一起塞给模型。
-    // 对“自动开始/跳过开始页/按进度显示句子”这类请求，单文件补丁更快也更稳。
-    if (/(自动开始|直接开始|跳过开始|去掉开始页|开始页|开始按钮|不用点击开始|按进度显示|当前句子|当前文本|句子)/i.test(intent)) {
-      return ["game.js"];
+    if (/(按钮|点击|顺序|摆放|位置|显示|隐藏|ai|玩家|对战|bot|opponent)/i.test(intent)) {
+      if (/(顺序|摆放|位置|布局|居中|左右|上下|底部|顶部)/i.test(intent)) return ["index.html", "style.css", "game.js"];
+      return ["index.html", "game.js"];
+    }
+    if (/(自动开始|直接开始|跳过开始|去掉开始页|开始页|开始按钮|不用点击开始|按进度显示|当前句子|当前文本|句子|进度|状态|初始化|start|restart)/i.test(intent)) {
+      return ["index.html", "game.js"];
     }
     return ["game.js"];
   }
@@ -1460,11 +2275,76 @@ function extractModelTextParts(content: any): string[] {
 function extractAssistantTextFromResponseJson(j: any) {
   const msg = j?.choices?.[0]?.message || {};
   const parts = [
+    ...extractModelTextParts(j?.choices?.[0]?.text),
+    ...extractModelTextParts(msg?.text),
     ...extractModelTextParts(msg?.content),
     ...extractModelTextParts(msg?.output_text),
+    ...extractModelTextParts(j?.choices?.[0]?.output_text),
     ...extractModelTextParts(j?.output_text),
   ].filter(Boolean);
   return parts.join("");
+}
+
+function shouldDisableDeepSeekThinkingForStep(stepTag: string) {
+  const t = String(stepTag || "").toLowerCase();
+  return /(直接补丁|ops patch|小改动|修复 bug|生成补丁|纯代码|single file|patch|fix)/i.test(t);
+}
+
+function tunePayloadForStep(
+  payload: any,
+  providerName: "openrouter" | "deepseek" | "bailian" | "tencent",
+  stepTag = "",
+  forceLeanThinking = false,
+) {
+  const p: any = { ...payload };
+  const leanThinking = forceLeanThinking || shouldDisableDeepSeekThinkingForStep(stepTag);
+  if (providerName === "openrouter" && isDeepSeekV4OpenRouterModel(String(p.model || ""))) {
+    if (leanThinking) delete p.reasoning;
+    else p.reasoning = { effort: "high" };
+  }
+  if (providerName === "deepseek" && isDeepSeekV4DirectModel(String(p.model || ""))) {
+    if (leanThinking) {
+      delete p.thinking;
+      delete p.reasoning_effort;
+    } else {
+      p.thinking = { type: "enabled" };
+      p.reasoning_effort = "max";
+    }
+  }
+  return p;
+}
+
+function summarizeModelResponseEnvelope(j: any) {
+  const root = j && typeof j === "object" ? j : {};
+  const choice = root?.choices?.[0] && typeof root.choices[0] === "object" ? root.choices[0] : {};
+  const msg = choice?.message && typeof choice.message === "object" ? choice.message : {};
+  const hasText = !!extractAssistantTextFromResponseJson(root).trim();
+  const hasReasoning = !!(
+    choice?.reasoning ||
+    choice?.reasoning_content ||
+    msg?.reasoning ||
+    msg?.reasoning_content ||
+    root?.reasoning ||
+    root?.reasoning_content
+  );
+  const topKeys = Object.keys(root).slice(0, 8).join(",") || "-";
+  const choiceKeys = Object.keys(choice).slice(0, 8).join(",") || "-";
+  const messageKeys = Object.keys(msg).slice(0, 8).join(",") || "-";
+  const finish = String(choice?.finish_reason || root?.finish_reason || "").trim() || "-";
+  return `finish=${finish};top=${topKeys};choice=${choiceKeys};message=${messageKeys};hasText=${hasText ? 1 : 0};hasReasoning=${hasReasoning ? 1 : 0}`;
+}
+
+function summarizeStreamEmptyObservation(state: {
+  events: number;
+  finishReason?: string;
+  deltaKeys: Set<string>;
+  choiceKeys: Set<string>;
+  sawReasoning: boolean;
+}) {
+  const deltaKeys = Array.from(state.deltaKeys).slice(0, 8).join(",") || "-";
+  const choiceKeys = Array.from(state.choiceKeys).slice(0, 8).join(",") || "-";
+  const finish = String(state.finishReason || "").trim() || "-";
+  return `events=${state.events};finish=${finish};delta=${deltaKeys};choice=${choiceKeys};hasText=0;hasReasoning=${state.sawReasoning ? 1 : 0}`;
 }
 
 const STEP_LOG_MAX = 900;
@@ -1661,7 +2541,7 @@ export async function POST(req: Request) {
           },
           body: JSON.stringify(forwardBody),
           // 避免中转请求“永久挂起”
-          signal: AbortSignal.timeout(120_000),
+          signal: AbortSignal.timeout(240_000),
         });
         const h = new Headers();
         const ct = upstream.headers.get("content-type");
@@ -1750,7 +2630,7 @@ export async function POST(req: Request) {
     return h;
   }
 
-  async function callModelStream(payload: any, timeoutMs = 180_000) {
+  async function callModelStream(payload: any, timeoutMs = 360_000) {
     const maxTry = 2;
     for (let k = 1; k <= maxTry; k++) {
       try {
@@ -1776,19 +2656,10 @@ export async function POST(req: Request) {
     throw new Error("FETCH_FAILED:UNKNOWN");
   }
 
-  async function callModelOnce(payload: any, timeoutMs = 180_000) {
+  async function callModelOnce(payload: any, timeoutMs = 360_000, stepTag = "", forceLeanThinking = false) {
     // 尽量也用 json_object，减少模型“解释/思考”导致的超长输出；
     // 如果不兼容，再自动退回普通模式。
-    const p0: any = { ...payload, stream: false };
-    // OpenRouter 上 DeepSeek V4：开启 reasoning（最高强度）
-    if (provider === "openrouter" && isDeepSeekV4OpenRouterModel(String(p0.model || ""))) {
-      p0.reasoning = { effort: "high" };
-    }
-    // DeepSeek 官方 V4：开启 thinking（最高强度）
-    if (provider === "deepseek" && isDeepSeekV4DirectModel(String(p0.model || ""))) {
-      p0.thinking = { type: "enabled" };
-      p0.reasoning_effort = "max";
-    }
+    const p0: any = tunePayloadForStep({ ...payload, stream: false }, provider, stepTag, forceLeanThinking);
     const doReq = async (p: any) => {
       let r: Response;
       try {
@@ -1809,7 +2680,7 @@ export async function POST(req: Request) {
         throw new Error(`MODEL_ERROR:${msg}`);
       }
       const text = extractAssistantTextFromResponseJson(j);
-      if (!text) throw new Error("EMPTY_MODEL_RESPONSE");
+      if (!text) throw new Error(`EMPTY_MODEL_RESPONSE:${summarizeModelResponseEnvelope(j)}`);
       return text;
     };
     try {
@@ -1824,7 +2695,7 @@ export async function POST(req: Request) {
         } catch {}
       }
       // retry without response_format（仅在非网络原因/确实不兼容时）
-      const p1 = { ...p0 };
+      const p1 = tunePayloadForStep({ ...p0 }, provider, stepTag, forceLeanThinking);
       delete p1.response_format;
       return await doReq(p1);
     }
@@ -1881,6 +2752,9 @@ export async function POST(req: Request) {
         const mode = modeRaw === "fix" || modeRaw === "generate" ? modeRaw : looksLikeBug ? "fix" : "generate";
         const quality =
           qualityRaw === "quality" || qualityRaw === "stable" ? qualityRaw : wantsQuality ? "quality" : "stable";
+        const routeEditProfile = classifyIncrementalEdit(lastUserText);
+        const forceBlueprintRegenForFix =
+          mode === "fix" && !!routeEditProfile && (routeEditProfile.kind === "bugfix" || routeEditProfile.kind === "feature");
         sendProgress({
           mode: mode === "fix" ? "fix" : "create",
           stepId: "route",
@@ -1890,18 +2764,9 @@ export async function POST(req: Request) {
         });
 
         // 对分步生成：每一步也做“流式输出”并把 token 增量推给前端，让用户看到进度
-        const callStreamToString = async (payload: any, stepTag: string, strictJson = false, timeoutMs = 180_000) => {
+        const callStreamToString = async (payload: any, stepTag: string, strictJson = false, timeoutMs = 360_000) => {
           // payload.stream 必须为 true
-          const p0: any = { ...payload, stream: true };
-          // OpenRouter 上 DeepSeek V4：开启 reasoning（最高强度）
-          if (provider === "openrouter" && isDeepSeekV4OpenRouterModel(String(p0.model || ""))) {
-            p0.reasoning = { effort: "high" };
-          }
-          // DeepSeek 官方 V4：开启 thinking（最高强度）
-          if (provider === "deepseek" && isDeepSeekV4DirectModel(String(p0.model || ""))) {
-            p0.thinking = { type: "enabled" };
-            p0.reasoning_effort = "max";
-          }
+          const p0: any = tunePayloadForStep({ ...payload, stream: true }, provider, stepTag);
           // 在 Vercel 上，服务端“上游再开一条流”更容易卡死/断流；这里强制改为非流式获取结果，
           // 前端仍通过 SSE status/ping 看到进度，不依赖上游流的稳定性。
           // 如确实需要上游也流式（风险更高），可在环境变量设置 CREATOR_UPSTREAM_STREAM=1
@@ -1928,7 +2793,7 @@ export async function POST(req: Request) {
                 } catch {}
               }, 3500);
               try {
-                return await callModelOnce({ ...p, stream: false }, timeoutMs);
+                return await callModelOnce({ ...p, stream: false }, timeoutMs, stepTag);
               } finally {
                 clearInterval(ticker);
               }
@@ -1949,7 +2814,14 @@ export async function POST(req: Request) {
             let buf = "";
             let out = "";
             let lastChunkAt = Date.now();
-            const IDLE_MS = 25_000; // 上游 25s 无任何数据则认为卡死，转为非流式
+            const streamObservation = {
+              events: 0,
+              finishReason: "",
+              deltaKeys: new Set<string>(),
+              choiceKeys: new Set<string>(),
+              sawReasoning: false,
+            };
+            const IDLE_MS = 50_000; // 上游 50s 无任何数据则认为卡死，转为非流式
             while (true) {
               const readPromise = reader.read();
               const timeoutPromise = new Promise<never>((_, rej) =>
@@ -1973,6 +2845,23 @@ export async function POST(req: Request) {
                 } catch {
                   continue;
                 }
+                streamObservation.events += 1;
+                const choice0 = j?.choices?.[0] && typeof j.choices[0] === "object" ? j.choices[0] : {};
+                for (const key of Object.keys(choice0).slice(0, 8)) streamObservation.choiceKeys.add(key);
+                const delta0 = choice0?.delta && typeof choice0.delta === "object" ? choice0.delta : {};
+                for (const key of Object.keys(delta0).slice(0, 8)) streamObservation.deltaKeys.add(key);
+                if (!streamObservation.finishReason && choice0?.finish_reason) {
+                  streamObservation.finishReason = String(choice0.finish_reason || "");
+                }
+                if (
+                  choice0?.reasoning ||
+                  choice0?.reasoning_content ||
+                  delta0?.reasoning ||
+                  delta0?.reasoning_content ||
+                  delta0?.reasoning_text
+                ) {
+                  streamObservation.sawReasoning = true;
+                }
                 const deltaParts = [
                   ...extractModelTextParts(j?.choices?.[0]?.delta?.content),
                   ...extractModelTextParts(j?.choices?.[0]?.delta?.output_text),
@@ -1985,24 +2874,37 @@ export async function POST(req: Request) {
                 }
               }
             }
-            if (!out.trim()) throw new Error("EMPTY_MODEL_RESPONSE");
+            if (!out.trim()) throw new Error(`EMPTY_MODEL_RESPONSE:${summarizeStreamEmptyObservation(streamObservation)}`);
             return out;
           };
           // 在流式输出中插入一个小分隔符，避免用户看不懂现在在做哪一步
           sendDelta(`\n\n—— ${stepTag} ——\n`);
           try {
             return await doReq(p0);
-          } catch (e) {
+          } catch (e: any) {
+            const em = String(e?.message || e || "");
             // 对需要“严格 JSON”的阶段：不要直接去掉 response_format（会显著增加非 JSON 概率）。
             // 改用一次非流式兜底，再返回文本用于解析。
             if (strictJson) {
               sendStatus("该步骤需要严格 JSON，我用非流式方式再试一次…");
-              const once = await callModelOnce({ ...payload, stream: false }, timeoutMs);
+              const once = await callModelOnce({ ...payload, stream: false }, timeoutMs, stepTag);
               // 也把结果推给前端，让用户看到发生了什么（不然会像“卡住”）
               sendDelta(`\n\n（非流式结果）\n${once}\n`);
               return once;
             }
             // 非严格场景：retry without response_format（某些模型/网关不支持）
+            if (em.includes("STREAM_IDLE_TIMEOUT")) {
+              sendStatus(`${stepTag} 流式输出中断，我正在自动续跑这一步…`);
+            } else if (em.includes("FETCH_FAILED")) {
+              sendStatus(`${stepTag} 网络有点不稳，我正在自动重连继续…`);
+            } else if (em.includes("EMPTY_MODEL_RESPONSE")) {
+              sendStatus(`${stepTag} 这一轮没有拿到有效正文，我改用“非流式 + 关闭 thinking”再试一次…`);
+              const once = await callModelOnce({ ...payload, stream: false }, timeoutMs, stepTag, true);
+              sendDelta(`\n\n（非流式重试结果）\n${once}\n`);
+              return once;
+            } else {
+              sendStatus(`${stepTag} 这一步返回不稳定，我正在自动重试一次…`);
+            }
             const p1: any = { ...p0 };
             delete p1.response_format;
             return await doReq(p1);
@@ -2017,7 +2919,7 @@ export async function POST(req: Request) {
           // - (payload, tag, strictJson, timeoutMs)
           // - (payload, tag, strictJson, fallbackModels, timeoutMs)
           fallbackModelsOrTimeout: string[] | number = [],
-          timeoutMs = 180_000,
+          timeoutMs = 360_000,
         ) => {
           const fallbackModels = Array.isArray(fallbackModelsOrTimeout) ? fallbackModelsOrTimeout : [];
           const realTimeout = typeof fallbackModelsOrTimeout === "number" ? fallbackModelsOrTimeout : timeoutMs;
@@ -2067,7 +2969,7 @@ export async function POST(req: Request) {
           }
         };
 
-        const repairJsonObject = async (rawText: string, schemaHint: string, stepTag: string, maxTokens = 1400) => {
+        const repairJsonObject = async (rawText: string, schemaHint: string, stepTag: string, maxTokens = 8000) => {
           const clipped = String(rawText || "").slice(0, 12000);
           const repairPayload: any = {
             model,
@@ -2080,7 +2982,7 @@ export async function POST(req: Request) {
             response_format: { type: "json_object" },
           };
           if (provider === "openrouter" && payloadBase.provider) repairPayload.provider = payloadBase.provider;
-          const repairedText = await callStreamRobust(repairPayload, stepTag, true, 60_000);
+          const repairedText = await callStreamRobust(repairPayload, stepTag, true, 120_000);
           return parseJsonObjectLoose(repairedText);
         };
 
@@ -2108,7 +3010,7 @@ export async function POST(req: Request) {
         };
 
         // ===== Fix 模式：最小补丁修复（不走 Planner/Coder 全流程）=====
-        if (mode === "fix") {
+        if (mode === "fix" && !forceBlueprintRegenForFix) {
           if (!safeGameId) throw new Error("MISSING_GAME_ID");
           if (!ownerKey) throw new Error("UNAUTHORIZED");
           let canCheckpoint = false;
@@ -2202,32 +3104,18 @@ export async function POST(req: Request) {
                 },
               ],
               temperature: 0.1,
-              max_tokens: targetPath === "game.js" ? 3600 : 1000,
+              max_tokens: 8000,
             };
             if (provider === "openrouter" && payloadBase.provider) fallbackPayload.provider = payloadBase.provider;
-            const out = await callStreamRobust(fallbackPayload, `修复 bug：${targetPath} 纯代码`, false, 45_000);
+            const out = await callStreamRobust(fallbackPayload, `修复 bug：${targetPath} 纯代码`, false, 180_000);
             return extractPlainCodeText(out, [lang, targetPath === "game.js" ? "javascript" : lang]);
           };
-          const validateFixStandaloneJs = (jsCode: string) => {
-            try {
-              if (String(jsCode || "").trim()) new Script(String(jsCode || ""));
-              return "";
-            } catch (e: any) {
-              return String(e?.message || e || "");
-            }
-          };
-          const validateFixAcceptance = (files: Array<{ path: string; content: string }>) => {
+          const validateFixAcceptance = async (files: Array<{ path: string; content: string }>) => {
             const merged = mergeCodeFiles(currentFixFilesRaw, files);
             const index = merged.find((f) => f.path === "index.html")?.content || "";
             const css = merged.find((f) => f.path === "style.css")?.content || "";
             const js = merged.find((f) => f.path === "game.js")?.content || "";
-            const errs: string[] = validateInlineScripts(index);
-            const jsErr = validateFixStandaloneJs(js);
-            if (jsErr) errs.push(`game.js 语法错误：${jsErr}`);
-            if (String(css || "").trim() && !/href\s*=\s*["']\.\/style\.css["']/.test(index)) errs.push("index.html 未正确引用 ./style.css");
-            if (String(js || "").trim() && !/src\s*=\s*["']\.\/game\.js["']/.test(index)) errs.push("index.html 未正确引用 ./game.js");
-            errs.push(...validateStructureContracts(index, js));
-            return errs;
+            return await buildAcceptanceReport(index, css, js);
           };
           const regenerateFixTargets = async (targetPaths: string[]) => {
             let workingFiles = mergeCodeFiles(currentFixFilesRaw, []);
@@ -2245,11 +3133,11 @@ export async function POST(req: Request) {
             const targets = new Set<string>();
             for (const err of Array.isArray(errs) ? errs : []) {
               const msg = String(err || "");
-              if (/game\.js 语法错误|game\.js 引用了不存在的 DOM id|缺少 click 事件绑定|window\.gameHooks 缺少关键接口|game\.js 缺少明确入口调用/i.test(msg)) {
+              if (/game\.js 语法错误|game\.js 引用了不存在的 DOM id|缺少(?:\s*click|交互)?\s*事件绑定|window\.gameHooks 缺少关键接口|game\.js 缺少明确入口调用|沙盒(?:自检运行报错| console\.error)/i.test(msg)) {
                 targets.add("game.js");
               }
               // game.js 引用了不存在的 DOM id，本质是“JS 与 HTML 结构不一致”，必须连同 index.html 一起修
-              if (/game\.js 引用了不存在的 DOM id/i.test(msg)) {
+              if (/game\.js 引用了不存在的 DOM id|沙盒(?:自检运行报错| console\.error).*(?:getelementbyid|queryselector|addEventListener|classList|textContent|Cannot read properties of null|Cannot set properties of null)/i.test(msg)) {
                 targets.add("index.html");
               }
               if (/index\.html 内联脚本语法错误|未正确引用 \.\/style\.css|未正确引用 \.\/game\.js/i.test(msg)) {
@@ -2299,12 +3187,12 @@ export async function POST(req: Request) {
                 { role: "user", content: fixInput },
               ],
               temperature: 0.2,
-              max_tokens: 1400,
+              max_tokens: 8000,
               response_format: { type: "json_object" },
             };
             if (provider === "openrouter" && payloadBase.provider) fixPayload.provider = payloadBase.provider;
 
-            const outText = await callStreamRobust(fixPayload, `步骤 ${step}/${totalSteps}：生成补丁 JSON`, true, 60_000);
+            const outText = await callStreamRobust(fixPayload, `步骤 ${step}/${totalSteps}：生成补丁 JSON`, true, 120_000);
             logStep("fix.raw", outText);
             const fixSchemaHint =
               `Schema：{\n` +
@@ -2321,7 +3209,9 @@ export async function POST(req: Request) {
             files: Array.isArray((obj as any).files) ? (obj as any).files : [],
           };
           parseCreatorJson(JSON.stringify(normalized));
-          let fixAcceptanceErrs = validateFixAcceptance(normalized.files);
+          let fixAcceptance = await validateFixAcceptance(normalized.files);
+          let fixAcceptanceErrs = fixAcceptance.blockers;
+          if (fixAcceptance.warnings.length) logStep("fix.acceptance_warnings", fixAcceptance.warnings);
           if (fixAcceptanceErrs.length) {
             logStep("fix.invalid_after_patch", { strategy: fixStrategy, errors: fixAcceptanceErrs });
             const inferredTargets = inferFixRecoveryTargets(fixAcceptanceErrs);
@@ -2346,7 +3236,9 @@ export async function POST(req: Request) {
               throw new Error(`FIXER_INVALID_FILES:${fixAcceptanceErrs.join(" | ").slice(0, 300)}`);
             }
             normalized.files = regeneratedFiles;
-            fixAcceptanceErrs = validateFixAcceptance(normalized.files);
+            fixAcceptance = await validateFixAcceptance(normalized.files);
+            fixAcceptanceErrs = fixAcceptance.blockers;
+            if (fixAcceptance.warnings.length) logStep("fix.acceptance_warnings_after_regen", fixAcceptance.warnings);
             if (fixAcceptanceErrs.length) {
               throw new Error(`FIXER_INVALID_FILES:${fixAcceptanceErrs.join(" | ").slice(0, 300)}`);
             }
@@ -2377,6 +3269,16 @@ export async function POST(req: Request) {
           return;
           }
         }
+        if (mode === "fix" && forceBlueprintRegenForFix) {
+          sendStatus("检测到这是 bug/feature 级改动：改为“更新蓝图 -> 重生成代码”（保持原有风格）…");
+          sendProgress({
+            mode: "fix",
+            stepId: "fix_upgrade_blueprint_regen",
+            stepLabel: "升级为蓝图重生成",
+            status: "upgraded",
+            detail: "跳过最小补丁，改为先更新蓝图再重生成",
+          });
+        }
 
         {
           // ===== 默认生成/补丁主链：blueprint -> html/css -> game.js =====
@@ -2385,13 +3287,14 @@ export async function POST(req: Request) {
 
             await ensureCreatorDraftTables();
             const owns = await db.execute(sql`
-              select 1
+              select title
               from creator_draft_games
               where id = ${safeGameId} and owner_key = ${ownerKey}
               limit 1
             `);
             const ownRows = Array.isArray((owns as any).rows) ? (owns as any).rows : [];
             if (!ownRows.length) throw new Error("NOT_YOUR_GAME");
+            let draftGameTitle = String((ownRows[0] as any)?.title || "").trim();
 
             const draftStore = createDraftStore(safeGameId);
             const upsertDraftFile = async (path: string, content: string) => await draftStore.writeFile(path, content);
@@ -2400,6 +3303,16 @@ export async function POST(req: Request) {
             const readDraftFiles = async (paths: string[]) => await draftStore.readFiles(paths);
             const readMetaObj = async () => await draftStore.readMeta();
             const writeMetaObj = async (metaObj: any) => await draftStore.writeMeta(metaObj);
+            const syncDraftGameTitle = async (nextRaw: string) => {
+              const nextTitle = normalizeGameTitle(nextRaw);
+              if (!nextTitle || nextTitle === draftGameTitle) return;
+              await db.execute(sql`
+                update creator_draft_games
+                set title = ${nextTitle}, updated_at = now()
+                where id = ${safeGameId} and owner_key = ${ownerKey}
+              `);
+              draftGameTitle = nextTitle;
+            };
             const hash12 = (s: string) => crypto.createHash("sha1").update(String(s || "")).digest("hex").slice(0, 12);
             const applyPersistStatus = (metaObj: any, step: string, result: { ok: boolean; written: string[]; failed: Array<{ path: string; error: string }>; updatedAt: number }, expected?: string[]) => ({
               ...(metaObj && typeof metaObj === "object" ? metaObj : {}),
@@ -2416,33 +3329,7 @@ export async function POST(req: Request) {
               },
             });
 
-            const validateInlineScripts = (html: string) => {
-              const err: string[] = [];
-              const blocks: string[] = [];
-              const re = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
-              let m: RegExpExecArray | null;
-              while ((m = re.exec(String(html || "")))) {
-                const attrs = String(m[1] || "");
-                if (/src\s*=/.test(attrs)) continue;
-                const code = String(m[2] || "").trim();
-                if (code) blocks.push(code);
-              }
-              try {
-                const js = blocks.join("\n\n");
-                if (js.trim()) new Script(js);
-              } catch (e: any) {
-                err.push(`index.html 内联脚本语法错误：${String(e?.message || e)}`);
-              }
-              return err;
-            };
-            const validateStandaloneJs = (jsCode: string) => {
-              try {
-                if (String(jsCode || "").trim()) new Script(String(jsCode || ""));
-                return "";
-              } catch (e: any) {
-                return String(e?.message || e || "");
-              }
-            };
+            const validateStandaloneJs = (jsCode: string) => validateStandaloneJsSyntax(jsCode);
 
             const setLastGood = async (metaObj: any, files: Array<{ path: string; content: string }>, note: string) => {
               const m = metaObj && typeof metaObj === "object" ? metaObj : {};
@@ -2463,18 +3350,11 @@ export async function POST(req: Request) {
               };
               await writeMetaObj(m);
             };
-            const validateAcceptanceSimple = (files: Array<{ path: string; content: string }>) => {
+            const validateAcceptanceSimple = async (files: Array<{ path: string; content: string }>) => {
               const index = files.find((f) => f.path === "index.html")?.content || "";
+              const css = files.find((f) => f.path === "style.css")?.content || "";
               const js = files.find((f) => f.path === "game.js")?.content || "";
-              const errs = validateInlineScripts(index);
-              const jsErr = validateStandaloneJs(js);
-              if (jsErr) errs.push(`game.js 语法错误：${jsErr}`);
-              const hasCss = !!files.find((f) => f.path === "style.css")?.content;
-              const hasJs = !!js.trim();
-              if (hasCss && !/href\s*=\s*["']\.\/style\.css["']/.test(index)) errs.push("index.html 未正确引用 ./style.css");
-              if (hasJs && !/src\s*=\s*["']\.\/game\.js["']/.test(index)) errs.push("index.html 未正确引用 ./game.js");
-              errs.push(...validateStructureContracts(index, js));
-              return errs;
+              return await buildAcceptanceReport(index, css, js);
             };
             const trimRefineFile = (path: string, content: string) => {
               return trimCodeContext(path, content);
@@ -2493,7 +3373,7 @@ export async function POST(req: Request) {
                   `  "files"?: [ { "path": "index.html|style.css|game.js", "content": string } ]\n` +
                   `}\n`,
                 "直接补丁：修复 JSON",
-                1200,
+                2400,
               );
             const directSingleFilePlainFallback = async (
               targetPath: string,
@@ -2532,10 +3412,10 @@ export async function POST(req: Request) {
                   },
                 ],
                 temperature: 0.1,
-                max_tokens: targetPath.endsWith(".js") ? 1600 : 1000,
+                max_tokens: 8000,
               };
               if (provider === "openrouter" && payloadBase.provider) payload.provider = payloadBase.provider;
-              const out = await callStreamRobust(payload, `直接补丁：${targetPath} 纯代码`, false, 45_000);
+              const out = await callStreamRobust(payload, `直接补丁：${targetPath} 纯代码`, false, 180_000);
               return extractPlainCodeText(out, [lang, targetPath.endsWith(".js") ? "javascript" : lang]);
             };
 
@@ -2551,8 +3431,8 @@ export async function POST(req: Request) {
             const gameExisting = currentDraft["game.js"] || "";
             const hasExistingGame = !!(indexExisting.trim() || styleExisting.trim() || gameExisting.trim());
             const hasCompleteSplitGame = !!(indexExisting.trim() && styleExisting.trim() && gameExisting.trim());
+            const isStarterDraft = looksLikeStarterDraft(indexExisting, styleExisting, gameExisting);
             const directEditProfile = classifyIncrementalEdit(userIntent);
-            const shouldUseDirectRefine = hasExistingGame && !!directEditProfile;
 
             const readMeta = (await readMetaObj()) || {};
             const genState = ((readMeta as any)._gen && typeof (readMeta as any)._gen === "object" ? (readMeta as any)._gen : {}) as any;
@@ -2579,6 +3459,54 @@ export async function POST(req: Request) {
               return "";
             })();
             const seedPrompt = seedPromptFromMeta || firstNonCommandUser || userIntent;
+            const lockMetaTitle = async (metaObj: any, preferredTitle = "", source = "blueprint") => {
+              const lockedMeta = applyLockedGameTitle(metaObj, {
+                preferredTitle,
+                fallbackPrompt: seedPrompt,
+                draftTitle: draftGameTitle,
+                source,
+              });
+              const finalTitle = normalizeGameTitle((lockedMeta as any)?.title || "");
+              if (finalTitle) {
+                try {
+                  await syncDraftGameTitle(finalTitle);
+                } catch (e: any) {
+                  logStep("title.sync_failed", { title: finalTitle, error: String(e?.message || e) });
+                }
+              }
+              return lockedMeta;
+            };
+
+            // 只有在“确实已有生成历史/蓝图状态”的情况下，才允许走 direct_refine（小改动）。
+            // 否则新建游戏（seed 模板已写入 index/style/game，但 meta 里没有 stage/lastGood/design）会被误判成小改动。
+            const hasGenState =
+              !!String(genState.stage || "").trim() ||
+              !!(genState as any).lastGood ||
+              !!(genState as any).design ||
+              !!(genState as any).requirementContract;
+            const forceBlueprintRegenerate =
+              !!directEditProfile && (directEditProfile.kind === "feature" || directEditProfile.kind === "bugfix");
+            const preserveExistingStyle = forceBlueprintRegenerate && hasExistingGame && !isStarterDraft;
+            const styleConsistencyBlock = preserveExistingStyle
+              ? buildStyleConsistencyBlock(indexExisting, styleExisting, (genState as any)?.design || readMeta)
+              : "";
+            const shouldUseDirectRefine =
+              mode !== "fix" &&
+              hasExistingGame &&
+              hasGenState &&
+              !isStarterDraft &&
+              !!directEditProfile &&
+              !forceBlueprintRegenerate;
+            logStep("direct_refine.gate", {
+              hasExistingGame,
+              hasCompleteSplitGame,
+              hasGenState,
+              isStarterDraft,
+              hasProfile: !!directEditProfile,
+              forceBlueprintRegenerate,
+              preserveExistingStyle,
+              stage: String(genState.stage || ""),
+            });
 
             if (shouldUseDirectRefine) {
               const editProfile = directEditProfile as IncrementalEditProfile;
@@ -2602,7 +3530,9 @@ export async function POST(req: Request) {
                 );
                 await upsertDraftFile("index.html", localButtonEdit.content);
                 const metaNow = (await readMetaObj()) || readMeta || {};
-                if (!validateAcceptanceSimple(files).length) await setLastGood(metaNow, files, "after_local_direct_edit");
+                const localAcceptance = await validateAcceptanceSimple(files);
+                if (!localAcceptance.blockers.length) await setLastGood(metaNow, files, "after_local_direct_edit");
+                if (localAcceptance.warnings.length) logStep("direct_refine.local_acceptance_warnings", localAcceptance.warnings);
                 const finalObj = {
                   assistant: localButtonEdit.assistant,
                   meta: metaNow,
@@ -2638,15 +3568,15 @@ export async function POST(req: Request) {
                     : editProfile.kind === "visual"
                       ? "这是视觉样式优化。优先改样式，不要改玩法和状态流。"
                       : editProfile.kind === "behavior"
-                      ? "这是轻量行为修改。优先只改 game.js 里的事件、状态流转和显示同步，不要改主题，不要重构页面，不要注入整套新脚本。"
+                      ? "这是已有游戏上的行为修改。优先保持原有风格与 DOM 约定；只要涉及开始页、按钮、AI、显示状态或进度，就要同步保证 index.html 和 game.js 一致。"
                         : editProfile.kind === "bugfix"
                           ? "这是行为修复。优先修问题本身，不要额外设计新玩法。"
                           : "这是已有游戏上的小增强。优先增量添加，不要重写大结构。";
               const refineExtraRules =
                 editProfile.kind === "behavior"
-                  ? `- 这次是已有游戏上的“行为小改动”，优先只修改 game.js。\n` +
-                    `- 不要新增独立的开始页逻辑，不要重写 index.html，不要通过注入大段兜底脚本来绕过现有代码。\n` +
-                    `- 如果要“自动开始”，请直接复用现有 start/init 流程；如果要“按进度显示当前句子”，请在现有状态更新里同步文案。\n`
+                  ? `- 这次是已有游戏上的行为修改；如果涉及按钮、开始页、AI/玩家、当前句子、进度、事件绑定，请联动保证 DOM id、事件和状态流一致。\n` +
+                    `- 不要通过注入大段兜底脚本来绕过现有代码，也不要静默删掉原有按钮绑定。\n` +
+                    `- 如果要“自动开始”，请直接复用现有 start/init 流程；如果要“按进度显示当前句子”，请同时同步页面显示和状态更新。\n`
                   : "";
               const regenerateDirectTargets = async (targetPaths: string[]) => {
                 let workingFiles = mergeCodeFiles(currentFilesRaw, []);
@@ -2672,14 +3602,17 @@ export async function POST(req: Request) {
                     targets.add("index.html");
                   }
                   if (
-                    /game\.js 语法错误|game\.js 引用了不存在的 DOM id|缺少 click 事件绑定|window\.gameHooks 缺少关键接口|game\.js 缺少明确入口调用/i.test(
+                    /game\.js 语法错误|game\.js 引用了不存在的 DOM id|缺少(?:\s*click|交互)?\s*事件绑定|window\.gameHooks 缺少关键接口|game\.js 缺少明确入口调用|沙盒(?:自检运行报错| console\.error)/i.test(
                       msg,
                     )
                   ) {
                     targets.add("game.js");
                   }
+                  if (/缺少(?:\s*click|交互)?\s*事件绑定/i.test(msg)) {
+                    targets.add("index.html");
+                  }
                   // game.js 引用了不存在的 DOM id => 必须补 HTML 结构
-                  if (/game\.js 引用了不存在的 DOM id/i.test(msg)) {
+                  if (/game\.js 引用了不存在的 DOM id|沙盒(?:自检运行报错| console\.error).*(?:getelementbyid|queryselector|addEventListener|classList|textContent|Cannot read properties of null|Cannot set properties of null)/i.test(msg)) {
                     targets.add("index.html");
                   }
                   if (/style\.css/i.test(msg) && !/index\.html 未正确引用 \.\/style\.css/i.test(msg)) {
@@ -2748,14 +3681,14 @@ export async function POST(req: Request) {
                     },
                   ],
                   temperature: editProfile.kind === "bugfix" ? 0.1 : editProfile.kind === "feature" ? 0.25 : 0.15,
-                  max_tokens: directPaths.length === 1 ? 1000 : 1600,
+                  max_tokens: 8000,
                   response_format: { type: "json_object" },
                 };
                 if (provider === "openrouter" && payloadBase.provider) refinePayload.provider = payloadBase.provider;
 
                 const refineText = await autoRetry(
                   async () =>
-                    await callStreamRobust(refinePayload, "直接补丁：ops patch", true, directPaths.length === 1 ? 25_000 : 45_000),
+                    await callStreamRobust(refinePayload, "直接补丁：ops patch", true, directPaths.length === 1 ? 90_000 : 150_000),
                   "小改动补丁",
                   "这是已有游戏上的小改动，只输出 JSON 和必要文件。",
                   1,
@@ -2765,14 +3698,22 @@ export async function POST(req: Request) {
                 if (!refineObj) refineObj = await repairFilesJson(refineText);
                 if (!refineObj) {
                   const targetPath = directPaths.includes(primaryDirectPath) ? primaryDirectPath : directPaths[0];
-                  const currentTarget = currentFilesRaw.find((f) => f.path === targetPath)?.content || "";
-                  const readonlyContext = buildReadonlyFilesContext(currentFilesRaw, [targetPath]);
-                  sendStatus(`这次小改动的 JSON 不稳定，我改用“主文件纯代码”方式再试一次…`);
-                  const plainContent = await directSingleFilePlainFallback(targetPath, currentTarget, userIntent, refineTaskHint, readonlyContext);
-                  if (plainContent.trim()) {
+                  const upgradeTargets = directPaths.length > 1 ? sortCodePaths(directPaths) : [targetPath];
+                  sendStatus(`这次小改动的 JSON 不稳定，我直接升级为${upgradeTargets.length > 1 ? "多文件" : "单文件"}重生成…`);
+                  sendProgress({
+                    mode: "patch",
+                    stepId: "direct_refine_upgrade",
+                    stepLabel: "升级为重生成",
+                    status: "upgraded",
+                    strategy: upgradeTargets.length > 1 ? "multi_file_regen" : "single_file_regen",
+                    fileTargets: upgradeTargets,
+                    detail: "补丁 JSON 不稳定",
+                  });
+                  const regenerated = await regenerateDirectTargets(upgradeTargets);
+                  if (regenerated.length) {
                     refineObj = {
-                      assistant: "已按你的要求完成这次小改动。",
-                      files: [{ path: targetPath, content: plainContent }],
+                      assistant: "已按你的要求重生成相关文件并完成修复。",
+                      files: regenerated,
                     };
                   }
                 }
@@ -2789,22 +3730,22 @@ export async function POST(req: Request) {
               }
               if (!outFiles.length && outOps.length && !appliedOpsChanged) {
                 const targetPath = directPaths.includes(primaryDirectPath) ? primaryDirectPath : directPaths[0];
-                const currentTarget = currentFilesRaw.find((f) => f.path === targetPath)?.content || "";
-                const readonlyContext = buildReadonlyFilesContext(currentFilesRaw, [targetPath]);
+                const upgradeTargets =
+                  directPaths.length > 1 ? sortCodePaths(directPaths) : [targetPath];
                 logStep("direct_refine.ops_no_match", { targetPath, ops: outOps });
-                sendStatus(`这次补丁锚点没有命中当前代码，我改用“主文件纯代码”方式再试一次…`);
+                sendStatus(`这次补丁锚点没有命中当前代码，我直接升级为${upgradeTargets.length > 1 ? "多文件" : "单文件"}重生成…`);
                 sendProgress({
                   mode: "patch",
                   stepId: "direct_refine_upgrade",
-                  stepLabel: "升级为主文件补丁",
+                  stepLabel: "升级为重生成",
                   status: "upgraded",
-                  strategy: "single_file_patch",
-                  fileTargets: [targetPath],
+                  strategy: upgradeTargets.length > 1 ? "multi_file_regen" : "single_file_regen",
+                  fileTargets: upgradeTargets,
                   detail: "ops 锚点未命中当前代码",
                 });
-                const plainContent = await directSingleFilePlainFallback(targetPath, currentTarget, userIntent, refineTaskHint, readonlyContext);
-                if (plainContent.trim()) {
-                  files = currentFilesRaw.map((f) => (f.path === targetPath ? { path: targetPath, content: plainContent } : f));
+                const regenerated = await regenerateDirectTargets(upgradeTargets);
+                if (regenerated.length) {
+                  files = mergeCodeFiles(currentFilesRaw, regenerated);
                 } else {
                   throw new Error("DIRECT_REFINE_OPS_NO_MATCH");
                 }
@@ -2817,9 +3758,11 @@ export async function POST(req: Request) {
                 if (idx >= 0) files[idx] = { path: p, content: c };
                 else files.push({ path: p, content: c });
               }
-              let finalAcceptanceErrs = validateAcceptanceSimple(
+              let finalAcceptance = await validateAcceptanceSimple(
                 files.filter((f) => ["index.html", "style.css", "game.js"].includes(f.path)),
               );
+              let finalAcceptanceErrs = finalAcceptance.blockers;
+              if (finalAcceptance.warnings.length) logStep("direct_refine.acceptance_warnings", finalAcceptance.warnings);
               if (finalAcceptanceErrs.length) {
                 logStep("direct_refine.invalid_after_patch", { strategy: directPatchStrategy, errors: finalAcceptanceErrs });
                 const inferredTargets = inferDirectRecoveryTargets(finalAcceptanceErrs);
@@ -2844,9 +3787,11 @@ export async function POST(req: Request) {
                   const regenerated = await regenerateDirectTargets(recoveryTargets);
                   if (regenerated.length) {
                     files = mergeCodeFiles(files, regenerated);
-                    finalAcceptanceErrs = validateAcceptanceSimple(
+                    finalAcceptance = await validateAcceptanceSimple(
                       files.filter((f) => ["index.html", "style.css", "game.js"].includes(f.path)),
                     );
+                    finalAcceptanceErrs = finalAcceptance.blockers;
+                    if (finalAcceptance.warnings.length) logStep("direct_refine.acceptance_warnings_after_regen", finalAcceptance.warnings);
                     if (!finalAcceptanceErrs.length) {
                       logStep("direct_refine.recovered_by_regen", { recoveryTargets, regenerated });
                     } else {
@@ -3001,13 +3946,13 @@ export async function POST(req: Request) {
                   },
                 ],
                 temperature: 0.2,
-                max_tokens: 1100,
+                max_tokens: 8000,
                 response_format: { type: "json_object" },
               };
               if (provider === "openrouter" && payloadBase.provider) payloadClarify.provider = payloadBase.provider;
               const out = await autoRetry(
                 async () =>
-                  await callStreamRobust(payloadClarify, "阶段0：需求澄清 JSON", true, 90_000),
+                  await callStreamRobust(payloadClarify, "阶段0：需求澄清 JSON", true, 180_000),
                 "需求澄清",
                 "只输出 JSON（intent/missing/options/questions/recommend）。",
                 2,
@@ -3052,13 +3997,15 @@ export async function POST(req: Request) {
               lines.push(`\n请回复：A 或 B 或 C（也可以直接补充一句你特别想要的效果）。`);
 
               // 写入 meta.json：记录澄清阶段与澄清 JSON（中间变量）
+              const clarifyTitleCandidate = String(options.find((x: any) => String(x?.id || "").toUpperCase() === rec)?.title || "").trim();
               const metaOut = {
                 ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
-                title: (readMeta as any)?.title || String(options.find((x: any) => String(x?.id || "").toUpperCase() === rec)?.title || "") || "未命名作品",
+                title: pickLockedGameTitle(readMeta, draftGameTitle) || "",
                 _gen: {
                   ...(genState || {}),
                   stage: "clarify",
                   clarify: obj,
+                  titleCandidate: clarifyTitleCandidate,
                   seedPrompt,
                   turnsUsed: 0, // 已回答的问题数（不包含选 A/B/C）
                   maxTurns: MAX_TURNS,
@@ -3259,7 +4206,7 @@ export async function POST(req: Request) {
               if (!s) return false;
               if (/不(要|用)改蓝图|别改蓝图|保持蓝图不变/i.test(s)) return false;
               // 明显是“新增/改规则/加功能”类指令：允许更新蓝图（但必须保留旧蓝图历史）
-              return /(新增|加入|添加|增加|支持|改成|改为|规则|玩法|排行榜|榜单|存档|进度|背景|关卡|模式|控制|按键|重力|UI|界面|音效|音乐|难度)/i.test(
+              return /(新增|加入|添加|增加|支持|改成|改为|规则|玩法|排行榜|榜单|存档|进度|背景|关卡|模式|控制|按键|重力|UI|界面|音效|音乐|难度|修复|bug|报错|错误|异常|崩溃|卡住|白屏|不生效)/i.test(
                 s,
               );
             };
@@ -3283,10 +4230,10 @@ export async function POST(req: Request) {
                   },
                 ],
                 temperature: 0,
-                max_tokens: 900,
+                max_tokens: 8000,
               };
               if (provider === "openrouter" && payloadBase.provider) repairPayload.provider = payloadBase.provider;
-              return await callStreamRobust(repairPayload, "阶段2：修复蓝图协议", false, 60_000);
+              return await callStreamRobust(repairPayload, "阶段2：修复蓝图协议", false, 120_000);
             };
             const markCodePending = async () => {
               const nextMeta = {
@@ -3345,19 +4292,20 @@ export async function POST(req: Request) {
                       `【用户最早的主题】\n${seedPrompt}\n\n` +
                       `【用户补充/本轮输入】\n${userIntent}\n\n` +
                       `【已选答案（可能为空）】\n${JSON.stringify(answers, null, 2)}\n\n` +
+                      styleConsistencyBlock +
                       `${templateHint}\n` +
                       (activeConfig ? `【已有 config（如有）】\n${JSON.stringify(activeConfig, null, 2)}\n\n` : "") +
                       `请输出蓝图分段文本协议（meta/config/protocol/blueprint/assetsPlan），不要输出 JSON。`,
                   },
                 ],
                 temperature: 0.2,
-                max_tokens: 1100,
+                max_tokens: 8000,
               };
               if (provider === "openrouter" && payloadBase.provider) bpPayload.provider = payloadBase.provider;
 
               const bpText = await autoRetry(
                 async () =>
-                  await callStreamRobust(bpPayload, "阶段2：蓝图（分段协议）", false, 90_000),
+                  await callStreamRobust(bpPayload, "阶段2：蓝图（分段协议）", false, 180_000),
                 "蓝图",
                 "严格按 ===SECTION:...=== / ===END=== 输出 5 段 key=value 文本协议（meta/config/protocol/blueprint/assetsPlan），严禁输出代码。",
                 2,
@@ -3373,6 +4321,7 @@ export async function POST(req: Request) {
 
               const parsedBlueprint = parseBlueprintSectionProtocol(sec, activeConfig, readMeta);
               if (!parsedBlueprint) throw new Error("BLUEPRINT_PROTOCOL_PARSE_FAILED");
+              parsedBlueprint.meta = await lockMetaTitle(parsedBlueprint.meta, parsedBlueprint?.meta?.title, "blueprint");
               design = parsedBlueprint;
               const metaBp = parsedBlueprint.meta;
               const cfgBp = parsedBlueprint.config || activeConfig || {};
@@ -3444,18 +4393,21 @@ export async function POST(req: Request) {
                     role: "user",
                     content:
                       `【当前蓝图 design（必须尽量保持命名稳定）】\n${JSON.stringify(prev, null, 2)}\n\n` +
+                      `【当前固定标题】\n${pickLockedGameTitle((prev as any)?.meta || readMeta, draftGameTitle) || "（暂无，若本次首次生成则请从最早主题提炼）"}\n\n` +
                       `【用户新增需求/本轮输入】\n${userIntent}\n\n` +
+                      styleConsistencyBlock +
+                      `请在保持上面“原有风格约束”的前提下更新蓝图，禁止改成另一种视觉语言。\n\n` +
                       `${templateHint}\n` +
                       `请输出更新后的蓝图分段文本协议（meta/config/protocol/blueprint/assetsPlan），不要输出 JSON。`,
                   },
                 ],
                 temperature: 0.15,
-                max_tokens: 1100,
+                max_tokens: 8000,
               };
               if (provider === "openrouter" && payloadBase.provider) bpPayload.provider = payloadBase.provider;
 
               const bpText = await autoRetry(
-                async () => await callStreamRobust(bpPayload, "阶段2：蓝图（增量更新）", false, 90_000),
+                async () => await callStreamRobust(bpPayload, "阶段2：蓝图（增量更新）", false, 180_000),
                 "蓝图（增量）",
                 "严格按 ===SECTION:...=== / ===END=== 输出 5 段 key=value 文本协议，严禁输出代码。",
                 2,
@@ -3472,6 +4424,7 @@ export async function POST(req: Request) {
 
               const parsedBlueprint = parseBlueprintSectionProtocol(sec, activeConfig, (prev as any)?.meta || readMeta);
               if (!parsedBlueprint) throw new Error("BLUEPRINT_UPDATE_PROTOCOL_PARSE_FAILED");
+              parsedBlueprint.meta = await lockMetaTitle(parsedBlueprint.meta, (prev as any)?.meta?.title || parsedBlueprint?.meta?.title, "blueprint");
 
               design = parsedBlueprint;
               activeConfig = parsedBlueprint.config || activeConfig || {};
@@ -3506,8 +4459,9 @@ export async function POST(req: Request) {
               });
             };
             if (!design && stage !== "code_pending") await generateBlueprintStep();
-            if (!design && stage !== "code_pending") await generateBlueprintStep();
-            else if (design && mode === "generate" && shouldUpdateBlueprintFromUserIntent(userIntent)) await updateBlueprintStep();
+            else if (design && (forceBlueprintRegenerate || mode === "fix" || shouldUpdateBlueprintFromUserIntent(userIntent))) {
+              await updateBlueprintStep();
+            }
 
 
             // 2) 代码生成：需求契约 -> index.html -> style.css -> game.js
@@ -3551,12 +4505,12 @@ export async function POST(req: Request) {
                   { role: "user", content: `请把下面“原输出”修复为严格 JSON：\n\n【原输出】\n${clipped}\n` },
                 ],
                 temperature: 0.0,
-                max_tokens: 1200,
+                max_tokens: 8000,
                 response_format: { type: "json_object" },
               };
               if (provider === "openrouter" && payloadBase.provider) repairPayload.provider = payloadBase.provider;
               try {
-                const repairedText = await callStreamRobust(repairPayload, "阶段：修复输出 JSON", true, 90_000);
+                const repairedText = await callStreamRobust(repairPayload, "阶段：修复输出 JSON", true, 180_000);
                 logStep("json_repair.raw", repairedText);
                 return parseJsonObjectLoose(repairedText);
               } catch {
@@ -3566,13 +4520,15 @@ export async function POST(req: Request) {
             };
             const failWithRetry = async (assistant: string, badText = "") => {
               logStep("generation.retryable_failure", { assistant, badText });
-              await writeMeta({
+              const retryMeta = {
                 ...(readMeta && typeof readMeta === "object" ? readMeta : {}),
                 _gen: { ...(genState || {}), stage: "code_pending", seedPrompt, updatedAt: Date.now(), lastBad: String(badText || "").slice(0, 2000) },
-              });
+              };
+              await writeMeta(retryMeta);
+              const latestMeta = (await readMetaObj()) || retryMeta;
               const finalObj = {
                 assistant,
-                meta: readMeta,
+                meta: latestMeta,
                 files: [] as any[],
                 ui: { type: "actions", actions: [{ id: "retry", label: "重试（继续写代码）", payload: "@retry" }] },
               };
@@ -3617,12 +4573,13 @@ export async function POST(req: Request) {
                       `【用户最早的主题】\n${seedPrompt}\n\n` +
                       `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
                       requirementContractBlock +
+                      styleConsistencyBlock +
                       `${templateHint}\n` +
                       `请只输出 index.html 纯文本，不要输出 JSON。`,
                   },
                 ],
                 temperature: 0.2,
-                max_tokens: 1000,
+                max_tokens: 8000,
               };
               if (provider === "openrouter" && payloadBase.provider) htmlPayload.provider = payloadBase.provider;
 
@@ -3630,7 +4587,7 @@ export async function POST(req: Request) {
               try {
                 htmlText = await autoRetry(
                   async () =>
-                    await callStreamRobust(htmlPayload, "阶段3：页面结构 HTML", false, 90_000),
+                    await callStreamRobust(htmlPayload, "阶段3：页面结构 HTML", false, 180_000),
                   "页面结构",
                   "只输出 index.html 纯文本，不要解释，不要 JSON。",
                   2,
@@ -3698,20 +4655,21 @@ export async function POST(req: Request) {
                       `【用户最早的主题】\n${seedPrompt}\n\n` +
                       `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
                       requirementContractBlock +
+                      styleConsistencyBlock +
                       `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }], null, 2)}\n\n` +
                       `${templateHint}\n` +
                       `请只输出 style.css 纯文本，不要输出 JSON。`,
                   },
                 ],
                 temperature: 0.2,
-                max_tokens: 1000,
+                max_tokens: 8000,
               };
               if (provider === "openrouter" && payloadBase.provider) cssPayload.provider = payloadBase.provider;
 
               let cssText = "";
               try {
                 cssText = await autoRetry(
-                  async () => await callStreamRobust(cssPayload, "阶段4：页面样式 CSS", false, 90_000),
+                  async () => await callStreamRobust(cssPayload, "阶段4：页面样式 CSS", false, 180_000),
                   "页面样式",
                   "只输出 style.css 纯文本，不要解释，不要 JSON。",
                   2,
@@ -3780,13 +4738,14 @@ export async function POST(req: Request) {
                         `【用户最早的主题】\n${seedPrompt}\n\n` +
                         `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
                         requirementContractBlock +
+                        styleConsistencyBlock +
                         `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }, { path: "style.css", content: css }], null, 2)}\n\n` +
                         `${templateHint}\n` +
                         `请输出完整的 game.js 纯文本，不要输出 JSON。`,
                     },
                   ],
                   temperature: 0.2,
-                  max_tokens: 2200,
+                  max_tokens: 8000,
                 };
                 if (provider === "openrouter" && payloadBase.provider) gameJsPayload.provider = payloadBase.provider;
 
@@ -3794,7 +4753,7 @@ export async function POST(req: Request) {
                 try {
                   gameJsText = await autoRetry(
                     async () =>
-                      await callStreamRobust(gameJsPayload, "阶段5：核心逻辑 JS", false, 90_000),
+                      await callStreamRobust(gameJsPayload, "阶段5：核心逻辑 JS", false, 180_000),
                     "核心逻辑",
                     "只输出 game.js 纯文本，不要解释，不要 JSON。",
                     2,
@@ -3829,13 +4788,14 @@ export async function POST(req: Request) {
                         `【用户最早的主题】\n${seedPrompt}\n\n` +
                         `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
                         requirementContractBlock +
+                        styleConsistencyBlock +
                         `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }, { path: "style.css", content: css }], null, 2)}\n\n` +
                         `${templateHint}\n` +
                         `请先输出一个结构完整、函数齐全、带启动入口的 game.js 骨架纯文本，不要输出 JSON。`,
                     },
                   ],
                   temperature: 0.2,
-                  max_tokens: 1400,
+                  max_tokens: 8000,
                 };
                 if (provider === "openrouter" && payloadBase.provider) gameJsSkeletonPayload.provider = payloadBase.provider;
 
@@ -3843,7 +4803,7 @@ export async function POST(req: Request) {
                 try {
                   skeletonText = await autoRetry(
                     async () =>
-                      await callStreamRobust(gameJsSkeletonPayload, "阶段5：核心逻辑骨架 JS", false, 90_000),
+                      await callStreamRobust(gameJsSkeletonPayload, "阶段5：核心逻辑骨架 JS", false, 180_000),
                     "核心逻辑骨架",
                     "只输出 game.js 骨架纯文本，不要解释，不要 JSON。",
                     2,
@@ -3894,6 +4854,7 @@ export async function POST(req: Request) {
                         `【用户最早的主题】\n${seedPrompt}\n\n` +
                         `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
                         requirementContractBlock +
+                        styleConsistencyBlock +
                         `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }, { path: "style.css", content: css }], null, 2)}\n\n` +
                         `【当前 game.js 骨架】\n${skeletonJs}\n\n` +
                         `${templateHint}\n` +
@@ -3901,7 +4862,7 @@ export async function POST(req: Request) {
                     },
                   ],
                   temperature: 0.2,
-                  max_tokens: 2200,
+                  max_tokens: 8000,
                 };
                 if (provider === "openrouter" && payloadBase.provider) gameJsCompletePayload.provider = payloadBase.provider;
 
@@ -3909,7 +4870,7 @@ export async function POST(req: Request) {
                 try {
                   gameJsText = await autoRetry(
                     async () =>
-                      await callStreamRobust(gameJsCompletePayload, "阶段6：补全核心逻辑 JS", false, 90_000),
+                      await callStreamRobust(gameJsCompletePayload, "阶段6：补全核心逻辑 JS", false, 180_000),
                     "核心逻辑补全",
                     "基于已有骨架补全 game.js 纯文本，不要解释，不要 JSON。",
                     2,
@@ -3945,6 +4906,7 @@ export async function POST(req: Request) {
                       content:
                         `【用户最早的主题】\n${seedPrompt}\n\n` +
                         `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
+                        styleConsistencyBlock +
                         `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }, { path: "style.css", content: css }], null, 2)}\n\n` +
                         `【当前损坏的 game.js】\n${jsContent}\n\n` +
                         `【语法错误】\n${jsSyntaxErr}\n\n` +
@@ -3952,11 +4914,11 @@ export async function POST(req: Request) {
                     },
                   ],
                   temperature: 0.1,
-                  max_tokens: 1200,
+                  max_tokens: 8000,
                 };
                 if (provider === "openrouter" && payloadBase.provider) repairPayload.provider = payloadBase.provider;
                 try {
-                  const repairedJsText = await callStreamRobust(repairPayload, "阶段5：修复核心逻辑 JS", false, 60_000);
+                  const repairedJsText = await callStreamRobust(repairPayload, "阶段5：修复核心逻辑 JS", false, 120_000);
                   const repairedJs = extractPlainCodeText(repairedJsText, ["js", "javascript"]);
                   if (repairedJs.trim()) {
                     const repairedErr = validateStandaloneJs(repairedJs);
@@ -4013,7 +4975,7 @@ export async function POST(req: Request) {
             if (!gameJsStep) return;
             const { jsContent } = gameJsStep;
 
-            const metaNow = {
+            const metaNow = await lockMetaTitle({
               ...meta,
               _gen: {
                 ...(genState || {}),
@@ -4032,14 +4994,15 @@ export async function POST(req: Request) {
                 },
                 updatedAt: Date.now(),
               },
-            };
+            }, meta?.title || "", "blueprint");
             const finalFiles: Array<{ path: string; content: string }> = [
               { path: "index.html", content: html },
               { path: "style.css", content: css },
               { path: "game.js", content: jsContent },
             ];
             let stableFiles = finalFiles;
-            const acceptanceErrs = validateAcceptanceSimple(finalFiles);
+            const acceptance = await validateAcceptanceSimple(finalFiles);
+            const acceptanceErrs = acceptance.blockers;
             sendProgress({
               mode: "create",
               stepId: "validate",
@@ -4051,6 +5014,7 @@ export async function POST(req: Request) {
             logStep("final.acceptance", {
               ok: acceptanceErrs.length === 0,
               errors: acceptanceErrs,
+              warnings: acceptance.warnings,
               files: finalFiles,
             });
             if (acceptanceErrs.length) {
