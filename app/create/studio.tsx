@@ -2138,8 +2138,14 @@ export default function CreateStudio({
                   </svg>
                 )}
               </button>
-              <button className="btn sendBtn" type="button" onClick={send} disabled={uiBusy || !input.trim()} aria-label="发送">
-                {busy ? "发送中…" : "➤ 发送"}
+              <button
+                className={uiBusy || !input.trim() ? "btn btnGray sendBtnDisabled" : "btn sendBtn"}
+                type="button"
+                onClick={send}
+                disabled={uiBusy || !input.trim()}
+                aria-label="发送"
+              >
+                发送
               </button>
             </div>
           </div>

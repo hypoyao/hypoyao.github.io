@@ -369,6 +369,13 @@
   background: linear-gradient(135deg, rgba(37, 99, 235, 0.96), rgba(14, 116, 144, 0.92)) !important;
   color: rgba(255, 255, 255, 0.96) !important;
 }
+.sendBtnDisabled {
+  background: rgba(241, 245, 249, 1) !important;
+  color: rgba(100, 116, 139, 0.96) !important;
+  border-color: rgba(203, 213, 225, 0.95) !important;
+  box-shadow: none;
+  cursor: not-allowed;
+}
 .createNeo .sendBtn {
   border-color: rgba(17, 24, 39, 0.95);
 }
@@ -937,6 +944,12 @@
   background: linear-gradient(135deg, rgba(56, 189, 248, 0.95), rgba(34, 197, 94, 0.95)) !important;
   color: rgba(255, 255, 255, 0.96) !important;
   border-color: rgba(56, 189, 248, 0.40);
+}
+.createBento .sendBtnDisabled {
+  background: rgba(248, 250, 252, 1) !important;
+  color: rgba(100, 116, 139, 0.96) !important;
+  border-color: rgba(203, 213, 225, 0.92) !important;
+  box-shadow: var(--b-shadow);
 }
 
 /* 预览“模拟器外壳”也改成 bento：柔和边框 + 阴影 */

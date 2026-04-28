@@ -43,7 +43,12 @@ function normalizeId(id: string) {
 function isAllowedCoverUrl(s: string) {
   if (!s) return true;
   if (s.startsWith("/")) return true;
-  return false;
+  try {
+    const u = new URL(s);
+    return u.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function parseImageDataUrl(s: string) {

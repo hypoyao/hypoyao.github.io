@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import path from "node:path";
 import fs from "node:fs/promises";
+import { put } from "@vercel/blob";
 import { getSession } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +20,14 @@ function parseImageDataUrl(s: string) {
   const mime = m[1].toLowerCase();
   const b64 = m[2];
   return { mime, b64 };
+}
+
+function hasBlobToken() {
+  return !!String(process.env.BLOB_READ_WRITE_TOKEN || "").trim();
+}
+
+function runningOnVercel() {
+  return !!String(process.env.VERCEL || "").trim();
 }
 
 export async function POST(req: Request) {
@@ -44,12 +53,26 @@ export async function POST(req: Request) {
   const buf = Buffer.from(parsed.b64, "base64");
   if (buf.length > 1_200_000) return json(400, { ok: false, error: "IMAGE_TOO_LARGE" });
 
+  if (hasBlobToken()) {
+    const blob = await put(`covers/${id}.${ext}`, buf, {
+      access: "public",
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      contentType: parsed.mime,
+      cacheControlMaxAge: 60 * 60 * 24 * 30,
+    });
+    return json(200, { ok: true, coverUrl: blob.url, storage: "vercel-blob" });
+  }
+
+  if (runningOnVercel()) {
+    return json(500, { ok: false, error: "MISSING_BLOB_READ_WRITE_TOKEN" });
+  }
+
   const outDir = path.join(process.cwd(), "public", "assets", "covers");
   await fs.mkdir(outDir, { recursive: true });
 
   const outFile = path.join(outDir, `${id}.${ext}`);
   await fs.writeFile(outFile, buf);
 
-  return json(200, { ok: true, coverUrl: `/assets/covers/${id}.${ext}` });
+  return json(200, { ok: true, coverUrl: `/assets/covers/${id}.${ext}`, storage: "local-file" });
 }
-
