@@ -71,10 +71,12 @@ export default async function HomePage() {
                   <div>
                     <div className="gameName">{g.title}</div>
                     <div className="gameDesc">{g.shortDesc}</div>
-                    <div className="gameStatRow" aria-label="游戏数据">
-                      <span className="gameStatChip">玩过 {g.playCount}</span>
-                      <span className="gameStatChip">点赞 {g.likeCount}</span>
-                    </div>
+                    {g.playCount >= 3 || g.likeCount >= 1 ? (
+                      <div className="gameStatRow" aria-label="游戏数据">
+                        {g.playCount >= 3 ? <span className="gameStatChip">玩过 {g.playCount}</span> : null}
+                        {g.likeCount >= 1 ? <span className="gameStatChip">点赞 {g.likeCount}</span> : null}
+                      </div>
+                    ) : null}
                     <div className="gameMetaRow">
                       <img className="gameMetaAvatar" src={g.creator.avatarUrl} alt={`${g.creator.name}头像`} />
                       <span className="gameMeta">创作者：{g.creator.name}</span>
