@@ -214,7 +214,6 @@ async function buildShellHtml(gameId: string) {
   const embedIndex = `${embedBase}index.html`;
   const publishHref = `/publish?id=${encodeURIComponent(gameId)}`;
   const editHref = `/create?id=${encodeURIComponent(gameId)}`;
-  const barEditHtml = `<a class="btnPrimary barEditBtn" href="${escHtml(editHref)}" aria-label="返回编程界面">返回编程</a>`;
   const actionHtml = isPublished
     ? `<a class="iconBtn" href="${escHtml(editHref)}" title="编辑" aria-label="编辑">
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -248,7 +247,6 @@ async function buildShellHtml(gameId: string) {
     .barActions{display:flex;align-items:center;gap:8px}
     .bar a{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:12px;border:1px solid var(--line);text-decoration:none;color:inherit;background:rgba(248,250,252,1)}
     .bar a svg{width:18px;height:18px;display:block}
-    .barEditBtn{height:36px;padding:0 12px;border-radius:12px;font-size:12px}
     .frame{width:100%;height:100%;border:0;background:white}
     .info{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:12px;min-height:0;overflow:auto}
     .infoHead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
@@ -272,7 +270,6 @@ async function buildShellHtml(gameId: string) {
       <div class="bar">
         <div class="barTitle">${safeTitle}</div>
         <div class="barActions">
-          ${barEditHtml}
           <a href="${escHtml(rawIndex)}" target="_blank" rel="noopener noreferrer" title="在新标签页打开游戏" aria-label="在新标签页打开游戏">
             <!-- 更接近“在新窗口打开”的标准图标：方框 + 右上角外开箭头 -->
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -464,19 +461,50 @@ export async function GET(_req: Request, ctx: { params: Promise<{ slug: string[]
     });
   }
 
-  // 1) creator 草稿：从 DB 读取（如果存在则优先）
+  const targetRel = isRaw ? relRaw : isEmbed ? relEmbed : rel;
+  const shouldPublishedFirst = !isRaw;
+
+  if (shouldPublishedFirst) {
+    await ensureGameFilesTables();
+    const rows = await db.execute(sql`
+      select content
+      from game_files
+      where game_id = ${gameId} and path = ${targetRel}
+      limit 1
+    `);
+    const list = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
+    const content = list?.[0]?.content;
+    if (typeof content === "string") {
+      const contentOut =
+        (isEmbed || isRaw) && targetRel.toLowerCase().endsWith(".html")
+          ? isEmbed
+            ? injectEmbedCleanup(content)
+            : stripDangerousLocalBehaviorArtifacts(content)
+          : content;
+      return new NextResponse(contentOut, {
+        status: 200,
+        headers: {
+          "content-type": contentTypeFor(targetRel),
+          "cache-control": "no-store",
+          "x-game-source": "game_files",
+        },
+      });
+    }
+  }
+
+  // 1) creator 草稿：只给 create 预览（__raw）优先，或作为未发布游戏的兜底。
   await ensureCreatorDraftTables();
   const draftRows = await db.execute(sql`
     select content
     from creator_draft_files
-    where game_id = ${gameId} and path = ${isRaw ? relRaw : isEmbed ? relEmbed : rel}
+    where game_id = ${gameId} and path = ${targetRel}
     limit 1
   `);
   const draftList = Array.isArray((draftRows as any).rows) ? (draftRows as any).rows : [];
   const draftContent = draftList?.[0]?.content;
   if (typeof draftContent === "string") {
     const contentOut =
-      (isEmbed || isRaw) && (isEmbed ? relEmbed : relRaw || "").toLowerCase().endsWith(".html")
+      (isEmbed || isRaw) && targetRel.toLowerCase().endsWith(".html")
         ? isEmbed
           ? injectEmbedCleanup(draftContent)
           : stripDangerousLocalBehaviorArtifacts(draftContent)
@@ -492,7 +520,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ slug: string[]
   }
 
   // 如果草稿存在但还没有任何文件：对 index.html 给一个可用占位页面，避免预览 404
-  if ((isRaw ? relRaw : rel) === "index.html") {
+  if (isRaw && targetRel === "index.html") {
     const draftGame = await db.execute(sql`
       select 1
       from creator_draft_games
@@ -519,32 +547,30 @@ export async function GET(_req: Request, ctx: { params: Promise<{ slug: string[]
     }
   }
 
-  // 2) 已发布游戏：从 DB 读取（统一入口）
-  await ensureGameFilesTables();
-  const rows = await db.execute(sql`
-    select content
-    from game_files
-    where game_id = ${gameId} and path = ${isRaw ? relRaw : isEmbed ? relEmbed : rel}
-    limit 1
-  `);
-  const list = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
-  const content = list?.[0]?.content;
-  if (typeof content === "string") {
-    const contentOut =
-      (isEmbed || isRaw) && (isEmbed ? relEmbed : relRaw || "").toLowerCase().endsWith(".html")
-        ? isEmbed
-          ? injectEmbedCleanup(content)
-          : stripDangerousLocalBehaviorArtifacts(content)
+  // 2) __raw 预览：草稿不存在时才回退到已发布版本。
+  if (isRaw) {
+    await ensureGameFilesTables();
+    const rows = await db.execute(sql`
+      select content
+      from game_files
+      where game_id = ${gameId} and path = ${targetRel}
+      limit 1
+    `);
+    const list = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
+    const content = list?.[0]?.content;
+    if (typeof content === "string") {
+      const contentOut = targetRel.toLowerCase().endsWith(".html")
+        ? stripDangerousLocalBehaviorArtifacts(content)
         : content;
-    return new NextResponse(contentOut, {
-      status: 200,
-      headers: {
-        "content-type": contentTypeFor(isRaw ? relRaw : isEmbed ? relEmbed : rel),
-        // 生产环境可改为更激进缓存；开发期先 no-store，避免调试时缓存不生效
-        "cache-control": "no-store",
-        "x-game-source": "game_files",
-      },
-    });
+      return new NextResponse(contentOut, {
+        status: 200,
+        headers: {
+          "content-type": contentTypeFor(targetRel),
+          "cache-control": "no-store",
+          "x-game-source": "game_files",
+        },
+      });
+    }
   }
   return new NextResponse("Not Found", { status: 404 });
 }

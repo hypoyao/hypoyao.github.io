@@ -7,6 +7,7 @@ import { sql } from "drizzle-orm";
 import { creators } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { ensureCreatorsAuthFields } from "@/lib/db/ensureCreatorsAuthFields";
+import { ensureGamesCoverFields } from "@/lib/db/ensureGamesCoverFields";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -25,6 +26,7 @@ export async function GET() {
   await ensureCreatorDraftTables();
   try {
     await ensureCreatorsAuthFields();
+    await ensureGamesCoverFields();
   } catch {}
 
   let creatorId = "";
@@ -49,7 +51,7 @@ export async function GET() {
   `);
   const pubP = creatorId
     ? db.execute(sql`
-        select id, title, extract(epoch from updated_at) as updated_s
+        select id, title, source_draft_id, extract(epoch from updated_at) as updated_s
         from games
         where creator_id = ${creatorId}
         order by updated_at desc
@@ -61,7 +63,7 @@ export async function GET() {
   const drafts = Array.isArray((draftRows as any).rows) ? (draftRows as any).rows : [];
   const pubs = Array.isArray((pubRows as any).rows) ? (pubRows as any).rows : [];
 
-  const map = new Map<string, { gameId: string; entry: string; mtimeMs: number; title: string; published: boolean }>();
+  const map = new Map<string, { gameId: string; entry: string; mtimeMs: number; title: string; published: boolean; dirty: boolean; publishId?: string }>();
 
   for (const r of drafts) {
     const id = String((r as any).id || "");
@@ -72,18 +74,36 @@ export async function GET() {
       mtimeMs: Math.floor(Number((r as any).updated_s || 0) * 1000),
       title: String((r as any).title || ""),
       published: false,
+      dirty: false,
+      publishId: "",
     });
   }
   for (const r of pubs) {
-    const id = String((r as any).id || "");
-    if (!id) continue;
-    // 已发布优先（覆盖同 id 的草稿）
-    map.set(id, {
-      gameId: id,
-      entry: `/games/${id}/__raw/index.html`,
-      mtimeMs: Math.floor(Number((r as any).updated_s || 0) * 1000),
-      title: String((r as any).title || ""),
+    const publishId = String((r as any).id || "").trim();
+    if (!publishId) continue;
+    const sourceDraftId = String((r as any).source_draft_id || "").trim();
+    const publishTitle = String((r as any).title || "");
+    const publishMtimeMs = Math.floor(Number((r as any).updated_s || 0) * 1000);
+    if (sourceDraftId && map.has(sourceDraftId)) {
+      const prev = map.get(sourceDraftId)!;
+      map.set(sourceDraftId, {
+        ...prev,
+        mtimeMs: Math.max(prev.mtimeMs || 0, publishMtimeMs),
+        title: prev.title || publishTitle,
+        published: true,
+        dirty: (prev.mtimeMs || 0) > publishMtimeMs,
+        publishId,
+      });
+      continue;
+    }
+    map.set(publishId, {
+      gameId: publishId,
+      entry: `/games/${publishId}/__raw/index.html`,
+      mtimeMs: publishMtimeMs,
+      title: publishTitle,
       published: true,
+      dirty: false,
+      publishId,
     });
   }
 

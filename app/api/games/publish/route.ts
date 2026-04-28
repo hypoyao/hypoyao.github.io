@@ -3,6 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { creators, games } from "@/lib/db/schema";
 import { getSession } from "@/lib/auth/session";
+import { ownerKeyFromSession } from "@/lib/creator/creatorIndex";
 import { ensureCreatorsAuthFields } from "@/lib/db/ensureCreatorsAuthFields";
 import { ensureGamesCoverFields } from "@/lib/db/ensureGamesCoverFields";
 import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
@@ -26,6 +27,11 @@ type Body = {
   sourceDraftId?: string;
 };
 
+function normalizeDraftId(id: string) {
+  const raw = String(id || "").trim();
+  return /^[a-zA-Z0-9_-]+$/.test(raw) ? raw : "";
+}
+
 function json(status: number, data: unknown) {
   return NextResponse.json(data, { status, headers: { "cache-control": "no-store" } });
 }
@@ -48,6 +54,74 @@ function parseImageDataUrl(s: string) {
   return { mime, b64 };
 }
 
+function parseJsonObject(raw: string) {
+  try {
+    const obj = raw ? JSON.parse(raw) : null;
+    return obj && typeof obj === "object" ? (obj as Record<string, any>) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readDraftFile(gameId: string, filePath: string) {
+  try {
+    await ensureCreatorDraftTables();
+    const rows = await db.execute(sql`
+      select content
+      from creator_draft_files
+      where game_id = ${gameId} and path = ${filePath}
+      limit 1
+    `);
+    const list = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
+    const content = list?.[0]?.content;
+    return typeof content === "string" ? content : "";
+  } catch {
+    return "";
+  }
+}
+
+async function readPublishedFile(gameId: string, filePath: string) {
+  try {
+    await ensureGameFilesTables();
+    const rows = await db.execute(sql`
+      select content
+      from game_files
+      where game_id = ${gameId} and path = ${filePath}
+      limit 1
+    `);
+    const list = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
+    const content = list?.[0]?.content;
+    return typeof content === "string" ? content : "";
+  } catch {
+    return "";
+  }
+}
+
+async function draftExistsForOwner(gameId: string, ownerKey: string) {
+  if (!gameId || !ownerKey) return false;
+  try {
+    await ensureCreatorDraftTables();
+    const rows = await db.execute(sql`
+      select 1
+      from creator_draft_games
+      where id = ${gameId} and owner_key = ${ownerKey}
+      limit 1
+    `);
+    const list = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
+    return !!list.length;
+  } catch {
+    return false;
+  }
+}
+
+async function resolvePublishSourceDraftId(candidates: string[], ownerKey: string) {
+  const uniq = Array.from(new Set(candidates.map((s) => normalizeDraftId(s)).filter(Boolean)));
+  for (const gid of uniq) {
+    if (await draftExistsForOwner(gid, ownerKey)) return gid;
+  }
+  return "";
+}
+
 async function getMyCreatorId() {
   const sess = await getSession();
   if (!sess) return null;
@@ -68,6 +142,8 @@ async function getMyCreatorId() {
 export async function POST(req: Request) {
   const sess = await getSession();
   if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED" });
+  const ownerKey = ownerKeyFromSession(sess);
+  if (!ownerKey) return json(401, { ok: false, error: "UNAUTHORIZED" });
 
   let body: Body;
   try {
@@ -76,8 +152,11 @@ export async function POST(req: Request) {
     return json(400, { ok: false, error: "INVALID_JSON" });
   }
 
-  const id = normalizeId(String(body?.id || ""));
-  if (!id) return json(400, { ok: false, error: "MISSING_ID" });
+  const requestedId = normalizeId(String(body?.id || ""));
+  if (!requestedId) return json(400, { ok: false, error: "MISSING_ID" });
+  const sourceDraftId = normalizeDraftId(String(body?.sourceDraftId || ""));
+  const publishGameId = normalizeId(sourceDraftId || requestedId);
+  if (!publishGameId) return json(400, { ok: false, error: "MISSING_ID" });
 
   const title = String(body?.title || "").trim();
   let shortDesc = String(body?.shortDesc || "").trim();
@@ -94,17 +173,42 @@ export async function POST(req: Request) {
     if (!meCreatorId || meCreatorId !== creatorId) return json(403, { ok: false, error: "FORBIDDEN_NOT_AUTHOR" });
   }
 
+  try {
+    await ensureGamesCoverFields();
+    await ensureGameFilesTables();
+  } catch {
+    return json(500, { ok: false, error: "DB_MIGRATION_FAILED" });
+  }
+
   // 允许更新：若已存在，creatorId/path 不允许更改（除非管理员）
-  const [existing] = await db
-    .select({ creatorId: games.creatorId, path: games.path, coverUrl: games.coverUrl })
+  const [existingById] = await db
+    .select({ creatorId: games.creatorId, path: games.path, coverUrl: games.coverUrl, sourceDraftId: games.sourceDraftId })
     .from(games)
-    .where(eq(games.id, id))
+    .where(eq(games.id, publishGameId))
     .limit(1);
 
-  const effCreatorId = isAdmin ? creatorId : existing?.creatorId || creatorId;
-  const effPath = existing?.path || (String(body?.path || "").trim() ? String(body.path).trim() : `/games/${id}/`);
+  const [legacyLinked] =
+    sourceDraftId || requestedId !== publishGameId
+      ? await db
+          .select({ id: games.id, creatorId: games.creatorId, path: games.path, coverUrl: games.coverUrl, sourceDraftId: games.sourceDraftId })
+          .from(games)
+          .where(eq(games.sourceDraftId, publishGameId))
+          .limit(1)
+      : [null as any];
+  const existing = existingById || legacyLinked;
 
-  let coverUrl = String(body?.coverUrl || "").trim() || existing?.coverUrl || `/assets/screenshots/${id}.png`;
+  const effCreatorId = isAdmin ? creatorId : existing?.creatorId || creatorId;
+  if (!isAdmin && (!meCreatorId || meCreatorId !== effCreatorId)) {
+    return json(403, { ok: false, error: "FORBIDDEN_NOT_AUTHOR" });
+  }
+  const effPath = existingById?.path || (String(body?.path || "").trim() ? String(body.path).trim() : `/games/${publishGameId}/`);
+  const actualSourceDraftId = await resolvePublishSourceDraftId(
+    [sourceDraftId, publishGameId, requestedId, String(existing?.sourceDraftId || "").trim()],
+    ownerKey,
+  );
+  const storedSourceDraftId = sourceDraftId || actualSourceDraftId || publishGameId;
+
+  let coverUrl = String(body?.coverUrl || "").trim() || existing?.coverUrl || `/assets/screenshots/${publishGameId}.png`;
   coverUrl = coverUrl.slice(0, 1024);
   if (!isAllowedCoverUrl(coverUrl)) return json(400, { ok: false, error: "INVALID_COVER_URL" });
 
@@ -117,25 +221,28 @@ export async function POST(req: Request) {
     if (parsed.b64.length > 260_000) return json(400, { ok: false, error: "COVER_TOO_LARGE" });
     coverMime = parsed.mime;
     coverData = parsed.b64;
-    coverUrl = `/assets/covers/${id}`;
+    coverUrl = `/assets/covers/${publishGameId}`;
   }
 
   // creator 必须存在
-  const [creator] = await db.select({ id: creators.id, name: creators.name }).from(creators).where(eq(creators.id, effCreatorId)).limit(1);
+  const [creator] = await db
+    .select({
+      id: creators.id,
+      name: creators.name,
+      avatarUrl: creators.avatarUrl,
+      profilePath: creators.profilePath,
+    })
+    .from(creators)
+    .where(eq(creators.id, effCreatorId))
+    .limit(1);
   if (!creator) return json(400, { ok: false, error: "CREATOR_NOT_FOUND" });
-
-  try {
-    await ensureGamesCoverFields();
-    await ensureGameFilesTables();
-  } catch {
-    return json(500, { ok: false, error: "DB_MIGRATION_FAILED" });
-  }
 
   // 1) upsert 元信息
   await db
     .insert(games)
     .values({
-      id,
+      id: publishGameId,
+      sourceDraftId: storedSourceDraftId || null,
       title,
       shortDesc,
       ruleText,
@@ -152,6 +259,7 @@ export async function POST(req: Request) {
         shortDesc,
         ruleText,
         coverUrl,
+        sourceDraftId: storedSourceDraftId || null,
         ...(coverData ? { coverMime, coverData } : {}),
         ...(isAdmin ? { creatorId: effCreatorId } : {}),
         updatedAt: new Date(),
@@ -159,7 +267,7 @@ export async function POST(req: Request) {
     });
 
   // 2) 拷贝文件（从草稿 -> 发布）
-  const src = String(body?.sourceDraftId || "").trim();
+  const src = actualSourceDraftId || storedSourceDraftId;
   if (src) {
     await ensureCreatorDraftTables();
     const rows = await db.execute(sql`
@@ -175,27 +283,48 @@ export async function POST(req: Request) {
       if (!p) continue;
       await db.execute(sql`
         insert into game_files (game_id, path, content)
-        values (${id}, ${p}, ${c})
+        values (${publishGameId}, ${p}, ${c})
         on conflict (game_id, path)
         do update set content = excluded.content, updated_at = now()
       `);
     }
   }
 
-  // 3) 写入/覆盖 meta.json（保证“作品信息模块”独立于游戏区）
+  // 3) 写入/覆盖 meta.json：保留原设计/生成元信息，只覆盖发布表单字段。
+  const baseMeta =
+    parseJsonObject(src ? await readDraftFile(src, "meta.json") : "") ||
+    parseJsonObject(await readPublishedFile(publishGameId, "meta.json")) ||
+    parseJsonObject(legacyLinked?.id ? await readPublishedFile(String(legacyLinked.id), "meta.json") : "") ||
+    {};
+  const baseCreator = baseMeta?.creator && typeof baseMeta.creator === "object" ? (baseMeta.creator as Record<string, any>) : {};
   const meta = {
+    ...baseMeta,
     title,
     shortDesc,
     rules: ruleText,
-    creator: { name: creator.name },
+    ruleText,
+    creator: {
+      ...baseCreator,
+      name: creator.name,
+      avatarUrl: creator.avatarUrl,
+      profilePath: creator.profilePath,
+    },
   };
   await db.execute(sql`
     insert into game_files (game_id, path, content)
-    values (${id}, 'meta.json', ${JSON.stringify(meta, null, 2)})
+    values (${publishGameId}, 'meta.json', ${JSON.stringify(meta, null, 2)})
     on conflict (game_id, path)
     do update set content = excluded.content, updated_at = now()
   `);
 
-  return json(200, { ok: true, id, path: effPath });
-}
+  if (publishGameId) {
+    await db.execute(sql`
+      delete from games
+      where id <> ${publishGameId}
+        and source_draft_id = ${publishGameId}
+        and creator_id = ${effCreatorId}
+    `);
+  }
 
+  return json(200, { ok: true, id: publishGameId, path: effPath });
+}

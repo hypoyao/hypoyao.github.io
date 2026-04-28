@@ -12,6 +12,7 @@ export async function ensureGamesCoverFields() {
     await db.execute(sql`
       create table if not exists games (
         id text primary key,
+        source_draft_id text,
         title text not null,
         short_desc text not null,
         rule_text text not null,
@@ -24,8 +25,10 @@ export async function ensureGamesCoverFields() {
         updated_at timestamptz not null default now()
       );
     `);
+    await db.execute(sql`alter table games add column if not exists source_draft_id text;`);
     await db.execute(sql`alter table games add column if not exists cover_mime text;`);
     await db.execute(sql`alter table games add column if not exists cover_data text;`);
+    await db.execute(sql`create index if not exists games_source_draft_idx on games(source_draft_id);`);
     _ensured = true;
     _ensuring = null;
   })();

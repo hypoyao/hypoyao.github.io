@@ -18,6 +18,7 @@ export const creators = pgTable("creators", {
 
 export const games = pgTable("games", {
   id: text("id").primaryKey(), // slug，例如 'ttt'
+  sourceDraftId: text("source_draft_id"),
   title: text("title").notNull(),
   shortDesc: text("short_desc").notNull(),
   ruleText: text("rule_text").notNull(),

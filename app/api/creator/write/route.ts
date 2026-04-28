@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { ownerKeyFromSession } from "@/lib/creator/creatorIndex";
 import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
+import { ensureCreatorsAuthFields } from "@/lib/db/ensureCreatorsAuthFields";
+import { ensureGamesCoverFields } from "@/lib/db/ensureGamesCoverFields";
+import { ensureGameFilesTables } from "@/lib/db/ensureGameFilesTables";
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 
@@ -47,6 +50,86 @@ function stripDangerousLocalBehaviorArtifacts(path: string, content: string) {
   return raw;
 }
 
+async function getMyCreatorId(sess: any) {
+  try {
+    await ensureCreatorsAuthFields();
+    if (sess?.phone) {
+      const rows = await db.execute(sql`
+        select id
+        from creators
+        where phone = ${String(sess.phone)}
+        limit 1
+      `);
+      const list = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
+      const id = String((list[0] as any)?.id || "").trim();
+      if (id) return id;
+    }
+    if (sess?.openid) {
+      const rows = await db.execute(sql`
+        select id
+        from creators
+        where openid = ${String(sess.openid)}
+        limit 1
+      `);
+      const list = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
+      const id = String((list[0] as any)?.id || "").trim();
+      if (id) return id;
+    }
+  } catch {}
+  return "";
+}
+
+async function clonePublishedGameToDraft(gid: string, ownerKey: string, creatorId: string) {
+  if (!gid || !ownerKey || !creatorId) return false;
+  await ensureGamesCoverFields();
+  await ensureGameFilesTables();
+  const pubRows = await db.execute(sql`
+    select id, title
+    from games
+    where id = ${gid} and creator_id = ${creatorId}
+    limit 1
+  `);
+  const pubs = Array.isArray((pubRows as any).rows) ? (pubRows as any).rows : [];
+  const pub = pubs[0] as any;
+  if (!pub) return false;
+
+  const draftTitle = String(pub?.title || "").trim();
+  await db.execute(sql`
+    insert into creator_draft_games (id, owner_key, title)
+    values (${gid}, ${ownerKey}, ${draftTitle})
+    on conflict (id) do nothing
+  `);
+
+  const ownRows = await db.execute(sql`
+    select 1
+    from creator_draft_games
+    where id = ${gid} and owner_key = ${ownerKey}
+    limit 1
+  `);
+  const owns = Array.isArray((ownRows as any).rows) ? (ownRows as any).rows : [];
+  if (!owns.length) return false;
+
+  const fileRows = await db.execute(sql`
+    select path, content
+    from game_files
+    where game_id = ${gid}
+      and path in ('index.html','style.css','game.js','prompt.md','meta.json')
+  `);
+  const files = Array.isArray((fileRows as any).rows) ? (fileRows as any).rows : [];
+  for (const row of files) {
+    const rel = safeRel(String((row as any)?.path || ""));
+    if (!rel) continue;
+    const content = stripDangerousLocalBehaviorArtifacts(rel, String((row as any)?.content || ""));
+    await db.execute(sql`
+      insert into creator_draft_files (game_id, path, content)
+      values (${gid}, ${rel}, ${content})
+      on conflict (game_id, path)
+      do update set content = excluded.content, updated_at = now()
+    `);
+  }
+  return true;
+}
+
 export async function POST(req: Request) {
   try {
     const sess = await getSession();
@@ -68,13 +151,29 @@ export async function POST(req: Request) {
     await ensureCreatorDraftTables();
 
     // 确保该 game 属于当前用户
-    const owns = await db.execute(sql`
+    let owns = await db.execute(sql`
       select id
       from creator_draft_games
       where id = ${gid} and owner_key = ${ownerKey}
       limit 1
     `);
-    const ownRows = Array.isArray((owns as any).rows) ? (owns as any).rows : [];
+    let ownRows = Array.isArray((owns as any).rows) ? (owns as any).rows : [];
+    if (!ownRows.length) {
+      // 编辑已发布游戏但草稿被删掉时：自动从已发布版本回灌一份可编辑草稿
+      if (body.seed) {
+        const creatorId = await getMyCreatorId(sess);
+        const cloned = await clonePublishedGameToDraft(gid, ownerKey, creatorId);
+        if (cloned) {
+          owns = await db.execute(sql`
+            select id
+            from creator_draft_games
+            where id = ${gid} and owner_key = ${ownerKey}
+            limit 1
+          `);
+          ownRows = Array.isArray((owns as any).rows) ? (owns as any).rows : [];
+        }
+      }
+    }
     if (!ownRows.length) {
       // 允许“第一次写入”时自动创建（兼容旧流程）
       await db.execute(sql`
@@ -82,7 +181,15 @@ export async function POST(req: Request) {
         values (${gid}, ${ownerKey}, '')
         on conflict (id) do nothing
       `);
+      owns = await db.execute(sql`
+        select id
+        from creator_draft_games
+        where id = ${gid} and owner_key = ${ownerKey}
+        limit 1
+      `);
+      ownRows = Array.isArray((owns as any).rows) ? (owns as any).rows : [];
     }
+    if (!ownRows.length) return json(403, { ok: false, error: "NOT_YOUR_GAME" });
 
     const written: string[] = [];
     let updatedTitle = "";
@@ -90,12 +197,12 @@ export async function POST(req: Request) {
       const rel = safeRel(f?.path || "");
       if (!rel) continue;
       const content = stripDangerousLocalBehaviorArtifacts(rel, typeof f?.content === "string" ? f.content : "");
-      if (body.seed && rel === "index.html") {
-        // seed：如果 index 已存在就不覆盖
+      if (body.seed) {
+        // seed：已有文件一律不覆盖，让它变成真正幂等的“确保草稿存在”
         const ex = await db.execute(sql`
           select 1
           from creator_draft_files
-          where game_id = ${gid} and path = 'index.html'
+          where game_id = ${gid} and path = ${rel}
           limit 1
         `);
         const exRows = Array.isArray((ex as any).rows) ? (ex as any).rows : [];
@@ -122,7 +229,27 @@ export async function POST(req: Request) {
       }
     }
 
-    if (!written.length) return json(400, { ok: false, error: "NO_VALID_FILES" });
+    if (!written.length) {
+      if (body.seed) {
+        try {
+          await db.execute(sql`
+            update creator_draft_games
+            set updated_at = now()
+            where id = ${gid} and owner_key = ${ownerKey}
+          `);
+        } catch {
+          // ignore
+        }
+        return json(200, {
+          ok: true,
+          written: [],
+          gameId: gid,
+          entry: `/games/${gid}/index.html`,
+          skipped: true,
+        });
+      }
+      return json(400, { ok: false, error: "NO_VALID_FILES" });
+    }
 
     // 更新 meta（updated_at + 首次标题）：若数据库暂时异常/列不齐，写文件仍然已经成功，不能因此让用户“生成归零”
     try {

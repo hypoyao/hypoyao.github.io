@@ -1602,6 +1602,29 @@ function buildStyleConsistencyBlock(indexHtml: string, styleCss: string, design:
   return `【原有风格约束（必须保持）】\n${lines.join("\n")}\n\n`;
 }
 
+function describeClarifyChoice(choice: string) {
+  const c = String(choice || "").trim().toUpperCase();
+  if (!c) return "（未选方案）";
+  if (c === "OTHER") return "自定义方向";
+  return `方案${c}`;
+}
+
+function buildClarifyUiOptions(options: any[]) {
+  const base = (Array.isArray(options) ? options : []).slice(0, 3).map((o: any) => ({
+    id: String(o?.id || "").trim() || "",
+    label: String(o?.title || "").trim() || String(o?.id || "").trim() || "方案",
+    desc: String(o?.notes || "").trim() || String(o?.style || "").trim() || "",
+    payload: `@choice ${String(o?.id || "").trim() || "A"}`,
+  }));
+  base.push({
+    id: "OTHER",
+    label: "这三个都不想选",
+    desc: "按你自己的想法继续说",
+    payload: "@choice OTHER",
+  });
+  return base;
+}
+
 type IncrementalEditProfile = {
   kind: "content" | "layout" | "visual" | "behavior" | "bugfix" | "feature";
   confidence: number;
@@ -3868,12 +3891,13 @@ export async function POST(req: Request) {
             const pickChoice = (s: string) => {
               const t = String(s || "").trim();
               // 结构化点击：@choice A
-              const c0 = t.match(/^@choice\s+([ABCabc])\b/);
-              if (c0) return c0[1].toUpperCase();
+              const c0 = t.match(/^@choice\s+(OTHER|[ABCabc])\b/i);
+              if (c0) return String(c0[1] || "").toUpperCase();
               const m = t.match(/(?:方案)?\s*([ABCabc])\b/);
               if (m) return m[1].toUpperCase();
               const n = t.match(/^\s*([123])\b/);
               if (n) return n[1] === "1" ? "A" : n[1] === "2" ? "B" : "C";
+              if (/(这三个都不想选|这三个都不喜欢|都不想选|都不喜欢|其他|其它|自己定|自定义|我自己说)/i.test(t)) return "OTHER";
               return "";
             };
             // 注意：不要用“包含生成/开始”等关键词来判断确认，否则用户点某些方案描述里包含“生成”会误触发进入编码。
@@ -3973,7 +3997,7 @@ export async function POST(req: Request) {
               const rec = String((obj as any).recommend || "A").trim() || "A";
               // 生成友好文案
               const lines: string[] = [];
-              lines.push(`我先帮你把需求补齐，再开始写代码。你可以直接回复 A/B/C 选择一个方向：`);
+              lines.push(`我先帮你把需求补齐，再开始写代码。你可以直接回复 A/B/C 选择一个方向；如果这三个都不喜欢，也可以直接说“都不想选，我想自己定”。`);
               for (const o of options.slice(0, 3)) {
                 const id = String(o?.id || "").trim() || "?";
                 const title = String(o?.title || "").trim();
@@ -3994,7 +4018,7 @@ export async function POST(req: Request) {
                   lines.push(`- ${qid ? `${qid}. ` : ""}${qq}${ch.length ? `（${ch.slice(0, 3).join(" / ")}）` : ""}`);
                 }
               }
-              lines.push(`\n请回复：A 或 B 或 C（也可以直接补充一句你特别想要的效果）。`);
+              lines.push(`\n请回复：A / B / C；如果这三个都不合适，也可以直接说“都不想选，我想自己定”，或者补充一句你特别想要的效果。`);
 
               // 写入 meta.json：记录澄清阶段与澄清 JSON（中间变量）
               const clarifyTitleCandidate = String(options.find((x: any) => String(x?.id || "").toUpperCase() === rec)?.title || "").trim();
@@ -4024,17 +4048,12 @@ export async function POST(req: Request) {
                 maxTurns: MAX_TURNS,
                 recommend: rec,
                 step: "choice",
-                options: options.slice(0, 3).map((o: any) => ({
-                  id: String(o?.id || "").trim() || "",
-                  label: String(o?.title || "").trim() || String(o?.id || "").trim() || "方案",
-                  desc: String(o?.notes || "").trim() || String(o?.style || "").trim() || "",
-                  payload: `@choice ${String(o?.id || "").trim() || "A"}`,
-                })),
+                options: buildClarifyUiOptions(options),
                 questions: [],
                 selected: {},
                 actions: [{ id: "confirm", label: "开始生成（跳过剩余选择）", payload: "@confirm" }],
                 // 给前端“本地分步选择”用：一次性下发全部维度，后续点击不必再次请求大模型
-                all: { options: options.slice(0, 3), questions: qs.slice(0, 5) },
+                all: { options: buildClarifyUiOptions(options), questions: qs.slice(0, 5) },
               };
 
               const finalObj = { assistant: lines.join("\n"), meta: metaOut, files: [] as any[], ui };
@@ -4121,14 +4140,14 @@ export async function POST(req: Request) {
                 const nextQ = unanswered[0] || null;
                 const remaining = Math.max(0, MAX_TURNS - turnsUsed);
                 const nextHint = !answers.choice
-                  ? "下一步：请选择一个方向（A/B/C）。"
+                  ? "下一步：请选择一个方向（A/B/C/其它）。"
                   : nextQ
                     ? `下一步：${String(nextQ?.question || "").trim() || "请回答下一个问题"}`
                     : "下一步：如果没有更多要补充的，可以开始生成。";
                 const txt =
                   `收到，我已记录你的选择（已回答 ${turnsUsed}/${MAX_TURNS} 个问题）。\n` +
                   `你还可以再回答 ${remaining} 个问题，之后我就会开始写代码。\n\n` +
-                  `当前已选：${answers.choice ? `方案${answers.choice}` : "（未选方案）"}\n` +
+                  `当前已选：${describeClarifyChoice(String(answers.choice || ""))}\n` +
                   `${nextHint}`;
 
                 const ui = {
@@ -4139,12 +4158,7 @@ export async function POST(req: Request) {
                   recommend: rec,
                   step: !answers.choice ? "choice" : nextQ ? String(nextQ?.id || "").trim() || "q" : "done",
                   options: !answers.choice
-                    ? options.slice(0, 3).map((o: any) => ({
-                        id: String(o?.id || "").trim() || "",
-                        label: String(o?.title || "").trim() || String(o?.id || "").trim() || "方案",
-                        desc: String(o?.notes || "").trim() || "",
-                        payload: `@choice ${String(o?.id || "").trim() || "A"}`,
-                      }))
+                    ? buildClarifyUiOptions(options)
                     : [],
                   questions: answers.choice && nextQ
                     ? [
@@ -4163,7 +4177,7 @@ export async function POST(req: Request) {
                           { id: "confirm", label: "开始生成（跳过剩余选择）", payload: "@confirm" },
                         ],
                   // 为前端本地分步展示提供完整列表（不必再请求大模型）
-                  all: { options: options.slice(0, 3), questions: qs.slice(0, 5) },
+                  all: { options: buildClarifyUiOptions(options), questions: qs.slice(0, 5) },
                 };
                 const finalObj = { assistant: txt, meta: metaOut0, files: [] as any[], ui };
                 parseCreatorJson(JSON.stringify(finalObj));

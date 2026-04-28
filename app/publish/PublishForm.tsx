@@ -5,6 +5,7 @@ import { useMemo, useRef, useState } from "react";
 type Props = {
   defaultCreatorId: string;
   sourceDraftId?: string;
+  lockId?: boolean;
   initial?: Partial<{
     id: string;
     title: string;
@@ -19,8 +20,10 @@ type Props = {
   existsInDb?: boolean;
 };
 
-export default function PublishForm({ defaultCreatorId, sourceDraftId, initial, meCreatorId, isAdmin, existsInDb }: Props) {
+export default function PublishForm({ defaultCreatorId, sourceDraftId, lockId, initial, meCreatorId, isAdmin, existsInDb }: Props) {
   const immutable = !!existsInDb;
+  const idLocked = !!lockId || immutable;
+  const actionLabel = existsInDb ? "更新" : "发布";
   const [id, setId] = useState(initial?.id || "");
   const [title, setTitle] = useState(initial?.title || "");
   const [shortDesc, setShortDesc] = useState(initial?.shortDesc || "");
@@ -29,6 +32,7 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, initial, 
   const [coverUrl, setCoverUrl] = useState(initial?.coverUrl || "");
   const [path, setPath] = useState(initial?.path || "");
   const [msg, setMsg] = useState<string>("");
+  const [submitting, setSubmitting] = useState(false);
   const coverFileRef = useRef<HTMLInputElement | null>(null);
   const [submitTried, setSubmitTried] = useState(false);
   const [touched, setTouched] = useState<{ id?: boolean; title?: boolean; creatorId?: boolean }>({});
@@ -38,7 +42,7 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, initial, 
   const creatorRef = useRef<HTMLInputElement | null>(null);
 
   const defaultCover = initial?.coverUrl || (id ? `/assets/screenshots/${id}.png` : "");
-  const effectiveId = immutable ? initial?.id || id : id;
+  const effectiveId = idLocked ? initial?.id || id : id;
   const idMissing = !String(effectiveId || "").trim();
   const titleMissing = !String(title || "").trim();
   const creatorMissing = !!isAdmin && !String(creatorId || "").trim();
@@ -46,7 +50,7 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, initial, 
   const titleErr = (submitTried || touched.title) && titleMissing;
   const creatorErr = (submitTried || touched.creatorId) && creatorMissing;
   const payload = useMemo(() => {
-    const effId = immutable ? initial?.id || id : id;
+    const effId = idLocked ? initial?.id || id : id;
     const effCreatorId = immutable ? (isAdmin ? creatorId : initial?.creatorId || creatorId) : creatorId;
     const effPath = immutable ? initial?.path || path : path;
     return {
@@ -59,7 +63,7 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, initial, 
       path: effPath ? effPath : undefined,
       sourceDraftId: sourceDraftId || undefined,
     };
-  }, [immutable, isAdmin, initial?.id, initial?.creatorId, initial?.path, id, title, shortDesc, ruleText, creatorId, coverUrl, path, sourceDraftId]);
+  }, [idLocked, immutable, isAdmin, initial?.id, initial?.creatorId, initial?.path, id, title, shortDesc, ruleText, creatorId, coverUrl, path, sourceDraftId]);
 
   async function cropCoverToSquareDataUrl(file: File) {
     // 自动居中裁剪为正方形，并缩放到 512x512（封面要求 1:1）
@@ -127,6 +131,7 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, initial, 
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (submitting) return;
     setSubmitTried(true);
     // 必填项校验：为空则标红 + 聚焦
     if (idMissing || titleMissing || creatorMissing) {
@@ -136,21 +141,26 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, initial, 
       else if (creatorMissing) creatorRef.current?.focus();
       return;
     }
-    setMsg("发布中…");
-    const r = await fetch("/api/games/publish", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      setMsg(`发布失败：${data?.error || r.status}`);
-      return;
+    setSubmitting(true);
+    setMsg(`${actionLabel}中…`);
+    try {
+      const r = await fetch("/api/games/publish", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setMsg(`${actionLabel}失败：${data?.error || r.status}`);
+        return;
+      }
+      setMsg(`${actionLabel}成功，正在返回游戏…`);
+      const p = typeof data?.path === "string" ? data.path : payload.path || `/games/${payload.id}/`;
+      const entry = p.endsWith("/") ? `${p}index.html` : p;
+      window.location.href = entry;
+    } finally {
+      setSubmitting(false);
     }
-    setMsg("发布成功，正在返回游戏…");
-    const p = typeof data?.path === "string" ? data.path : payload.path || `/games/${payload.id}/`;
-    const entry = p.endsWith("/") ? `${p}index.html` : p;
-    window.location.href = entry;
   }
 
   return (
@@ -164,11 +174,16 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, initial, 
             value={id}
             onChange={(e) => setId(e.target.value)}
             placeholder="例如 weiqi"
-            readOnly={immutable}
+            readOnly={idLocked}
+            disabled={submitting}
             onBlur={() => setTouched((t) => ({ ...t, id: true }))}
-            style={immutable ? { background: "rgba(148,163,184,0.18)" } : undefined}
+            style={idLocked ? { background: "rgba(148,163,184,0.18)" } : undefined}
           />
-          {immutable ? <div style={{ fontSize: 12, color: "rgba(100,116,139,0.95)" }}>更新模式下，id 不允许修改。</div> : null}
+          {idLocked ? (
+            <div style={{ fontSize: 12, color: "rgba(100,116,139,0.95)" }}>
+              {immutable ? "这是同一个已发布作品，id 不会改变。" : "发布后仍沿用当前游戏 id，只是状态从草稿变为已发布。"}
+            </div>
+          ) : null}
         </label>
 
         <label style={{ display: "grid", gap: 6 }}>
@@ -178,6 +193,7 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, initial, 
             className={`restInput ${titleErr ? "isError" : ""}`.trim()}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
+            disabled={submitting}
             onBlur={() => setTouched((t) => ({ ...t, title: true }))}
             placeholder="例如 围棋对弈·人机"
           />
@@ -189,6 +205,7 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, initial, 
             className="restInput"
             value={shortDesc}
             onChange={(e) => setShortDesc(e.target.value)}
+            disabled={submitting}
             placeholder="例如 围棋 9×9：您（黑）对战 AI（白）"
           />
         </label>
@@ -199,6 +216,7 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, initial, 
             className="restTextarea"
             value={ruleText}
             onChange={(e) => setRuleText(e.target.value)}
+            disabled={submitting}
             placeholder="完整规则说明"
             rows={4}
           />
@@ -213,6 +231,7 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, initial, 
               className={`restInput ${creatorErr ? "isError" : ""}`.trim()}
               value={creatorId}
               onChange={(e) => setCreatorId(e.target.value)}
+              disabled={submitting}
               onBlur={() => setTouched((t) => ({ ...t, creatorId: true }))}
               placeholder="例如 tianqing"
             />
@@ -222,13 +241,13 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, initial, 
         <label style={{ display: "grid", gap: 6 }}>
           <div style={{ fontWeight: 900 }}>封面（1:1，可上传自定义）</div>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <button className="btn btnGray" type="button" onClick={() => coverFileRef.current?.click()}>
+            <button className="btn btnGray" type="button" onClick={() => coverFileRef.current?.click()} disabled={submitting}>
               上传封面图片
             </button>
-            <button className="btn btnGray" type="button" onClick={() => setCoverUrl(defaultCover || "")} disabled={!defaultCover}>
+            <button className="btn btnGray" type="button" onClick={() => setCoverUrl(defaultCover || "")} disabled={submitting || !defaultCover}>
               恢复默认
             </button>
-            <input ref={coverFileRef} type="file" accept="image/*" onChange={onPickCoverFile} style={{ display: "none" }} />
+            <input ref={coverFileRef} type="file" accept="image/*" onChange={onPickCoverFile} style={{ display: "none" }} disabled={submitting} />
           </div>
           {coverUrl ? (
             <img
@@ -249,6 +268,7 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, initial, 
             className="restInput"
             value={coverUrl}
             onChange={(e) => setCoverUrl(e.target.value)}
+            disabled={submitting}
             placeholder="也可手动填写相对路径（例如 /assets/screenshots/xxx.png）"
           />
         </label>
@@ -256,10 +276,18 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, initial, 
         {/* 隐藏：入口 path（由后端按数据库现有值控制；创建时也会自动生成） */}
 
         <div className="actions">
-          <button className="btn" type="submit">
-            {existsInDb ? "更新" : "发布"}
+          <button className="btn" type="submit" disabled={submitting} aria-busy={submitting}>
+            {submitting ? `${actionLabel}中…` : actionLabel}
           </button>
-          <a className="btn btnGray" href="/">
+          <a
+            className={`btn btnGray${submitting ? " isDisabled" : ""}`}
+            href={submitting ? undefined : "/"}
+            aria-disabled={submitting}
+            onClick={(e) => {
+              if (submitting) e.preventDefault();
+            }}
+            style={submitting ? { opacity: 0.65, pointerEvents: "none", filter: "grayscale(0.15)" } : undefined}
+          >
             取消
           </a>
         </div>

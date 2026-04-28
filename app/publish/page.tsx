@@ -62,6 +62,7 @@ export default async function PublishPage({
 
   const sp = (await searchParams) || {};
   const pickedId = typeof sp.id === "string" ? sp.id : "";
+  const explicitDraftId = typeof sp.draftId === "string" ? sp.draftId : "";
 
   // me 信息（用于作者权限：非管理员禁用 creatorId）
   let meCreatorId: string | null = null;
@@ -82,6 +83,8 @@ export default async function PublishPage({
   // 如果数据库里已存在该 game，则用数据库数据预填（“更新”场景）
   let initial: any = undefined;
   let existsInDb = false;
+  let resolvedSourceDraftId = explicitDraftId || pickedId;
+  let lockId = !!resolvedSourceDraftId;
   if (pickedId) {
     try {
       await ensureGamesCoverFields();
@@ -92,6 +95,7 @@ export default async function PublishPage({
       const [row] = await db
         .select({
           id: gamesTable.id,
+          sourceDraftId: gamesTable.sourceDraftId,
           title: gamesTable.title,
           shortDesc: gamesTable.shortDesc,
           ruleText: gamesTable.ruleText,
@@ -104,46 +108,89 @@ export default async function PublishPage({
         .limit(1);
       if (row) {
         existsInDb = true;
+        resolvedSourceDraftId = explicitDraftId || String(row.sourceDraftId || "").trim() || resolvedSourceDraftId;
+        const stableId = resolvedSourceDraftId || row.id;
         initial = {
-          id: row.id,
+          id: stableId,
           title: row.title,
           shortDesc: row.shortDesc,
           ruleText: row.ruleText,
           creatorId: row.creatorId,
           coverUrl: row.coverUrl,
-          path: row.path,
+          path: stableId === row.id ? row.path : `/games/${stableId}/`,
         };
       } else {
-        // 新发布：从草稿 meta/index.html 预填标题/简介/规则（id 由用户手动填）
-        const metaRaw = await readDraftFile(pickedId, "meta.json");
-        let meta: any = null;
-        try {
-          meta = metaRaw ? JSON.parse(metaRaw) : null;
-        } catch {
-          meta = null;
+        const [linked] = await db
+          .select({
+            id: gamesTable.id,
+            sourceDraftId: gamesTable.sourceDraftId,
+            title: gamesTable.title,
+            shortDesc: gamesTable.shortDesc,
+            ruleText: gamesTable.ruleText,
+            coverUrl: gamesTable.coverUrl,
+            path: gamesTable.path,
+            creatorId: gamesTable.creatorId,
+          })
+          .from(gamesTable)
+          .where(eq(gamesTable.sourceDraftId, pickedId))
+          .limit(1);
+        if (linked) {
+          existsInDb = true;
+          const stableId = explicitDraftId || pickedId || String(linked.sourceDraftId || "").trim() || linked.id;
+          resolvedSourceDraftId = stableId;
+          initial = {
+            id: stableId,
+            title: linked.title,
+            shortDesc: linked.shortDesc,
+            ruleText: linked.ruleText,
+            creatorId: linked.creatorId,
+            coverUrl: linked.coverUrl,
+            path: `/games/${stableId}/`,
+          };
+        } else {
+          // 新发布：沿用当前草稿 id，不再额外生成一个发布 id。
+          const draftId = explicitDraftId || pickedId;
+          resolvedSourceDraftId = draftId;
+          const metaRaw = await readDraftFile(draftId, "meta.json");
+          let meta: any = null;
+          try {
+            meta = metaRaw ? JSON.parse(metaRaw) : null;
+          } catch {
+            meta = null;
+          }
+          const indexHtml = await readDraftFile(draftId, "index.html");
+          const title0 = String(meta?.title || "").trim() || parseTitleFromHtml(indexHtml) || "";
+          const shortDesc0 = String(meta?.shortDesc || "").trim();
+          const rules0 = String(meta?.rules || meta?.ruleText || "").trim();
+          initial = {
+            id: draftId,
+            title: title0,
+            shortDesc: shortDesc0,
+            ruleText: rules0,
+            creatorId: meCreatorId || "tianqing",
+            coverUrl: title0 ? "" : "",
+            path: draftId ? `/games/${draftId}/` : "",
+          };
+          existsInDb = false;
         }
-        const indexHtml = await readDraftFile(pickedId, "index.html");
-        const title0 = String(meta?.title || "").trim() || parseTitleFromHtml(indexHtml) || "";
-        const shortDesc0 = String(meta?.shortDesc || "").trim();
-        const rules0 = String(meta?.rules || meta?.ruleText || "").trim();
-        initial = {
-          id: "",
-          title: title0,
-          shortDesc: shortDesc0,
-          ruleText: rules0,
-          creatorId: meCreatorId || "tianqing",
-          coverUrl: title0 ? "" : "",
-          path: "",
-        };
-        existsInDb = false;
       }
     } catch {
       // 数据库查询失败（连接/表结构/权限等）：不要让页面崩，退回草稿预填
-      const indexHtml = await readDraftFile(pickedId, "index.html");
-      initial = { id: "", title: parseTitleFromHtml(indexHtml) || "", shortDesc: "", ruleText: "", creatorId: meCreatorId || "tianqing" };
+      const draftId = explicitDraftId || pickedId;
+      resolvedSourceDraftId = draftId;
+      const indexHtml = await readDraftFile(draftId, "index.html");
+      initial = {
+        id: draftId,
+        title: parseTitleFromHtml(indexHtml) || "",
+        shortDesc: "",
+        ruleText: "",
+        creatorId: meCreatorId || "tianqing",
+        path: draftId ? `/games/${draftId}/` : "",
+      };
       existsInDb = false;
     }
   }
+  lockId = !!resolvedSourceDraftId;
 
   return (
     <main className="wrap">
@@ -154,7 +201,8 @@ export default async function PublishPage({
 
         <PublishForm
           defaultCreatorId="tianqing"
-          sourceDraftId={pickedId || undefined}
+          sourceDraftId={resolvedSourceDraftId || undefined}
+          lockId={lockId}
           initial={initial || undefined}
           meCreatorId={meCreatorId || undefined}
           isAdmin={isAdmin}

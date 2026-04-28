@@ -371,24 +371,26 @@ export default function CreateStudio({
   const [clarifyLocal, setClarifyLocal] = useState<any>(null);
   const clarifyAutoSubmittedRef = useRef(false);
   const listRef = useRef<HTMLDivElement | null>(null);
-  const [projects, setProjects] = useState<Array<{ gameId: string; title?: string; entry: string; mtimeMs?: number; published?: boolean }>>(
+  const [projects, setProjects] = useState<Array<{ gameId: string; title?: string; entry: string; mtimeMs?: number; published?: boolean; dirty?: boolean; publishId?: string }>>(
     [],
   );
   const [loggedIn, setLoggedIn] = useState(false);
   const [published, setPublished] = useState(false);
+  const [publishDirty, setPublishDirty] = useState(false);
   const [deletingGameId, setDeletingGameId] = useState<string>("");
   const [speechSupported, setSpeechSupported] = useState(false);
   const [listening, setListening] = useState(false);
   const speechRef = useRef<any>(null);
   const speechBaseRef = useRef<string>("");
   const inputRef = useRef<string>("");
+  const sendLockRef = useRef(false);
   const activeRunIdRef = useRef<string>("");
   const bootRef = useRef(false);
   const [lastFailedText, setLastFailedText] = useState<string>("");
   const abortRef = useRef<AbortController | null>(null);
   const opMenuRef = useRef<HTMLDetailsElement | null>(null);
 
-  const publishText = useMemo(() => (published ? "更新" : "发布"), [published]);
+  const publishText = useMemo(() => (published ? (publishDirty ? "发布更新" : "更新") : "发布"), [publishDirty, published]);
   const deletingBusy = !!deletingGameId;
   const uiBusy = busy || deletingBusy;
   const currentGameTitle = useMemo(() => {
@@ -730,7 +732,10 @@ export default function CreateStudio({
       .filter((m) => m?.role === "user")
       .map((m) => normalizeCreatorStepText(m.content))
       .filter((t) => t && !isInternalCreatorCommand(t));
-    if (!userMsgs.length) return "";
+    if (!userMsgs.length) {
+      const baseIdea = normalizeCreatorStepText(String((gameMeta as any)?._plan?.baseIdea || ""));
+      return baseIdea || "";
+    }
     // 全局去重：同一句真实需求只保留一次，避免 retry 后重复堆叠。
     const dedup: string[] = [];
     const seen = new Set<string>();
@@ -741,7 +746,7 @@ export default function CreateStudio({
     }
     const lastN = dedup.slice(-8);
     return lastN.map((t, i) => `${i + 1}. ${t}`).join("\n");
-  }, [messages]);
+  }, [gameMeta, messages]);
 
   // === 聊天记录持久化（刷新不丢） ===
   // 1) gameId 变化时：尝试从 localStorage 恢复该项目的聊天记录
@@ -874,6 +879,11 @@ export default function CreateStudio({
     }
   }
 
+  async function ensureEditableDraft(gid: string) {
+    if (!gid) return;
+    await ensureSeed(gid);
+  }
+
   async function writePrompt(gid: string, promptText: string) {
     const content = (promptText || "").trim();
     if (!content) return;
@@ -920,6 +930,7 @@ export default function CreateStudio({
         if (fixedGameId) {
           const me = await meP;
           if (me) applyMeProfile(me);
+          await ensureEditableDraft(fixedGameId);
           setGameId(fixedGameId);
           updatePreviewUrl(`${entryOf(fixedGameId)}?t=${encodeURIComponent(nowId())}`, { enable: false });
           // 刷新项目列表（避免下拉框里没有该项目）
@@ -968,6 +979,7 @@ export default function CreateStudio({
               if (lastId && arr0.some((x: any) => x?.gameId === lastId)) pick0 = lastId;
             } catch {}
             if (pick0) {
+              void ensureEditableDraft(pick0).catch(() => null);
               setGameId(pick0);
               updatePreviewUrl(`${entryOf(pick0)}?t=${encodeURIComponent(nowId())}`, { enable: false });
             }
@@ -989,6 +1001,7 @@ export default function CreateStudio({
             if (lastId && arr.some((x: any) => x?.gameId === lastId)) pick = lastId;
           } catch {}
           if (pick) {
+            void ensureEditableDraft(pick).catch(() => null);
             setGameId(pick);
             updatePreviewUrl(`${entryOf(pick)}?t=${encodeURIComponent(nowId())}`, { enable: false });
             return;
@@ -1016,12 +1029,14 @@ export default function CreateStudio({
   useEffect(() => {
     if (!gameId) {
       setPublished(false);
+      setPublishDirty(false);
       return;
     }
     // 优先用“我的游戏”列表里的标记，避免额外请求导致已发布游戏出现很慢
     const hit = (projects || []).find((p) => p.gameId === gameId);
     if (hit && typeof hit.published === "boolean") {
       setPublished(!!hit.published);
+      setPublishDirty(!!hit.dirty);
       return;
     }
     // 兜底：老缓存/列表里没有 published 字段时，才请求一次
@@ -1029,8 +1044,10 @@ export default function CreateStudio({
       try {
         const r = await fetch(`/api/games/${encodeURIComponent(gameId)}`, { cache: "no-store" });
         setPublished(r.ok);
+        setPublishDirty(false);
       } catch {
         setPublished(false);
+        setPublishDirty(false);
       }
     })();
   }, [gameId, projects]);
@@ -1112,7 +1129,7 @@ export default function CreateStudio({
     try {
       window.localStorage.setItem("creatorStudio:projectsCache", JSON.stringify({ v: 1, at: Date.now(), games: arr }));
     } catch {}
-    return arr as Array<{ gameId: string; title?: string; entry: string; mtimeMs?: number; published?: boolean }>;
+    return arr as Array<{ gameId: string; title?: string; entry: string; mtimeMs?: number; published?: boolean; dirty?: boolean; publishId?: string }>;
   }
 
   async function writeFiles(files: ModelFile[], gid?: string) {
@@ -1164,7 +1181,7 @@ export default function CreateStudio({
     const text = (textRaw || "").trim();
     const useId = gid || gameId;
     const useBase = baseMsgs || messages;
-    if (!text || busy) return;
+    if (!text || busy || sendLockRef.current) return;
     if (!useId) throw new Error("NO_GAME_ID");
 
     // 快捷操作：如果用户输入的是一个 http(s) 链接，则直接在预览器打开，不走 AI 生成。
@@ -1176,73 +1193,80 @@ export default function CreateStudio({
       return;
     }
 
-    setLastFailedText("");
+    sendLockRef.current = true;
     setBusy(true);
-    setClarifyUi(null);
-    setClarifyLocal(null);
-    setMsg("");
-    setInput("");
+    let runId = "";
+    let requestStarted = false;
     const startAt = Date.now();
-    const runId = nowId();
-    activeRunIdRef.current = runId;
-    setProcessCurrent({
-      id: runId,
-      gameId: useId,
-      mode: guessProcessMode(text),
-      provider,
-      model,
-      status: "running",
-      summary: "AI 正在准备…",
-      startedAt: startAt,
-      currentStepId: "prepare",
-      steps: [{ id: "prepare", label: "准备请求", status: "running", detail: "初始化对话与连接", startedAt: startAt }],
-      logs: [{ id: nowId(), text: "初始化对话与连接", at: startAt, source: "progress" }],
-      draftPreview: "",
-      draftUpdatedAt: startAt,
-      contract: null,
-      error: "",
-    });
-
-    // 新的一次请求：先取消上一次（理论上不会同时存在，但以防万一）
-    try {
-      abortRef.current?.abort();
-    } catch {}
-    const ac = new AbortController();
-    abortRef.current = ac;
-
     const myMsg: ChatMsg = { role: "user", content: text };
-    const snap: ChatMsg[] = [...useBase, myMsg, { role: "assistant", content: "AI 开始写代码…" }];
-    chatOwnerGameIdRef.current = useId;
-    setMessages(snap);
-
-    // 第一句用户输入：把它写到 prompt.md（用于“我的游戏”下拉框显示关键词）
-    // 性能优化：不要阻塞 UI / 不要阻塞 AI 请求（之前这里 await 会导致“点发送后几秒没反应”）
-    // 只在当前对话还没有 user 消息时写入，避免后续不断覆盖
-    const hasUser = useBase.some((m) => m.role === "user");
-    if (!hasUser) {
-      void (async () => {
-        try {
-          await writePrompt(useId, text);
-          // 让下拉框尽快显示关键词
-          await refreshProjects();
-        } catch {
-          // ignore
-        }
-      })();
-    }
-
-    // 只把“用户发给 AI 的内容”存到数据库（失败不影响创作）
-    try {
-      fetch("/api/creator/chatlog", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ gameId: useId, content: text }),
-      }).catch(() => null);
-    } catch {
-      // ignore
-    }
 
     try {
+      setLastFailedText("");
+      setClarifyUi(null);
+      setClarifyLocal(null);
+      setMsg("");
+      setInput("");
+      runId = nowId();
+      activeRunIdRef.current = runId;
+      setProcessCurrent({
+        id: runId,
+        gameId: useId,
+        mode: guessProcessMode(text),
+        provider,
+        model,
+        status: "running",
+        summary: "AI 正在准备…",
+        startedAt: startAt,
+        currentStepId: "prepare",
+        steps: [{ id: "prepare", label: "准备请求", status: "running", detail: "初始化对话与连接", startedAt: startAt }],
+        logs: [{ id: nowId(), text: "初始化对话与连接", at: startAt, source: "progress" }],
+        draftPreview: "",
+        draftUpdatedAt: startAt,
+        contract: null,
+        error: "",
+      });
+
+      // 新的一次请求：先取消上一次（理论上不会同时存在，但以防万一）
+      try {
+        abortRef.current?.abort();
+      } catch {}
+      const ac = new AbortController();
+      abortRef.current = ac;
+
+      const snap: ChatMsg[] = [...useBase, myMsg, { role: "assistant", content: "AI 开始写代码…" }];
+      chatOwnerGameIdRef.current = useId;
+      setMessages(snap);
+      requestStarted = true;
+
+      await ensureEditableDraft(useId);
+
+      // 第一句用户输入：把它写到 prompt.md（用于“我的游戏”下拉框显示关键词）
+      // 性能优化：不要阻塞 UI / 不要阻塞 AI 请求（之前这里 await 会导致“点发送后几秒没反应”）
+      // 只在当前对话还没有 user 消息时写入，避免后续不断覆盖
+      const hasUser = useBase.some((m) => m.role === "user");
+      if (!hasUser) {
+        void (async () => {
+          try {
+            await writePrompt(useId, text);
+            // 让下拉框尽快显示关键词
+            await refreshProjects();
+          } catch {
+            // ignore
+          }
+        })();
+      }
+
+      // 只把“用户发给 AI 的内容”存到数据库（失败不影响创作）
+      try {
+        fetch("/api/creator/chatlog", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ gameId: useId, content: text }),
+        }).catch(() => null);
+      } catch {
+        // ignore
+      }
+
       const r = await fetch("/api/creator/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -1532,23 +1556,25 @@ export default function CreateStudio({
       }
       archiveProcessRun("done");
     } catch (e: any) {
-      if (activeRunIdRef.current === runId) activeRunIdRef.current = "";
+      if (runId && activeRunIdRef.current === runId) activeRunIdRef.current = "";
       // 用户主动停止
       if (e?.name === "AbortError") {
         setMsg("已停止。你可以修改一下，再点发送～");
         setInput(text); // 把刚才的输入还给用户，方便继续编辑
         setLastFailedText(text); // 允许一键重试
-        setMessages((mm0) => {
-          const mm = mm0.slice();
-          for (let i = mm.length - 1; i >= 0; i--) {
-            if (mm[i].role === "assistant") {
-              mm[i] = { role: "assistant", content: "我先停下来啦～如果你还想继续，就再点一次发送或重试！" };
-              break;
+        if (requestStarted) {
+          setMessages((mm0) => {
+            const mm = mm0.slice();
+            for (let i = mm.length - 1; i >= 0; i--) {
+              if (mm[i].role === "assistant") {
+                mm[i] = { role: "assistant", content: "我先停下来啦～如果你还想继续，就再点一次发送或重试！" };
+                break;
+              }
             }
-          }
-          return mm;
-        });
-        archiveProcessRun("stopped");
+            return mm;
+          });
+        }
+        if (runId) archiveProcessRun("stopped");
         return;
       }
       const m = String(e?.message || "未知错误");
@@ -1566,25 +1592,28 @@ export default function CreateStudio({
               ? "（服务器文件系统可能是只读/无权限，导致无法保存游戏文件；需要换成可写环境或改用数据库/对象存储保存）"
             : ml.includes("fetch_failed") || ml.includes("fetch failed") || ml.includes("network error")
               ? "（网络异常：可能是服务端到模型的网络/DNS/代理/TLS 问题，或浏览器到服务端连接中断；建议重试、切换模型/Provider，必要时刷新页面）"
-          : ml.includes("terminated")
-            ? "（连接被中断：可能是网络/模型超时/Key 无效/服务端被重启，建议重试）"
+            : ml.includes("terminated")
+              ? "（连接被中断：可能是网络/模型超时/Key 无效/服务端被重启，建议重试）"
             : "（建议重试；如持续失败再检查 OPENROUTER_API_KEY / DEEPSEEK_API_KEY / TENCENT_TOKENHUB_API_KEY）";
       setMsg(`出错：${m}${hint}`);
       setLastFailedText(text);
+      setInput(text);
       // 把最后的“AI 开始写代码…”替换成更友好的提示
-      setMessages((mm0) => {
-        const mm = mm0.slice();
-        for (let i = mm.length - 1; i >= 0; i--) {
-          if (mm[i].role === "assistant") {
-            mm[i] = { role: "assistant", content: "哎呀，AI 刚刚卡住了～你可以点下面的“重试”再来一次！" };
-            break;
+      if (requestStarted) {
+        setMessages((mm0) => {
+          const mm = mm0.slice();
+          for (let i = mm.length - 1; i >= 0; i--) {
+            if (mm[i].role === "assistant") {
+              mm[i] = { role: "assistant", content: "哎呀，AI 刚刚卡住了～你可以点下面的“重试”再来一次！" };
+              break;
+            }
           }
-        }
-        return mm;
-      });
-      archiveProcessRun("failed", m);
+          return mm;
+        });
+      }
+      if (runId) archiveProcessRun("failed", m);
     } finally {
-      if (activeRunIdRef.current === runId) activeRunIdRef.current = "";
+      sendLockRef.current = false;
       setBusy(false);
       abortRef.current = null;
     }
@@ -1743,6 +1772,7 @@ export default function CreateStudio({
               value={gameId}
               onChange={(e) => {
                 const gid = e.target.value;
+                void ensureEditableDraft(gid).then(() => refreshProjects()).catch(() => null);
                 setGameId(gid);
                 if (gid) updatePreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`, { enable: false });
               }}
@@ -1754,7 +1784,7 @@ export default function CreateStudio({
               {projects.map((p) => (
                 <option key={p.gameId} value={p.gameId}>
                   {(p.title && p.title.trim()) ? p.title.trim() : p.gameId}
-                  {p.published ? "" : "  · 待发布"}
+                  {p.published ? (p.dirty ? "  · 待发布更新" : "") : "  · 待发布"}
                 </option>
               ))}
             </select>
@@ -1926,12 +1956,12 @@ export default function CreateStudio({
                             <>
                               {!hasChoice ? (
                                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                                  {(clarifyLocal.options || []).slice(0, 3).map((o: any, i: number) => {
+                                  {(clarifyLocal.options || []).slice(0, 4).map((o: any, i: number) => {
                                     const id = String(o?.id || "").trim() || String(["A", "B", "C"][i] || "A");
                                     const label = String(o?.title || o?.label || "").trim() || `方案${id}`;
                                     return (
                                       <button key={i} className="btn btnGray" type="button" onClick={() => applyChoice(id)} disabled={uiBusy}>
-                                        方案{id}：{label}
+                                        {id === "OTHER" ? label : `方案${id}：${label}`}
                                       </button>
                                     );
                                   })}
@@ -2109,7 +2139,7 @@ export default function CreateStudio({
                 )}
               </button>
               <button className="btn sendBtn" type="button" onClick={send} disabled={uiBusy || !input.trim()} aria-label="发送">
-                ➤ 发送
+                {busy ? "发送中…" : "➤ 发送"}
               </button>
             </div>
           </div>
