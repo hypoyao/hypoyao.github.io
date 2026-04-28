@@ -3,7 +3,7 @@ import HomeAccount from "./HomeAccount";
 
 // 首页尽量走静态 + ISR：首屏秒开（CDN 缓存），后台定期更新
 export const dynamic = "force-static";
-export const revalidate = 300;
+export const revalidate = 60;
 
 function toGameEntryHref(path: string) {
   // 统一走 /games/<id>/（由 app route 输出“两栏壳”页面；游戏本体在 iframe 的 /__raw/ 下）
@@ -71,6 +71,10 @@ export default async function HomePage() {
                   <div>
                     <div className="gameName">{g.title}</div>
                     <div className="gameDesc">{g.shortDesc}</div>
+                    <div className="gameStatRow" aria-label="游戏数据">
+                      <span className="gameStatChip">玩过 {g.playCount}</span>
+                      <span className="gameStatChip">点赞 {g.likeCount}</span>
+                    </div>
                     <div className="gameMetaRow">
                       <img className="gameMetaAvatar" src={g.creator.avatarUrl} alt={`${g.creator.name}头像`} />
                       <span className="gameMeta">创作者：{g.creator.name}</span>

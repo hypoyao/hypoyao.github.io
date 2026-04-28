@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
 import { ensureGameFilesTables } from "@/lib/db/ensureGameFilesTables";
+import { getGameEngagement } from "@/lib/db/gameEngagement";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -123,6 +124,8 @@ async function buildShellHtml(gameId: string) {
   let creatorProfilePath = "";
   let prompt = "";
   let isPublished = false;
+  let playCount = 0;
+  let likeCount = 0;
 
   // 1) 优先发布表
   try {
@@ -160,6 +163,14 @@ async function buildShellHtml(gameId: string) {
       }
     }
   } catch {}
+
+  if (isPublished) {
+    try {
+      const stats = await getGameEngagement(gameId);
+      playCount = stats.playCount;
+      likeCount = stats.likeCount;
+    } catch {}
+  }
 
   // 2) 若不是已发布游戏：尝试草稿 meta/prompt
   if (!title) {
@@ -207,6 +218,18 @@ async function buildShellHtml(gameId: string) {
   const safePrompt = escHtml(prompt || "（暂无 prompt）");
   const creatorLink = creatorProfilePath ? escHtml(creatorProfilePath) : "";
   const safeAvatar = escHtml(creatorAvatarUrl || "/assets/avatars/user.svg");
+  const safePlayCount = String(playCount || 0);
+  const safeLikeCount = String(likeCount || 0);
+  const engagementHtml = isPublished
+    ? `<div class="engageRow">
+        <div class="engageStats" aria-label="游戏数据">
+          <span class="engageBadge">玩过 <strong id="playCount">${safePlayCount}</strong></span>
+          <span class="engageBadge">点赞 <strong id="likeCount">${safeLikeCount}</strong></span>
+        </div>
+        <button id="likeBtn" class="likeBtn" type="button" aria-pressed="false">♡ 点赞</button>
+      </div>`
+    : "";
+  const shareActionHtml = isPublished ? `<div id="shareHint" class="shareHint" aria-live="polite"></div>` : "";
 
   const rawBase = `/games/${encodeURIComponent(gameId)}/__raw/`;
   const embedBase = `/games/${encodeURIComponent(gameId)}/__embed/`;
@@ -245,8 +268,12 @@ async function buildShellHtml(gameId: string) {
     .bar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.92)}
     .barTitle{display:block;font-weight:1200;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .barActions{display:flex;align-items:center;gap:8px}
-    .bar a{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:12px;border:1px solid var(--line);text-decoration:none;color:inherit;background:rgba(248,250,252,1)}
-    .bar a svg{width:18px;height:18px;display:block}
+    .bar a,.bar button{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:12px;border:1px solid var(--line);text-decoration:none;color:inherit;background:rgba(248,250,252,1)}
+    .bar a svg,.bar button svg{width:18px;height:18px;display:block}
+    .bar button{cursor:pointer}
+    .shareIconBtn{width:auto !important;padding:0 12px;gap:7px;background:linear-gradient(135deg, rgba(59,130,246,.12), rgba(16,185,129,.14)) !important;border-color:rgba(59,130,246,.22) !important;color:rgba(15,23,42,.92);font-size:13px;font-weight:1100}
+    .shareIconBtn svg{width:16px !important;height:16px !important}
+    .shareIconBtnText{line-height:1}
     .frame{width:100%;height:100%;border:0;background:white}
     .info{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:12px;min-height:0;overflow:auto}
     .infoHead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
@@ -255,6 +282,14 @@ async function buildShellHtml(gameId: string) {
     .iconBtn svg{width:18px;height:18px;display:block}
     .h{font-weight:1200;font-size:16px;margin:0 0 6px}
     .desc{color:var(--muted);font-weight:900;line-height:1.6;margin:0 0 10px}
+    .engageRow{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:0 0 12px}
+    .engageStats{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .engageBadge{display:inline-flex;align-items:center;gap:4px;padding:6px 10px;border-radius:999px;border:1px solid rgba(15,23,42,.10);background:rgba(248,250,252,.92);font-size:12px;font-weight:1000;color:rgba(51,65,85,.96)}
+    .engageBadge strong{font-size:13px;color:rgba(15,23,42,.92)}
+    .likeBtn{display:inline-flex;align-items:center;justify-content:center;padding:8px 12px;border-radius:12px;border:1px solid rgba(236,72,153,.22);background:rgba(244,114,182,.10);color:rgba(131,24,67,.96);font-size:13px;font-weight:1100;cursor:pointer}
+    .likeBtn.isLiked{border-color:rgba(236,72,153,.34);background:rgba(244,114,182,.18);color:rgba(157,23,77,.98)}
+    .likeBtn:disabled{opacity:.7;cursor:not-allowed}
+    .shareHint{margin-top:8px;min-height:18px;font-size:12px;font-weight:900;color:rgba(37,99,235,.92)}
     .block{padding:10px 0;border-top:1px solid rgba(15,23,42,.06)}
     .block:first-of-type{border-top:none}
     .label{font-size:12px;font-weight:1100;color:var(--muted);margin-bottom:6px}
@@ -270,6 +305,20 @@ async function buildShellHtml(gameId: string) {
       <div class="bar">
         <div class="barTitle">${safeTitle}</div>
         <div class="barActions">
+          ${
+            isPublished
+              ? `<button id="shareIconBtn" class="shareIconBtn" type="button" title="分享游戏" aria-label="分享游戏">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="18" cy="5.5" r="2.5" stroke="currentColor" stroke-width="2"/>
+              <circle cx="6" cy="12" r="2.5" stroke="currentColor" stroke-width="2"/>
+              <circle cx="18" cy="18.5" r="2.5" stroke="currentColor" stroke-width="2"/>
+              <path d="M8.3 10.8 15.7 6.7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <path d="M8.3 13.2 15.7 17.3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <span class="shareIconBtnText">分享</span>
+          </button>`
+              : ""
+          }
           <a href="${escHtml(rawIndex)}" target="_blank" rel="noopener noreferrer" title="在新标签页打开游戏" aria-label="在新标签页打开游戏">
             <!-- 更接近“在新窗口打开”的标准图标：方框 + 右上角外开箭头 -->
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -314,6 +363,8 @@ async function buildShellHtml(gameId: string) {
         ${actionHtml}
       </div>
       ${safeDesc ? `<p class="desc">${safeDesc}</p>` : ``}
+      ${shareActionHtml}
+      ${engagementHtml}
       ${safeRules ? `<div class="block"><div class="label">规则</div><div class="pre">${safeRules}</div></div>` : ``}
       <div class="block">
         <div class="label">创作者</div>
@@ -330,6 +381,103 @@ async function buildShellHtml(gameId: string) {
   </main>
   <script>
     (function () {
+      try {
+        var engageEnabled = ${isPublished ? "true" : "false"};
+        var gameId = ${JSON.stringify(gameId)};
+        var playNode = document.getElementById("playCount");
+        var likeNode = document.getElementById("likeCount");
+        var likeBtn = document.getElementById("likeBtn");
+        var shareIconBtn = document.getElementById("shareIconBtn");
+        var shareHint = document.getElementById("shareHint");
+        var likeBusy = false;
+        var shareBusy = false;
+        function setShareHint(text) {
+          if (shareHint) shareHint.textContent = text || "";
+        }
+        function applyStats(data) {
+          if (!data || typeof data !== "object") return;
+          if (playNode && typeof data.playCount === "number") playNode.textContent = String(data.playCount);
+          if (likeNode && typeof data.likeCount === "number") likeNode.textContent = String(data.likeCount);
+          if (likeBtn && typeof data.liked === "boolean") {
+            likeBtn.setAttribute("aria-pressed", data.liked ? "true" : "false");
+            likeBtn.classList.toggle("isLiked", !!data.liked);
+            likeBtn.textContent = data.liked ? "♥ 已点赞" : "♡ 点赞";
+          }
+        }
+        async function postEngagement(action) {
+          var res = await fetch("/api/games/engagement", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            cache: "no-store",
+            body: JSON.stringify({ gameId: gameId, action: action })
+          });
+          var data = await res.json().catch(function(){ return null; });
+          if (!res.ok || !data || !data.ok) throw new Error((data && data.error) || ("ENGAGEMENT_FAILED(" + res.status + ")"));
+          applyStats(data);
+          return data;
+        }
+        async function copyShareLink() {
+          var url = window.location.href;
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(url);
+            return true;
+          }
+          var ta = document.createElement("textarea");
+          ta.value = url;
+          ta.setAttribute("readonly", "readonly");
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          var ok = false;
+          try { ok = document.execCommand("copy"); } catch (e) {}
+          document.body.removeChild(ta);
+          if (!ok) throw new Error("COPY_FAILED");
+          return true;
+        }
+        async function doShare() {
+          if (shareBusy) return;
+          shareBusy = true;
+          if (shareIconBtn) shareIconBtn.setAttribute("disabled", "disabled");
+          setShareHint("");
+          try {
+            var shareData = { title: document.title || ${JSON.stringify(title || gameId)}, text: "来试玩这个小游戏吧～", url: window.location.href };
+            if (navigator.share) {
+              await navigator.share(shareData);
+              setShareHint("已打开系统分享面板");
+            } else {
+              await copyShareLink();
+              setShareHint("链接已复制，快发给朋友吧");
+            }
+          } catch (e) {
+            var msg = String((e && e.message) || e || "");
+            var name = String((e && e.name) || "");
+            if (name !== "AbortError" && msg !== "AbortError") setShareHint("分享失败，请稍后再试");
+          } finally {
+            shareBusy = false;
+            if (shareIconBtn) shareIconBtn.removeAttribute("disabled");
+          }
+        }
+        if (engageEnabled) {
+          postEngagement("view").catch(function(){});
+          if (shareIconBtn) shareIconBtn.addEventListener("click", doShare);
+          if (likeBtn) {
+            likeBtn.addEventListener("click", async function () {
+              if (likeBusy) return;
+              likeBusy = true;
+              likeBtn.setAttribute("disabled", "disabled");
+              try {
+                await postEngagement("toggle_like");
+              } catch (e) {
+              } finally {
+                likeBusy = false;
+                likeBtn.removeAttribute("disabled");
+              }
+            });
+          }
+        }
+      } catch (e) {}
+
       // 手机端：让 iframe 根据内容高度自动撑开，避免在固定高度里滚动
       try {
         var mq = window.matchMedia && window.matchMedia("(max-width: 980px)");

@@ -2428,6 +2428,7 @@ export async function POST(req: Request) {
   const gameId = String((body as any)?.gameId || "").trim();
   const safeGameId = gameId && /^[a-zA-Z0-9_-]+$/.test(gameId) ? gameId : "";
   const requestRunId = String((body as any)?.runId || "").trim() || `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const requestStartedAt = Date.now();
   const modeRaw = String((body as any)?.mode || "auto").trim().toLowerCase(); // auto | generate | fix
   const qualityRaw = String((body as any)?.quality || "auto").trim().toLowerCase(); // auto | stable | quality
 
@@ -3351,6 +3352,20 @@ export async function POST(req: Request) {
                 },
               },
             });
+            const applyFirstSuccessTiming = (metaObj: any) => {
+              const base = metaObj && typeof metaObj === "object" ? metaObj : {};
+              const gen = base._gen && typeof base._gen === "object" ? { ...base._gen } : {};
+              if (Number(gen.firstSuccessElapsedMs) > 0) return base;
+              return {
+                ...base,
+                _gen: {
+                  ...gen,
+                  firstSuccessElapsedMs: Math.max(0, Date.now() - requestStartedAt),
+                  firstSuccessAt: Date.now(),
+                  firstSuccessRunId: requestRunId,
+                },
+              };
+            };
 
             const validateStandaloneJs = (jsCode: string) => validateStandaloneJsSyntax(jsCode);
 
@@ -4989,7 +5004,7 @@ export async function POST(req: Request) {
             if (!gameJsStep) return;
             const { jsContent } = gameJsStep;
 
-            const metaNow = await lockMetaTitle({
+            const metaNow = await lockMetaTitle(applyFirstSuccessTiming({
               ...meta,
               _gen: {
                 ...(genState || {}),
@@ -5008,7 +5023,7 @@ export async function POST(req: Request) {
                 },
                 updatedAt: Date.now(),
               },
-            }, meta?.title || "", "blueprint");
+            }), meta?.title || "", "blueprint");
             const finalFiles: Array<{ path: string; content: string }> = [
               { path: "index.html", content: html },
               { path: "style.css", content: css },

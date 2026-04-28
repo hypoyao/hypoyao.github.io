@@ -127,6 +127,10 @@ export default async function CreatorPage({ params }: { params: Promise<{ id: st
                   <div>
                     <div className="gameName">{g.title}</div>
                     <div className="gameDesc">{g.shortDesc}</div>
+                    <div className="gameStatRow" aria-label="游戏数据">
+                      <span className="gameStatChip">玩过 {g.playCount}</span>
+                      <span className="gameStatChip">点赞 {g.likeCount}</span>
+                    </div>
                   </div>
                 </a>
               ))}

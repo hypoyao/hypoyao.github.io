@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Analytics } from "@vercel/analytics/react";
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import { getLegalConfig } from "@/lib/legal";
 
 export const metadata: Metadata = {
   title: "奇点小匠",
@@ -8,6 +9,8 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const legal = getLegalConfig();
+
   return (
     <html lang="zh-CN">
       <head>
@@ -27,6 +30,32 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         {children}
+        <footer className="siteLegalFooter" aria-label="网站法律信息">
+          <div className="siteLegalFooterInner">
+            <div className="siteLegalFooterTop">
+              <div className="siteLegalFooterBrand">{legal.siteName}</div>
+              <nav className="siteLegalFooterNav">
+                <a href="/privacy">隐私政策</a>
+                <a href="/terms">服务条款</a>
+              </nav>
+            </div>
+            <div className="siteLegalFooterMeta">
+              <div className="siteLegalFooterCopy">{legal.copyrightLine}</div>
+              <div className="siteLegalFooterRecord">
+                {legal.icpBeian ? <span>{legal.icpBeian}</span> : null}
+                {legal.publicSecurityBeian ? (
+                  legal.publicSecurityBeianLink ? (
+                    <a href={legal.publicSecurityBeianLink} target="_blank" rel="noreferrer">
+                      {legal.publicSecurityBeian}
+                    </a>
+                  ) : (
+                    <span>{legal.publicSecurityBeian}</span>
+                  )
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </footer>
         <Analytics />
         <SpeedInsights />
       </body>

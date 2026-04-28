@@ -417,6 +417,26 @@
   line-height: 1.4;
 }
 
+.gameStatRow {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.gameStatChip {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  background: rgba(248, 250, 252, 0.92);
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(71, 85, 105, 0.96);
+}
+
 .gameMeta {
   margin-top: 6px;
   font-size: 12px;
