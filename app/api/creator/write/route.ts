@@ -231,15 +231,6 @@ export async function POST(req: Request) {
 
     if (!written.length) {
       if (body.seed) {
-        try {
-          await db.execute(sql`
-            update creator_draft_games
-            set updated_at = now()
-            where id = ${gid} and owner_key = ${ownerKey}
-          `);
-        } catch {
-          // ignore
-        }
         return json(200, {
           ok: true,
           written: [],

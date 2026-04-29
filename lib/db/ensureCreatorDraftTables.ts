@@ -2,13 +2,22 @@ import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 
 // create 页“草稿游戏”（未发布也可预览）的存储表（幂等）
-let _ensured = false;
-let _ensuring: Promise<void> | null = null;
+// 用 globalThis 持久化一次性状态，避免 Next dev / HMR 下每次请求都重新跑整套 DDL 检查。
+const ENSURE_DRAFT_STATE_KEY = "__creatorDraftTablesEnsureState__";
+
+function ensureState() {
+  const g = globalThis as any;
+  if (!g[ENSURE_DRAFT_STATE_KEY]) {
+    g[ENSURE_DRAFT_STATE_KEY] = { ensured: false, ensuring: null as Promise<void> | null };
+  }
+  return g[ENSURE_DRAFT_STATE_KEY] as { ensured: boolean; ensuring: Promise<void> | null };
+}
 
 export async function ensureCreatorDraftTables(force = false) {
-  if (!force && _ensured) return;
-  if (_ensuring) return _ensuring;
-  _ensuring = (async () => {
+  const state = ensureState();
+  if (!force && state.ensured) return;
+  if (state.ensuring) return state.ensuring;
+  state.ensuring = (async () => {
     // 1) 基础表：首次安装时直接创建
     await db.execute(sql`
       create table if not exists creator_draft_games (
@@ -44,8 +53,8 @@ export async function ensureCreatorDraftTables(force = false) {
     // 同样补齐旧表可能缺失的列
     await db.execute(sql`alter table creator_draft_files add column if not exists updated_at timestamptz not null default now();`);
 
-    _ensured = true;
-    _ensuring = null;
+    state.ensured = true;
+    state.ensuring = null;
   })();
-  return _ensuring;
+  return state.ensuring;
 }

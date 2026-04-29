@@ -14,8 +14,10 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 type Msg = { role: "system" | "user" | "assistant"; content: string };
+type ModelProvider = "openrouter" | "deepseek" | "bailian" | "tencent" | "chinamobile";
 
 const TENCENT_TOKENHUB_MODELS = ["hy3-preview"] as const;
+const CHINAMOBILE_MODELS = ["minimax-m25"] as const;
 // DeepSeek 官方 API（OpenAI 兼容）模型：V4 系列
 // deepseek-chat / deepseek-reasoner 将逐步下线（官方已声明未来弃用）
 const DEEPSEEK_DIRECT_MODELS = ["deepseek-v4-pro", "deepseek-v4-flash"] as const;
@@ -2313,9 +2315,23 @@ function shouldDisableDeepSeekThinkingForStep(stepTag: string) {
   return /(直接补丁|ops patch|小改动|修复 bug|生成补丁|纯代码|single file|patch|fix)/i.test(t);
 }
 
+function envAny(...keys: string[]) {
+  for (const key of keys) {
+    const v = String(process.env[key] || "").trim();
+    if (v) return v;
+  }
+  return "";
+}
+
+function joinOpenAiCompatibleUrl(baseUrl: string, apiPath: string) {
+  const path = String(apiPath || "/chat/completions").trim() || "/chat/completions";
+  if (/^https?:\/\//i.test(path)) return path.replace(/\/+$/, "");
+  return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+}
+
 function tunePayloadForStep(
   payload: any,
-  providerName: "openrouter" | "deepseek" | "bailian" | "tencent",
+  providerName: ModelProvider,
   stepTag = "",
   forceLeanThinking = false,
 ) {
@@ -2458,12 +2474,14 @@ export async function POST(req: Request) {
   const hasDeepSeek = !!(process.env.DEEPSEEK_API_KEY || "");
   const hasBailian = !!(process.env.DASHSCOPE_API_KEY || process.env.BAILIAN_API_KEY || "");
   const hasTencentTokenHub = !!(process.env.TENCENT_TOKENHUB_API_KEY || process.env.TOKENHUB_API_KEY || "");
-  let provider: "openrouter" | "deepseek" | "bailian" | "tencent" = "openrouter";
+  const hasChinaMobile = !!String(process.env.CHINAMOBILE_TOKENHUB_API_KEY || "").trim();
+  let provider: ModelProvider = "openrouter";
   if (providerRaw === "deepseek") provider = "deepseek";
   else if (providerRaw === "openrouter") provider = "openrouter";
   else if (providerRaw === "bailian" || providerRaw === "dashscope") provider = "bailian";
   else if (providerRaw === "tencent" || providerRaw === "tokenhub" || providerRaw === "hunyuan") provider = "tencent";
-  else provider = hasTencentTokenHub ? "tencent" : hasBailian ? "bailian" : hasOpenRouter ? "openrouter" : "deepseek";
+  else if (providerRaw === "chinamobile" || providerRaw === "china-mobile" || providerRaw === "cmcc" || providerRaw === "mobile") provider = "chinamobile";
+  else provider = hasTencentTokenHub ? "tencent" : hasBailian ? "bailian" : hasChinaMobile ? "chinamobile" : hasOpenRouter ? "openrouter" : "deepseek";
 
   let url = "";
   let authKey = "";
@@ -2522,6 +2540,22 @@ export async function POST(req: Request) {
       model = (TENCENT_TOKENHUB_MODELS as readonly string[]).includes(picked)
         ? picked
         : process.env.TENCENT_TOKENHUB_MODEL || process.env.TOKENHUB_MODEL || "hy3-preview";
+    }
+  } else if (provider === "chinamobile") {
+    // 中国移动 MaaS（OpenAI-compatible completions）
+    // 默认 base_url: https://maas.gd.chinamobile.com:36007/ai/uifm/open/v1
+    // 默认 path: /chat/completions；若控制台给的是完整 completions 地址，可用 CHINAMOBILE_API_PATH 覆盖。
+    authKey = String(process.env.CHINAMOBILE_TOKENHUB_API_KEY || "").trim();
+    if (!authKey) {
+      return json(500, { ok: false, error: "MISSING_CHINAMOBILE_API_KEY" });
+    } else {
+      const baseUrl = String(process.env.CHINAMOBILE_BASE_URL || "").trim() || "https://maas.gd.chinamobile.com:36007/ai/uifm/open/v1";
+      const apiPath = String(process.env.CHINAMOBILE_API_PATH || "").trim() || "/chat/completions";
+      url = joinOpenAiCompatibleUrl(baseUrl, apiPath);
+      const picked = String((body as any)?.model || "").trim();
+      model = (CHINAMOBILE_MODELS as readonly string[]).includes(picked)
+        ? picked
+        : String(process.env.CHINAMOBILE_MODEL || "").trim() || "minimax-m25";
     }
   } else {
     authKey = process.env.OPENROUTER_API_KEY || "";

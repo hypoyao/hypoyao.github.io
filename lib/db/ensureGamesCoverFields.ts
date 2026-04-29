@@ -2,12 +2,21 @@ import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 
 // 给 games 表补齐封面存储字段（幂等）
-let _ensured = false;
-let _ensuring: Promise<void> | null = null;
+const ENSURE_GAMES_COVER_STATE_KEY = "__gamesCoverFieldsEnsureState__";
+
+function ensureState() {
+  const g = globalThis as any;
+  if (!g[ENSURE_GAMES_COVER_STATE_KEY]) {
+    g[ENSURE_GAMES_COVER_STATE_KEY] = { ensured: false, ensuring: null as Promise<void> | null };
+  }
+  return g[ENSURE_GAMES_COVER_STATE_KEY] as { ensured: boolean; ensuring: Promise<void> | null };
+}
+
 export async function ensureGamesCoverFields() {
-  if (_ensured) return;
-  if (_ensuring) return _ensuring;
-  _ensuring = (async () => {
+  const state = ensureState();
+  if (state.ensured) return;
+  if (state.ensuring) return state.ensuring;
+  state.ensuring = (async () => {
     // games 表可能在某些环境尚未初始化：这里做一次幂等建表
     await db.execute(sql`
       create table if not exists games (
@@ -29,8 +38,8 @@ export async function ensureGamesCoverFields() {
     await db.execute(sql`alter table games add column if not exists cover_mime text;`);
     await db.execute(sql`alter table games add column if not exists cover_data text;`);
     await db.execute(sql`create index if not exists games_source_draft_idx on games(source_draft_id);`);
-    _ensured = true;
-    _ensuring = null;
+    state.ensured = true;
+    state.ensuring = null;
   })();
-  return _ensuring;
+  return state.ensuring;
 }

@@ -37,7 +37,7 @@ export async function getGameEngagement(gameId: string, visitorId?: string | nul
   await ensureGameEngagementReady();
   const rows = await db.execute(sql`
     select
-      (select count(*)::int from game_play_visitors where game_id = ${gameId}) as play_count,
+      (select count(*)::int from game_play_events where game_id = ${gameId}) as play_count,
       (select count(*)::int from game_like_votes where game_id = ${gameId}) as like_count,
       ${
         visitorId
@@ -55,13 +55,11 @@ export async function getGameEngagement(gameId: string, visitorId?: string | nul
 }
 
 export async function recordGameView(gameId: string, visitorId: string) {
-  if (!gameId || !visitorId) return getGameEngagement(gameId, visitorId);
+  if (!gameId) return getGameEngagement(gameId, visitorId);
   await ensureGameEngagementReady();
   await db.execute(sql`
-    insert into game_play_visitors (game_id, visitor_id)
-    values (${gameId}, ${visitorId})
-    on conflict (game_id, visitor_id)
-    do update set updated_at = now()
+    insert into game_play_events (game_id, visitor_id)
+    values (${gameId}, ${visitorId || null})
   `);
   return getGameEngagement(gameId, visitorId);
 }

@@ -23,11 +23,11 @@ export async function GET() {
   if (!ownerKey) return json(401, { ok: false, error: "UNAUTHORIZED", games: [] });
 
   // 并发拉取：草稿 + 已发布
-  await ensureCreatorDraftTables();
-  try {
-    await ensureCreatorsAuthFields();
-    await ensureGamesCoverFields();
-  } catch {}
+  await Promise.all([
+    ensureCreatorDraftTables(),
+    ensureCreatorsAuthFields().catch(() => null),
+    ensureGamesCoverFields().catch(() => null),
+  ]);
 
   let creatorId = "";
   try {
@@ -43,18 +43,39 @@ export async function GET() {
   }
 
   const draftP = db.execute(sql`
-    select id, title, extract(epoch from updated_at) as updated_s
-    from creator_draft_games
-    where owner_key = ${ownerKey}
-    order by updated_at desc
+    select
+      g.id,
+      g.title,
+      extract(epoch from g.updated_at) as updated_s,
+      extract(epoch from coalesce(f.files_updated_at, g.updated_at)) as files_updated_s
+    from creator_draft_games g
+    left join lateral (
+      select max(updated_at) as files_updated_at
+      from creator_draft_files
+      where game_id = g.id
+        and path in ('index.html','style.css','game.js','meta.json')
+    ) f on true
+    where g.owner_key = ${ownerKey}
+    order by g.updated_at desc
     limit 300
   `);
   const pubP = creatorId
     ? db.execute(sql`
-        select id, title, source_draft_id, extract(epoch from updated_at) as updated_s
-        from games
-        where creator_id = ${creatorId}
-        order by updated_at desc
+        select
+          g.id,
+          g.title,
+          g.source_draft_id,
+          extract(epoch from g.updated_at) as updated_s,
+          extract(epoch from coalesce(f.files_updated_at, g.updated_at)) as files_updated_s
+        from games g
+        left join lateral (
+          select max(updated_at) as files_updated_at
+          from game_files
+          where game_id = g.id
+            and path in ('index.html','style.css','game.js','meta.json')
+        ) f on true
+        where g.creator_id = ${creatorId}
+        order by g.updated_at desc
         limit 300
       `)
     : Promise.resolve({ rows: [] } as any);
@@ -68,10 +89,12 @@ export async function GET() {
   for (const r of drafts) {
     const id = String((r as any).id || "");
     if (!id) continue;
+    const updatedMs = Math.floor(Number((r as any).updated_s || 0) * 1000);
+    const filesUpdatedMs = Math.floor(Number((r as any).files_updated_s || 0) * 1000);
     map.set(id, {
       gameId: id,
       entry: `/games/${id}/__raw/index.html`,
-      mtimeMs: Math.floor(Number((r as any).updated_s || 0) * 1000),
+      mtimeMs: Math.max(updatedMs, filesUpdatedMs),
       title: String((r as any).title || ""),
       published: false,
       dirty: false,
@@ -84,6 +107,7 @@ export async function GET() {
     const sourceDraftId = String((r as any).source_draft_id || "").trim();
     const publishTitle = String((r as any).title || "");
     const publishMtimeMs = Math.floor(Number((r as any).updated_s || 0) * 1000);
+    const publishFilesMtimeMs = Math.floor(Number((r as any).files_updated_s || 0) * 1000);
     if (sourceDraftId && map.has(sourceDraftId)) {
       const prev = map.get(sourceDraftId)!;
       map.set(sourceDraftId, {
@@ -91,7 +115,7 @@ export async function GET() {
         mtimeMs: Math.max(prev.mtimeMs || 0, publishMtimeMs),
         title: prev.title || publishTitle,
         published: true,
-        dirty: (prev.mtimeMs || 0) > publishMtimeMs,
+        dirty: (prev.mtimeMs || 0) > Math.max(publishMtimeMs, publishFilesMtimeMs),
         publishId,
       });
       continue;

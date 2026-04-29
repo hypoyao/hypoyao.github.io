@@ -65,6 +65,33 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, lockId, i
     };
   }, [idLocked, immutable, isAdmin, initial?.id, initial?.creatorId, initial?.path, id, title, shortDesc, ruleText, creatorId, coverUrl, path, sourceDraftId]);
 
+  function syncProjectPublishCache(gameId: string, nextTitle: string) {
+    try {
+      const raw = window.localStorage.getItem("creatorStudio:projectsCache");
+      const parsed = raw ? JSON.parse(raw) : null;
+      const arr = Array.isArray(parsed?.games) ? parsed.games : [];
+      const entry = `/games/${gameId}/__raw/index.html`;
+      const now = Date.now();
+      const next = arr.slice();
+      const idx = next.findIndex((p: any) => String(p?.gameId || "") === gameId);
+      const patched = {
+        gameId,
+        title: nextTitle || next[idx]?.title || gameId,
+        entry,
+        mtimeMs: now,
+        published: true,
+        dirty: false,
+        publishId: gameId,
+      };
+      if (idx >= 0) next[idx] = { ...next[idx], ...patched };
+      else next.unshift(patched);
+      window.localStorage.setItem("creatorStudio:projectsCache", JSON.stringify({ v: 1, at: now, games: next }));
+      window.localStorage.setItem("creatorStudio:last", JSON.stringify({ v: 1, gameId, updatedAt: now }));
+    } catch {
+      // ignore
+    }
+  }
+
   async function cropCoverToSquareDataUrl(file: File) {
     // 自动居中裁剪为正方形，并缩放到 512x512（封面要求 1:1）
     const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -154,6 +181,7 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, lockId, i
         setMsg(`${actionLabel}失败：${data?.error || r.status}`);
         return;
       }
+      syncProjectPublishCache(String(payload.id || ""), String(title || ""));
       setMsg(`${actionLabel}成功，正在返回游戏…`);
       const p = typeof data?.path === "string" ? data.path : payload.path || `/games/${payload.id}/`;
       const entry = p.endsWith("/") ? `${p}index.html` : p;

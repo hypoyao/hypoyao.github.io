@@ -8,16 +8,17 @@ export const dynamic = "force-dynamic";
 export default async function CreatePage({
   searchParams,
 }: {
-  searchParams?: Promise<{ prompt?: string; auto?: string; id?: string }>;
+  searchParams?: Promise<{ prompt?: string; promptKey?: string; auto?: string; id?: string }>;
 }) {
   const sp = searchParams ? await searchParams : ({} as any);
   const initialPrompt = typeof sp?.prompt === "string" ? sp.prompt.slice(0, 800) : "";
-  // auto=1 仅在 prompt 非空时才有意义；否则会造成“看似要自动开始但其实没内容”的误导
-  const autoStart = typeof sp?.auto === "string" && sp.auto === "1" && !!initialPrompt.trim();
+  const initialPromptKey = typeof sp?.promptKey === "string" ? sp.promptKey.trim().slice(0, 120) : "";
+  // 只允许带随机 promptKey 的入口自动启动；raw prompt 即使在 URL 里，也只作为预填，不自动开跑。
+  const autoStart = typeof sp?.auto === "string" && sp.auto === "1" && !!initialPromptKey;
   const initialGameId = typeof sp?.id === "string" ? sp.id.trim().slice(0, 80) : "";
 
-  // 清理无效 auto=1（避免用户从首页不小心提交空 prompt 后进入奇怪状态）
-  if (typeof sp?.auto === "string" && sp.auto === "1" && !initialPrompt.trim() && !initialGameId) {
+  // 清理无效 auto=1（避免用户带空 key/空内容进入奇怪状态）
+  if (typeof sp?.auto === "string" && sp.auto === "1" && !initialPromptKey && !initialPrompt.trim() && !initialGameId) {
     redirect("/create");
   }
 
@@ -26,6 +27,7 @@ export default async function CreatePage({
   if (!sess) {
     const qs = new URLSearchParams();
     if (initialPrompt) qs.set("prompt", initialPrompt);
+    if (initialPromptKey) qs.set("promptKey", initialPromptKey);
     if (autoStart) qs.set("auto", "1");
     if (initialGameId) qs.set("id", initialGameId);
     const next = `/create${qs.toString() ? `?${qs.toString()}` : ""}`;
@@ -43,7 +45,12 @@ export default async function CreatePage({
           </div>
         </header>
 
-        <CreateStudio initialPrompt={initialPrompt} autoStart={autoStart} initialGameId={initialGameId} />
+        <CreateStudio
+          initialPrompt={initialPrompt}
+          initialPromptKey={initialPromptKey}
+          autoStart={autoStart}
+          initialGameId={initialGameId}
+        />
       </section>
     </main>
   );

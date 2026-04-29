@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { consumeLaunchPrompt } from "@/lib/creator/launchPrompt";
 
 type ChatMsg = { role: "system" | "user" | "assistant"; content: string };
 
@@ -137,6 +138,15 @@ function safeDeleteChat(gid: string) {
   try {
     if (typeof window === "undefined") return;
     window.localStorage.removeItem(chatKey(gid));
+  } catch {
+    // ignore
+  }
+}
+
+function safeSaveProjectsCache(projects: Array<{ gameId: string; title?: string; entry: string; mtimeMs?: number; published?: boolean; dirty?: boolean; publishId?: string }>) {
+  try {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("creatorStudio:projectsCache", JSON.stringify({ v: 1, at: Date.now(), games: projects || [] }));
   } catch {
     // ignore
   }
@@ -341,10 +351,12 @@ function parseSseChunk(state: { buf: string }, chunk: string) {
 
 export default function CreateStudio({
   initialPrompt = "",
+  initialPromptKey = "",
   autoStart = false,
   initialGameId = "",
 }: {
   initialPrompt?: string;
+  initialPromptKey?: string;
   autoStart?: boolean;
   initialGameId?: string;
 }) {
@@ -354,10 +366,10 @@ export default function CreateStudio({
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [input, setInput] = useState(initialPrompt || "");
-  // 模型选择：DeepSeek / OpenRouter
+  // 模型选择：DeepSeek / OpenRouter / 百炼 / 腾讯 / 中国移动
   // 注意：不要在 useState initializer 读取 localStorage，否则 SSR/CSR 初始值不一致会触发 hydration failed。
   // 这里先用稳定默认值，等客户端挂载后再从 localStorage 恢复。
-  const [provider, setProvider] = useState<"deepseek" | "openrouter" | "bailian" | "tencent">("openrouter");
+  const [provider, setProvider] = useState<"deepseek" | "openrouter" | "bailian" | "tencent" | "chinamobile">("openrouter");
   // 默认模型：保持原先默认（不要在这里强行替用户改模型）
   const [model, setModel] = useState<string>("nvidia/nemotron-3-super-120b-a12b:free");
   const [hydrated, setHydrated] = useState(false);
@@ -441,6 +453,11 @@ export default function CreateStudio({
     [],
   );
 
+  const chinaMobileModels = useMemo(
+    () => [{ id: "minimax-m25", name: "minimax-m25（中国移动 MaaS）" }],
+    [],
+  );
+
   const deepseekModels = useMemo(
     () => [
       // DeepSeek V4：统一开启“最高思考强度”（由后端/网关控制）
@@ -462,6 +479,9 @@ export default function CreateStudio({
     } else if (provider === "tencent") {
       const ok = tencentModels.some((x) => x.id === model);
       if (!ok) setModel("hy3-preview");
+    } else if (provider === "chinamobile") {
+      const ok = chinaMobileModels.some((x) => x.id === model);
+      if (!ok) setModel("minimax-m25");
     } else {
       const ok = deepseekModels.some((x) => x.id === model);
       if (!ok) setModel("deepseek-v4-flash");
@@ -475,7 +495,7 @@ export default function CreateStudio({
     try {
       const p = window.localStorage.getItem("creatorStudio:modelProvider");
       const m = window.localStorage.getItem("creatorStudio:modelName");
-      if (p === "deepseek" || p === "openrouter" || p === "bailian" || p === "tencent") setProvider(p as any);
+      if (p === "deepseek" || p === "openrouter" || p === "bailian" || p === "tencent" || p === "chinamobile") setProvider(p as any);
       if (m) setModel(m);
     } catch {
       // ignore
@@ -904,7 +924,9 @@ export default function CreateStudio({
   useEffect(() => {
     if (bootRef.current) return;
     bootRef.current = true;
-    const isFromHome = !!(autoStart && initialPrompt && initialPrompt.trim());
+    const launchPrompt = autoStart ? consumeLaunchPrompt(initialPromptKey) : "";
+    const bootPrompt = (launchPrompt || "").trim();
+    const isFromHome = !!(autoStart && bootPrompt);
     const fixedGameId = String(initialGameId || "").trim();
 
     const baseAssistant: ChatMsg[] = [
@@ -918,6 +940,15 @@ export default function CreateStudio({
     // 否则：先拉取历史项目；有就默认选最新一个，没有就新建
     (async () => {
       try {
+        try {
+          const u = new URL(window.location.href);
+          if (u.searchParams.get("prompt")) {
+            u.searchParams.delete("prompt");
+            if (u.searchParams.get("auto") === "1" && !bootPrompt) u.searchParams.delete("auto");
+            window.history.replaceState({}, "", u.pathname + (u.searchParams.toString() ? `?${u.searchParams.toString()}` : ""));
+          }
+        } catch {}
+
         // 并发请求：me 和 list 不互相依赖，避免串行等待导致首屏变慢
         const meP = fetch("/api/me", { cache: "no-store" })
           .then((x) => x.json())
@@ -928,13 +959,25 @@ export default function CreateStudio({
 
         // 从游戏页“编辑”跳转过来：固定打开指定项目（优先级最高）
         if (fixedGameId) {
-          const me = await meP;
-          if (me) applyMeProfile(me);
-          await ensureEditableDraft(fixedGameId);
+          try {
+            const raw = window.localStorage.getItem("creatorStudio:projectsCache");
+            const c = raw ? JSON.parse(raw) : null;
+            const arr0 = Array.isArray(c?.games) ? c.games : [];
+            if (arr0.length) setProjects(arr0);
+          } catch {}
+          setProjects((prev) =>
+            prev.some((p) => p.gameId === fixedGameId)
+              ? prev
+              : [{ gameId: fixedGameId, title: fixedGameId, entry: entryOf(fixedGameId) }, ...prev],
+          );
           setGameId(fixedGameId);
           updatePreviewUrl(`${entryOf(fixedGameId)}?t=${encodeURIComponent(nowId())}`, { enable: false });
-          // 刷新项目列表（避免下拉框里没有该项目）
-          await refreshProjects();
+          const me = await meP;
+          if (me) applyMeProfile(me);
+          // 不阻塞首屏：先显示当前项目，再后台补草稿/刷新列表。
+          void ensureEditableDraft(fixedGameId)
+            .then(() => refreshProjects())
+            .catch(() => null);
           return;
         }
 
@@ -945,8 +988,10 @@ export default function CreateStudio({
           // 启动后立刻把 URL 里的 auto=1 去掉，避免用户刷新页面时重复启动。
           try {
             const u = new URL(window.location.href);
-            if (u.searchParams.get("auto") === "1") {
+            if (u.searchParams.get("auto") === "1" || u.searchParams.get("prompt") || u.searchParams.get("promptKey")) {
               u.searchParams.delete("auto");
+              u.searchParams.delete("prompt");
+              u.searchParams.delete("promptKey");
               window.history.replaceState({}, "", u.pathname + (u.searchParams.toString() ? `?${u.searchParams.toString()}` : ""));
             }
           } catch {}
@@ -957,9 +1002,9 @@ export default function CreateStudio({
           await ensureSeed(gid);
           updatePreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`, { enable: true });
           await refreshProjects();
-          await writePrompt(gid, initialPrompt);
+          await writePrompt(gid, bootPrompt);
           // 自动把首页的 prompt 作为第一句话发给 AI（用户点击“开始创造/模板”即表示要开始）
-          await sendText(initialPrompt, gid, baseAssistant);
+          await sendText(bootPrompt, gid, baseAssistant);
           return;
         }
 
@@ -991,6 +1036,7 @@ export default function CreateStudio({
         const j = await listP;
         const arr = Array.isArray(j?.games) ? j.games : [];
         setProjects(arr);
+        safeSaveProjectsCache(arr);
         if (arr.length) {
           let pick = arr[0]?.gameId || "";
           // 优先恢复上次打开的项目
@@ -1126,9 +1172,7 @@ export default function CreateStudio({
     const arr = Array.isArray(j?.games) ? j.games : [];
     setProjects(arr);
     // 本地缓存一份：让 create 首屏先秒出列表，再后台刷新
-    try {
-      window.localStorage.setItem("creatorStudio:projectsCache", JSON.stringify({ v: 1, at: Date.now(), games: arr }));
-    } catch {}
+    safeSaveProjectsCache(arr);
     return arr as Array<{ gameId: string; title?: string; entry: string; mtimeMs?: number; published?: boolean; dirty?: boolean; publishId?: string }>;
   }
 
@@ -1586,6 +1630,8 @@ export default function CreateStudio({
           ? "（服务端未配置 DEEPSEEK_API_KEY）"
           : ml.includes("missing_tencent_tokenhub_api_key")
           ? "（服务端未配置 TENCENT_TOKENHUB_API_KEY 或 TOKENHUB_API_KEY）"
+          : ml.includes("missing_chinamobile_api_key")
+          ? "（服务端未配置 CHINAMOBILE_TOKENHUB_API_KEY 或 CHINAMOBILE_API_KEY）"
           : ml.includes("missing_openrouter_api_key")
             ? "（服务端未配置 OPENROUTER_API_KEY）"
             : ml.includes("write_internal:erofs") || ml.includes("write_internal:eperm")
@@ -1594,7 +1640,7 @@ export default function CreateStudio({
               ? "（网络异常：可能是服务端到模型的网络/DNS/代理/TLS 问题，或浏览器到服务端连接中断；建议重试、切换模型/Provider，必要时刷新页面）"
             : ml.includes("terminated")
               ? "（连接被中断：可能是网络/模型超时/Key 无效/服务端被重启，建议重试）"
-            : "（建议重试；如持续失败再检查 OPENROUTER_API_KEY / DEEPSEEK_API_KEY / TENCENT_TOKENHUB_API_KEY）";
+            : "（建议重试；如持续失败再检查 OPENROUTER_API_KEY / DEEPSEEK_API_KEY / TENCENT_TOKENHUB_API_KEY / CHINAMOBILE_TOKENHUB_API_KEY）";
       setMsg(`出错：${m}${hint}`);
       setLastFailedText(text);
       setInput(text);
@@ -2164,11 +2210,12 @@ export default function CreateStudio({
                   disabled={uiBusy}
                   onChange={(e) => {
                     const p = (e.target.value || "openrouter") as any;
-                    if (p !== "deepseek" && p !== "openrouter" && p !== "bailian" && p !== "tencent") return;
+                    if (p !== "deepseek" && p !== "openrouter" && p !== "bailian" && p !== "tencent" && p !== "chinamobile") return;
                     setProvider(p);
                     if (p === "openrouter") setModel("nvidia/nemotron-3-super-120b-a12b:free");
                     else if (p === "bailian") setModel("qwen3.6-plus");
                     else if (p === "tencent") setModel("hy3-preview");
+                    else if (p === "chinamobile") setModel("minimax-m25");
                     else setModel("deepseek-v4-flash");
                   }}
                   aria-label="选择模型平台"
@@ -2176,6 +2223,7 @@ export default function CreateStudio({
                   <option value="openrouter">OpenRouter</option>
                   <option value="bailian">阿里云百炼</option>
                   <option value="tencent">腾讯混元 TokenHub</option>
+                  <option value="chinamobile">中国移动 MaaS</option>
                   <option value="deepseek">DeepSeek</option>
                 </select>
               </div>
@@ -2194,7 +2242,9 @@ export default function CreateStudio({
                       ? bailianModels
                       : provider === "tencent"
                         ? tencentModels
-                        : deepseekModels).map((m) => (
+                        : provider === "chinamobile"
+                          ? chinaMobileModels
+                          : deepseekModels).map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.name}
                     </option>

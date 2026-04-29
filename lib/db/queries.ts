@@ -59,7 +59,7 @@ async function listGamesUncached(): Promise<GameWithCreator[]> {
       inner join creators c on c.id = g.creator_id
       left join (
         select game_id, count(*)::int as play_count
-        from game_play_visitors
+        from game_play_events
         group by game_id
       ) v on v.game_id = g.id
       left join (
@@ -155,7 +155,7 @@ export async function listGamesByCreator(creatorId: string): Promise<GameWithCre
       inner join creators c on c.id = g.creator_id
       left join (
         select game_id, count(*)::int as play_count
-        from game_play_visitors
+        from game_play_events
         group by game_id
       ) v on v.game_id = g.id
       left join (
