@@ -56,8 +56,6 @@ export async function POST(req: Request) {
   if (hash !== saved.hash) return json(400, { ok: false, error: "CODE_MISMATCH" });
 
   try {
-    // 兼容旧版本：如果曾建过部分索引，先删除再建完整索引
-    await db.execute(sql`drop index if exists creators_phone_uidx;`);
     await ensureCreatorsAuthFields();
     await ensureInviteCodesTable();
   } catch (e) {
@@ -73,10 +71,10 @@ export async function POST(req: Request) {
 
   if (!exists) {
     if (!inviteCode) return json(400, { ok: false, error: "INVITE_REQUIRED" });
-    // 校验邀请码可用，并消耗一次（原子条件：used_count < max_uses）
+    // 校验邀请码可用，并为当前手机号预占一次。若上次账号写入失败，同一手机号可幂等重试。
     try {
       const row = await db.execute(sql`
-        select code, enabled, max_uses, used_count
+        select code, enabled, max_uses, used_count, last_used_phone
         from invite_codes
         where code = ${inviteCode}
         limit 1
@@ -86,21 +84,24 @@ export async function POST(req: Request) {
       // 规则：每个邀请码只能被一个用户使用
       const maxUses = 1;
       const usedCount = Number(it.used_count || 0);
-      if (usedCount >= maxUses) return json(400, { ok: false, error: "INVITE_EXHAUSTED" });
+      const lastUsedPhone = String(it.last_used_phone || "");
+      if (usedCount >= maxUses && lastUsedPhone !== phone) return json(400, { ok: false, error: "INVITE_EXHAUSTED" });
 
-      const upd = await db.execute(sql`
-        update invite_codes
-        set
-          used_count = used_count + 1,
-          last_used_phone = ${phone},
-          last_used_at = now(),
-          updated_at = now()
-        where code = ${inviteCode}
-          and enabled = true
-          and used_count < 1
-      `);
-      const changed = Number((upd as any).rowCount ?? 0);
-      if (!changed) return json(400, { ok: false, error: "INVITE_EXHAUSTED" });
+      if (usedCount < maxUses) {
+        const upd = await db.execute(sql`
+          update invite_codes
+          set
+            used_count = used_count + 1,
+            last_used_phone = ${phone},
+            last_used_at = now(),
+            updated_at = now()
+          where code = ${inviteCode}
+            and enabled = true
+            and used_count < 1
+        `);
+        const changed = Number((upd as any).rowCount ?? 0);
+        if (!changed) return json(400, { ok: false, error: "INVITE_EXHAUSTED" });
+      }
     } catch {
       return json(400, { ok: false, error: "INVITE_INVALID" });
     }
@@ -122,6 +123,7 @@ export async function POST(req: Request) {
         updated_at = now()
     `);
   } catch (e) {
+    console.error("[auth.phone.verify] creators upsert failed", e);
     return json(500, { ok: false, error: "DB_UPSERT_FAILED" });
   }
 

@@ -12,9 +12,19 @@ function ensureState() {
   return g[ENSURE_CREATORS_AUTH_STATE_KEY] as { ensured: boolean; ensuring: Promise<void> | null };
 }
 
+async function ensureCreatorAuthIndexes() {
+  await db.execute(sql`create unique index if not exists creators_phone_uidx on creators(phone);`);
+  await db.execute(sql`create unique index if not exists creators_openid_uidx on creators(openid);`);
+}
+
 export async function ensureCreatorsAuthFields() {
   const state = ensureState();
-  if (state.ensured) return;
+  if (state.ensured) {
+    // 旧版本登录接口曾在请求里 drop 过 creators_phone_uidx。
+    // 即使字段迁移已缓存为完成，也要轻量确保关键唯一索引存在，否则 on conflict(phone) 会失败。
+    await ensureCreatorAuthIndexes();
+    return;
+  }
   if (state.ensuring) return state.ensuring;
   state.ensuring = (async () => {
     // creators 表可能在某些环境尚未初始化：这里做一次幂等建表，避免后续查询直接失败
@@ -33,8 +43,7 @@ export async function ensureCreatorsAuthFields() {
     await db.execute(sql`alter table creators add column if not exists gender text;`);
     await db.execute(sql`alter table creators add column if not exists age int;`);
     await db.execute(sql`alter table creators add column if not exists city text;`);
-    await db.execute(sql`create unique index if not exists creators_phone_uidx on creators(phone);`);
-    await db.execute(sql`create unique index if not exists creators_openid_uidx on creators(openid);`);
+    await ensureCreatorAuthIndexes();
     state.ensured = true;
     state.ensuring = null;
   })();
