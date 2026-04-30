@@ -42,6 +42,8 @@ export default function PhoneLoginForm({ next = "/" }: { next?: string }) {
     if (!r.ok) {
       const err = String(data?.error || r.status);
       const map: Record<string, string> = {
+        CODE_EXPIRED: "验证码已过期或已失效，请重新获取验证码。",
+        CODE_MISMATCH: "手机号或验证码不匹配，请检查后再试。",
         INVITE_REQUIRED: "需要邀请码才能注册（老用户登录不需要）。",
         INVITE_INVALID: "邀请码不正确。",
         INVITE_EXHAUSTED: "邀请码已用完。",

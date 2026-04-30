@@ -86,7 +86,14 @@ export default function InviteAdminClient() {
       setCustomCode("");
       await load();
     } catch (e: any) {
-      setMsg(`生成失败：${e?.message || "未知错误"}`);
+      const err = String(e?.message || "未知错误");
+      const tip =
+        err === "CODE_EXISTS"
+          ? "这个邀请码已经存在，请换一个自定义邀请码。"
+          : err === "CODE_GENERATE_COLLISION"
+            ? "随机邀请码撞码了，请再点一次生成。"
+            : err;
+      setMsg(`生成失败：${tip}`);
     } finally {
       setLoading(false);
     }
@@ -263,4 +270,3 @@ export default function InviteAdminClient() {
     </section>
   );
 }
-

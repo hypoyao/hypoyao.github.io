@@ -15,6 +15,13 @@ function json(status: number, data: unknown) {
   return NextResponse.json(data, { status, headers: { "cache-control": "no-store" } });
 }
 
+function normalizeInviteCode(s: string) {
+  return String(s || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
 export async function POST(req: Request) {
   let body: { phone?: string; code?: string; next?: string; inviteCode?: string } = {};
   try {
@@ -26,12 +33,11 @@ export async function POST(req: Request) {
   const phone = normalizePhone(body.phone || "");
   const code = String(body.code || "").trim();
   const next = typeof body.next === "string" && body.next.startsWith("/") ? body.next : "/";
-  const inviteCode = String(body.inviteCode || "").trim();
+  const inviteCode = normalizeInviteCode(body.inviteCode || "");
   if (!phone || !/^\d{6}$/.test(code)) return json(400, { ok: false, error: "INVALID_INPUT" });
 
   const jar = await cookies();
   const raw = jar.get(COOKIE)?.value;
-  jar.delete(COOKIE);
   if (!raw) return json(400, { ok: false, error: "CODE_EXPIRED" });
 
   let saved: { phone: string; exp: number; hash: string } | null = null;
@@ -41,7 +47,10 @@ export async function POST(req: Request) {
     saved = null;
   }
   if (!saved || saved.phone !== phone) return json(400, { ok: false, error: "CODE_MISMATCH" });
-  if (Date.now() > Number(saved.exp || 0)) return json(400, { ok: false, error: "CODE_EXPIRED" });
+  if (Date.now() > Number(saved.exp || 0)) {
+    jar.delete(COOKIE);
+    return json(400, { ok: false, error: "CODE_EXPIRED" });
+  }
 
   const hash = sha256Hex(`${phone}:${code}`);
   if (hash !== saved.hash) return json(400, { ok: false, error: "CODE_MISMATCH" });
@@ -117,6 +126,7 @@ export async function POST(req: Request) {
   }
 
   const sess = encodeSession({ phone });
+  jar.delete(COOKIE);
   jar.set(sessionCookieName, sess, {
     httpOnly: true,
     sameSite: "lax",

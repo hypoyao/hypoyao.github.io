@@ -33,18 +33,33 @@ export async function POST(req: Request) {
   }
   const note = typeof body.note === "string" ? body.note.trim().slice(0, 80) : "";
   const wanted = typeof body.code === "string" ? body.code.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 16) : "";
-  const code = wanted || genCode();
 
   try {
-    await db.execute(sql`
-      insert into invite_codes (code, enabled, max_uses, used_count, note)
-      values (${code}, true, 1, 0, ${note})
-      on conflict (code) do nothing
-    `);
+    if (wanted) {
+      const r = await db.execute(sql`
+        insert into invite_codes (code, enabled, max_uses, used_count, note)
+        values (${wanted}, true, 1, 0, ${note})
+        on conflict (code) do nothing
+        returning code
+      `);
+      const row = Array.isArray((r as any).rows) ? (r as any).rows[0] : null;
+      if (!row?.code) return json(409, { ok: false, error: "CODE_EXISTS" });
+      return json(200, { ok: true, code: String(row.code) });
+    }
+
+    for (let i = 0; i < 5; i++) {
+      const code = genCode();
+      const r = await db.execute(sql`
+        insert into invite_codes (code, enabled, max_uses, used_count, note)
+        values (${code}, true, 1, 0, ${note})
+        on conflict (code) do nothing
+        returning code
+      `);
+      const row = Array.isArray((r as any).rows) ? (r as any).rows[0] : null;
+      if (row?.code) return json(200, { ok: true, code: String(row.code) });
+    }
+    return json(500, { ok: false, error: "CODE_GENERATE_COLLISION" });
   } catch {
     return json(500, { ok: false, error: "DB_INSERT_FAILED" });
   }
-
-  return json(200, { ok: true, code });
 }
-
