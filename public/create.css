@@ -6,6 +6,11 @@
   width: min(1560px, 100%);
 }
 
+.createCard,
+.createCard * {
+  box-sizing: border-box;
+}
+
 /* create 页：大屏尽量铺宽，提升预览体验 */
 .createWrap {
   place-items: start center;
@@ -16,10 +21,31 @@
   }
 }
 
+.createCard > .header {
+  min-width: 0;
+}
+.createCard > .header .homeHeaderRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+.createCard > .header .homeHeaderActions {
+  min-width: 0;
+  flex: 0 0 auto;
+}
+.createCard > .header h1 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* create 顶部右侧“回到首页”图标按钮（复用 homeAvatarBtn 的外框） */
 .createHomeIconBtn {
   display: grid;
   place-items: center;
+  flex: 0 0 38px;
   color: rgba(15, 23, 42, 0.82);
 }
 .createHomeIconSvg {
@@ -41,6 +67,10 @@
   gap: 10px;
   flex-wrap: wrap;
   align-items: flex-end;
+  min-width: 0;
+}
+.createTopLeft {
+  flex: 1 1 auto;
 }
 /* TopActions 里的菜单（与返回首页同一行） */
 .createTopActions {
@@ -64,6 +94,7 @@
 }
 .createMenu {
   position: relative;
+  flex: 0 0 auto;
 }
 .createMenuBtn {
   list-style: none;
@@ -143,7 +174,12 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  min-width: 260px;
+  min-width: min(260px, 100%);
+  flex: 1 1 260px;
+}
+.createTopInline .restInput {
+  min-width: 0;
+  width: 100%;
 }
 .createTopLabel {
   font-size: 12px;
@@ -163,9 +199,10 @@
   margin-top: 10px;
   display: grid;
   /* 更适合孩子：对话框更宽一点，且面板间距更通透 */
-  grid-template-columns: minmax(360px, 520px) 1fr;
+  grid-template-columns: minmax(320px, 520px) minmax(0, 1fr);
   gap: 24px;
   align-items: stretch;
+  min-width: 0;
 }
 
 .createPanel {
@@ -179,6 +216,7 @@
   /* 关键：给 grid 一个确定高度，1fr 才会变成“可滚动的中间区” */
   height: min(780px, 82vh);
   min-height: 620px;
+  min-width: 0;
 }
 
 /* 工作流面板：收敛成偏中性的“执行台”视觉 */
@@ -215,6 +253,7 @@
   min-height: 0;
   background: rgba(248, 250, 252, 0.52);
   position: relative;
+  min-width: 0;
 }
 
 .chatList::before {
@@ -279,6 +318,7 @@
   background: transparent;
   box-shadow: none;
   margin-left: 0;
+  min-width: 0;
 }
 
 /* AI 流式输出：唯一允许气泡内滚动的场景 */
@@ -299,11 +339,12 @@
   padding: 10px 0;
   max-height: none !important;
   overflow: visible !important;
+  min-width: 0;
 }
 .chatMsg.isUser .chatText {
   display: block;
   width: auto;
-  max-width: min(82%, 560px);
+  max-width: min(88%, 560px);
   height: auto;
   min-height: 0;
   max-height: none;
@@ -314,6 +355,7 @@
   border: 1px solid rgba(147, 197, 253, 0.58);
   background: linear-gradient(135deg, rgba(239, 246, 255, 0.98), rgba(224, 242, 254, 0.98));
   box-shadow: 0 8px 18px rgba(59, 130, 246, 0.10);
+  min-width: 0;
 }
 .chatText {
   white-space: pre-wrap;
@@ -323,6 +365,7 @@
   font-size: 13px;
   font-weight: 500;
   color: rgba(15, 23, 42, 0.86);
+  min-width: 0;
 }
 
 .chatInlineActions {
@@ -348,12 +391,14 @@
 .sendCol {
   display: grid;
   gap: 10px;
+  min-width: 0;
 }
 .sendCol .btn {
   width: 100%;
   padding: 12px 14px;
   font-size: 15px;
   font-weight: 1100;
+  min-width: 0;
 }
 .btnGray.isActive {
   border-color: rgba(56, 189, 248, 0.55);
@@ -384,6 +429,7 @@
   padding: 0;
   border: 0;
   background: transparent;
+  min-width: 0;
 }
 .thinkSummary {
   cursor: pointer;
@@ -436,6 +482,7 @@
   border: 1px solid rgba(203, 213, 225, 0.55);
   border-radius: 10px;
   padding: 8px;
+  min-width: 0;
 }
 
 .chatComposer {
@@ -443,12 +490,14 @@
   border-top: 1px solid rgba(15, 23, 42, 0.06);
   display: grid;
   gap: 10px;
+  min-width: 0;
 }
 .chatRow {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   align-items: end;
+  min-width: 0;
 }
 .chatActions {
   display: flex;
@@ -481,6 +530,7 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
 }
 .modelEggPanel {
   margin-top: 8px;
@@ -511,29 +561,34 @@
   min-height: 620px;
   /* 预览区不需要顶部“浏览器栏”，让内容直接占满 */
   grid-template-rows: 1fr;
+  min-width: 0;
 }
 
 .previewSplit {
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-columns: 1fr 340px;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
   gap: 12px;
   align-items: stretch;
+  min-width: 0;
 }
 .previewGame {
   min-height: 0;
   /* 让模拟器填满预览面板高度（否则 iframe 会按默认高度渲染，导致预览不完整） */
   display: flex;
   align-items: stretch;
+  min-width: 0;
 }
 .previewGame .simShell {
   flex: 1 1 auto;
   height: auto;
   min-height: 0;
+  min-width: 0;
 }
 .previewGame .simScreen {
   min-height: 0;
+  min-width: 0;
 }
 .metaPanel {
   margin: 12px 12px 12px 0;
@@ -595,7 +650,7 @@
 }
 .simBar {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
@@ -621,6 +676,10 @@
   font-weight: 1100;
   color: rgba(17, 24, 39, 0.78);
   text-align: center;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .simActions {
   display: flex;
@@ -667,7 +726,7 @@
   max-width: 44vw;
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1180px) {
   .createTopBar {
     align-items: stretch;
   }
@@ -677,20 +736,24 @@
   }
   .createGrid {
     grid-template-columns: 1fr;
+    gap: 16px;
   }
   .createPanel {
     height: min(720px, 72vh);
     min-height: 520px;
   }
   .previewPanel {
+    height: min(760px, 76dvh);
     min-height: 520px;
   }
   /* 小屏：信息模块放到预览下方 */
   .previewSplit {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
   }
   .metaPanel {
     margin: 0 12px 12px 12px;
+    max-height: 240px;
   }
 }
 
@@ -968,4 +1031,245 @@
 }
 .createBento .simScreen {
   background: rgba(255, 255, 255, 1);
+}
+
+/* =========================
+   Create Responsive Hardening
+   大屏双栏、平板上下堆叠、手机优先保证聊天/输入/预览可用
+   ========================= */
+.chatComposer .restTextarea {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+.modelEgg,
+.modelEggPanel,
+.modelEggRow {
+  min-width: 0;
+}
+.previewFrame {
+  display: block;
+  min-width: 0;
+}
+.createBento .chatMsg.isUser .chatText {
+  max-width: min(88%, 560px);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .createWrap {
+    padding: 10px 10px calc(14px + env(safe-area-inset-bottom));
+  }
+  .createCard {
+    padding: 14px 12px;
+    border-radius: 18px;
+  }
+  .createCard > .header {
+    margin-bottom: 8px;
+  }
+  .createCard > .header .homeHeaderRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .createCard > .header h1 {
+    display: block;
+    margin: 0;
+    font-size: 20px;
+    line-height: 1.2;
+  }
+  .createHomeIconBtn {
+    width: 40px;
+    height: 40px;
+    flex-basis: 40px;
+  }
+
+  .createTopBar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+  .createTopLeft {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    width: 100%;
+  }
+  .createBusyHint {
+    justify-self: start;
+    max-width: 100%;
+    white-space: normal;
+  }
+  .createTopInline {
+    min-width: 0;
+    width: 100%;
+  }
+  .createTopLabel {
+    display: none;
+  }
+  .createMenuPanel {
+    right: 0;
+    width: min(220px, calc(100vw - 28px));
+  }
+
+  .createGrid {
+    gap: 12px;
+  }
+  .createBento .createPanel {
+    border-radius: 18px;
+  }
+  .createPanel.isChat {
+    height: min(760px, 78dvh);
+    min-height: 540px;
+  }
+  .previewPanel {
+    height: min(720px, 74dvh);
+    min-height: 500px;
+  }
+  .previewSplit {
+    gap: 0;
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  .metaPanel {
+    max-height: 180px;
+    margin: 0 8px 8px;
+    padding: 10px;
+    border-radius: 14px;
+  }
+  .simShell {
+    margin: 8px;
+    border-width: 1px;
+    border-radius: 16px;
+    box-shadow: none;
+  }
+  .simBar {
+    padding: 8px 10px;
+    gap: 8px;
+  }
+
+  .chatList {
+    padding: 8px 10px;
+  }
+  .chatMsg.isThinking {
+    padding-right: 0;
+  }
+  .chatStopLink {
+    top: 7px;
+    right: 0;
+  }
+  .chatMsg.isUser .chatText,
+  .createBento .chatMsg.isUser .chatText {
+    max-width: min(94%, 640px);
+    padding: 9px 12px;
+  }
+  .thinkSummary {
+    align-items: flex-start;
+  }
+  .thinkBody {
+    max-height: min(36dvh, 300px);
+  }
+
+  .chatComposer {
+    padding: 10px;
+  }
+  .chatRow {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+  .sendCol {
+    grid-template-columns: 58px minmax(0, 1fr);
+    grid-auto-flow: initial;
+  }
+  .voiceBtn {
+    width: 100%;
+  }
+  .sendCol .btn {
+    min-height: 50px;
+    padding: 11px 12px;
+    white-space: nowrap;
+  }
+  .modelEggBtn {
+    width: 100%;
+    max-width: 100%;
+  }
+  .modelEggRow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 5px;
+  }
+  .modelEggSelect {
+    width: 100%;
+  }
+}
+
+@media (max-width: 520px) {
+  .createWrap {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+  .createCard {
+    padding: 10px 8px;
+  }
+  .createCard > .header h1 {
+    font-size: 18px;
+  }
+  .createTopLeft {
+    gap: 8px;
+  }
+  .createMenuBtn {
+    max-width: 74px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .createPanel.isChat {
+    height: min(780px, 80dvh);
+    min-height: 500px;
+  }
+  .previewPanel {
+    height: min(700px, 76dvh);
+    min-height: 460px;
+  }
+  .metaPanel {
+    max-height: 150px;
+  }
+  .simDots {
+    gap: 5px;
+  }
+  .simDot {
+    width: 8px;
+    height: 8px;
+  }
+  .iconBtn {
+    width: 34px;
+    height: 34px;
+  }
+  .chatMsg.isUser .chatText,
+  .createBento .chatMsg.isUser .chatText {
+    max-width: 100%;
+    font-size: 13px;
+  }
+  .sendCol .btn {
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 420px) {
+  .createCard > .header h1 {
+    display: block;
+    font-size: 17px;
+  }
+  .createHomeIconBtn {
+    width: 38px;
+    height: 38px;
+    flex-basis: 38px;
+  }
+  .createTopLeft {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .createPanel.isChat {
+    min-height: 480px;
+  }
+  .previewPanel {
+    min-height: 430px;
+  }
+  .chatComposer .restTextarea {
+    min-height: 108px;
+  }
 }
