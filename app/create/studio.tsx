@@ -362,7 +362,7 @@ export default function CreateStudio({
 }) {
   const [gameId, setGameId] = useState<string>("");
   const [previewUrl, setPreviewUrl] = useState<string>("/games/creator-playground/index.html");
-  const [previewEnabled, setPreviewEnabled] = useState(false);
+  const [previewEnabled, setPreviewEnabled] = useState(true);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [input, setInput] = useState(initialPrompt || "");
@@ -971,7 +971,7 @@ export default function CreateStudio({
               : [{ gameId: fixedGameId, title: fixedGameId, entry: entryOf(fixedGameId) }, ...prev],
           );
           setGameId(fixedGameId);
-          updatePreviewUrl(`${entryOf(fixedGameId)}?t=${encodeURIComponent(nowId())}`, { enable: false });
+          updatePreviewUrl(`${entryOf(fixedGameId)}?t=${encodeURIComponent(nowId())}`, { enable: true });
           const me = await meP;
           if (me) applyMeProfile(me);
           // 不阻塞首屏：先显示当前项目，再后台补草稿/刷新列表。
@@ -1026,7 +1026,7 @@ export default function CreateStudio({
             if (pick0) {
               void ensureEditableDraft(pick0).catch(() => null);
               setGameId(pick0);
-              updatePreviewUrl(`${entryOf(pick0)}?t=${encodeURIComponent(nowId())}`, { enable: false });
+              updatePreviewUrl(`${entryOf(pick0)}?t=${encodeURIComponent(nowId())}`, { enable: true });
             }
           }
         } catch {}
@@ -1049,7 +1049,7 @@ export default function CreateStudio({
           if (pick) {
             void ensureEditableDraft(pick).catch(() => null);
             setGameId(pick);
-            updatePreviewUrl(`${entryOf(pick)}?t=${encodeURIComponent(nowId())}`, { enable: false });
+            updatePreviewUrl(`${entryOf(pick)}?t=${encodeURIComponent(nowId())}`, { enable: true });
             return;
           }
           return;
@@ -1782,7 +1782,7 @@ export default function CreateStudio({
             const arr = await refreshProjects();
             if (arr.length && arr[0]?.gameId) {
               setGameId(arr[0].gameId);
-              updatePreviewUrl(`${entryOf(arr[0].gameId)}?t=${encodeURIComponent(nowId())}`, { enable: false });
+              updatePreviewUrl(`${entryOf(arr[0].gameId)}?t=${encodeURIComponent(nowId())}`, { enable: true });
               // 不要覆盖新项目的聊天记录（否则看起来像“把另一个游戏的对话弄丢了”）
               setMsg("已删除当前游戏。已切换到其它游戏。");
               return;
@@ -1820,7 +1820,7 @@ export default function CreateStudio({
                 const gid = e.target.value;
                 void ensureEditableDraft(gid).then(() => refreshProjects()).catch(() => null);
                 setGameId(gid);
-                if (gid) updatePreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`, { enable: false });
+                if (gid) updatePreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`, { enable: true });
               }}
               disabled={uiBusy}
               aria-label="选择历史游戏"

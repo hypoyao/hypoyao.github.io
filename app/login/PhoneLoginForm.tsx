@@ -8,51 +8,69 @@ export default function PhoneLoginForm({ next = "/" }: { next?: string }) {
   const [inviteCode, setInviteCode] = useState("");
   const [msg, setMsg] = useState("");
   const [tempCode, setTempCode] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [verifying, setVerifying] = useState(false);
 
   async function sendCode() {
+    if (sending) return;
+    setSending(true);
     setMsg("发送中…");
     setTempCode(null);
-    const r = await fetch("/api/auth/phone/send-code", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ phone }),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      setMsg(`发送失败：${data?.error || r.status}`);
-      return;
-    }
-    const c = data?.tempCode ? String(data.tempCode) : data?.testCode ? String(data.testCode) : null;
-    if (c) {
-      setTempCode(c);
-      setMsg("临时验证码已生成（已在下方显示）。");
-    } else {
-      setMsg("验证码已发送。");
+    try {
+      const r = await fetch("/api/auth/phone/send-code", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ phone }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setMsg(`发送失败：${data?.error || r.status}`);
+        return;
+      }
+      const c = data?.tempCode ? String(data.tempCode) : data?.testCode ? String(data.testCode) : null;
+      if (c) {
+        setTempCode(c);
+        setMsg("临时验证码已生成（已在下方显示）。");
+      } else {
+        setMsg("验证码已发送。");
+      }
+    } catch (e) {
+      setMsg(`发送失败：${e instanceof Error ? e.message : "网络异常"}`);
+    } finally {
+      setSending(false);
     }
   }
 
   async function verify() {
+    if (verifying) return;
+    setVerifying(true);
     setMsg("登录中…");
-    const r = await fetch("/api/auth/phone/verify", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ phone, code, inviteCode, next }),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      const err = String(data?.error || r.status);
-      const map: Record<string, string> = {
-        CODE_EXPIRED: "验证码已过期或已失效，请重新获取验证码。",
-        CODE_MISMATCH: "手机号或验证码不匹配，请检查后再试。",
-        INVITE_REQUIRED: "需要邀请码才能注册（老用户登录不需要）。",
-        INVITE_INVALID: "邀请码不正确。",
-        INVITE_EXHAUSTED: "邀请码已用完。",
-      };
-      setMsg(`登录失败：${map[err] || err}`);
-      return;
+    try {
+      const r = await fetch("/api/auth/phone/verify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ phone, code, inviteCode, next }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const err = String(data?.error || r.status);
+        const map: Record<string, string> = {
+          CODE_EXPIRED: "验证码已过期或已失效，请重新获取验证码。",
+          CODE_MISMATCH: "手机号或验证码不匹配，请检查后再试。",
+          INVITE_REQUIRED: "需要邀请码才能注册（老用户登录不需要）。",
+          INVITE_INVALID: "邀请码不正确。",
+          INVITE_EXHAUSTED: "邀请码已用完。",
+        };
+        setMsg(`登录失败：${map[err] || err}`);
+        return;
+      }
+      setMsg("登录成功，正在返回首页…");
+      window.location.href = data?.next || "/";
+    } catch (e) {
+      setMsg(`登录失败：${e instanceof Error ? e.message : "网络异常"}`);
+    } finally {
+      setVerifying(false);
     }
-    setMsg("登录成功，正在返回首页…");
-    window.location.href = data?.next || "/";
   }
 
   return (
@@ -63,8 +81,8 @@ export default function PhoneLoginForm({ next = "/" }: { next?: string }) {
             <div className="loginLabel">手机号</div>
             <input className="restInput" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="请输入手机号" />
           </label>
-          <button className="btn btnGray loginBtn" type="button" onClick={sendCode}>
-            获取验证码
+          <button className="btn loginBtn" type="button" onClick={sendCode} disabled={sending}>
+            {sending ? "发送中…" : "获取验证码"}
           </button>
         </div>
 
@@ -85,8 +103,8 @@ export default function PhoneLoginForm({ next = "/" }: { next?: string }) {
         </label>
 
         <div className="actions loginFooterActions">
-          <button className="btn" type="button" onClick={verify}>
-            登录 / 注册
+          <button className="btn loginPrimaryBtn" type="button" onClick={verify} disabled={verifying}>
+            {verifying ? "登录中…" : "登录 / 注册"}
           </button>
         </div>
 

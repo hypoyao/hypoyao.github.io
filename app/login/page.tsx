@@ -14,8 +14,8 @@ export default async function LoginPage({ searchParams }: { searchParams?: Promi
   const next = typeof sp?.next === "string" && sp.next.startsWith("/") ? sp.next : "/";
 
   return (
-    <main className="wrap">
-      <section className="card homeCard">
+    <main className="wrap loginWrap">
+      <section className="card homeCard loginCard">
         <header className="header">
           <h1>用户登录</h1>
           <p className="desc">使用手机号验证码注册/登录。</p>

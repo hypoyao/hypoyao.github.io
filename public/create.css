@@ -1251,6 +1251,7 @@
 }
 
 @media (max-width: 420px) {
+  .card.createCard > .header h1,
   .createCard > .header h1 {
     display: block;
     font-size: 17px;
@@ -1271,5 +1272,56 @@
   }
   .chatComposer .restTextarea {
     min-height: 108px;
+  }
+}
+
+/* 预览高度策略：预览区自然撑开页面，不在卡片内部滚动 */
+.previewPanel {
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+}
+.previewSplit {
+  height: auto;
+  min-height: 0;
+}
+.previewGame {
+  min-height: clamp(720px, calc(100dvh - 210px), 980px);
+}
+.previewGame .simShell {
+  min-height: inherit;
+}
+.previewGame .simScreen {
+  min-height: 0;
+}
+.metaPanel {
+  max-height: none;
+  overflow: visible;
+}
+
+@media (max-width: 1180px) {
+  .previewGame {
+    min-height: clamp(640px, 72dvh, 860px);
+  }
+}
+
+@media (max-width: 720px) {
+  .previewGame {
+    min-height: max(600px, 70dvh);
+  }
+  .metaPanel {
+    max-height: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .previewGame {
+    min-height: max(560px, 68dvh);
+  }
+}
+
+@media (max-width: 420px) {
+  .previewGame {
+    min-height: max(520px, 66dvh);
   }
 }
