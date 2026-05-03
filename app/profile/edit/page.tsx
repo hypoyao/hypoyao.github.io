@@ -45,12 +45,6 @@ export default async function ProfileEditPage() {
         <section className="creatorList">
           <ProfileEditForm initial={row} profilePath={profilePath} />
         </section>
-
-        <div className="homeFooter">
-          <a className="btn btnSecondary" href={profilePath}>
-            返回个人主页
-          </a>
-        </div>
       </section>
     </main>
   );

@@ -1,0 +1,75 @@
+name: Deploy to Tencent Lighthouse
+
+on:
+  push:
+    branches: ["master"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tencent-lighthouse-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install deploy tools
+        run: sudo apt-get update && sudo apt-get install -y rsync openssh-client
+
+      - name: Configure SSH
+        env:
+          TENCENT_HOST: ${{ secrets.TENCENT_HOST }}
+          TENCENT_SSH_KEY: ${{ secrets.TENCENT_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$TENCENT_HOST"
+          test -n "$TENCENT_SSH_KEY"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$TENCENT_SSH_KEY" > ~/.ssh/tencent_deploy_key
+          chmod 600 ~/.ssh/tencent_deploy_key
+          ssh-keyscan -H "$TENCENT_HOST" >> ~/.ssh/known_hosts
+
+      - name: Sync code to server
+        env:
+          TENCENT_HOST: ${{ secrets.TENCENT_HOST }}
+          TENCENT_USER: ${{ secrets.TENCENT_USER }}
+        run: |
+          set -euo pipefail
+          test -n "$TENCENT_HOST"
+          test -n "$TENCENT_USER"
+          rsync -az --delete \
+            --exclude='.git/' \
+            --exclude='.github/workflows/static.yml' \
+            --exclude='.next/' \
+            --exclude='node_modules/' \
+            --exclude='.env*' \
+            --exclude='.vercel/' \
+            --exclude='.idea/' \
+            --exclude='.DS_Store' \
+            --exclude='tsconfig.tsbuildinfo' \
+            --exclude='*.tar.gz' \
+            --exclude='*.docx' \
+            --exclude='digitalocean' \
+            --exclude='digitalocean.pub' \
+            --exclude='*.pem' \
+            -e "ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes" \
+            ./ "$TENCENT_USER@$TENCENT_HOST:/var/www/aiprograms/current/"
+
+      - name: Build and restart on server
+        env:
+          TENCENT_HOST: ${{ secrets.TENCENT_HOST }}
+          TENCENT_USER: ${{ secrets.TENCENT_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes \
+            "$TENCENT_USER@$TENCENT_HOST" \
+            'bash /var/www/aiprograms/deploy-after-upload.sh'
