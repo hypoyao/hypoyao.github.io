@@ -26,7 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="stylesheet" href="/styles.css?v=20" />
         <link rel="stylesheet" href="/home.css?v=20" />
         <link rel="stylesheet" href="/creators.css?v=20" />
-        <link rel="stylesheet" href="/create.css?v=23" />
+        <link rel="stylesheet" href="/create.css?v=28" />
       </head>
       <body>
         {children}

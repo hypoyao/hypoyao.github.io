@@ -395,6 +395,7 @@ export default function CreateStudio({
   const speechRef = useRef<any>(null);
   const speechBaseRef = useRef<string>("");
   const inputRef = useRef<string>("");
+  const inputElRef = useRef<HTMLTextAreaElement | null>(null);
   const sendLockRef = useRef(false);
   const activeRunIdRef = useRef<string>("");
   const bootRef = useRef(false);
@@ -403,6 +404,14 @@ export default function CreateStudio({
   const opMenuRef = useRef<HTMLDetailsElement | null>(null);
 
   const publishText = useMemo(() => (published ? (publishDirty ? "发布更新" : "更新") : "发布"), [publishDirty, published]);
+  const starterPrompts = useMemo(
+    () => [
+      "我想做一个可爱的跳跳球游戏，背景是彩虹，要有排行榜和成就。",
+      "做一个打地鼠游戏，主角是偷吃的小猫，要有音效和难度等级。",
+      "做一个双人传炸弹游戏，有倒计时、推技能、左右移动和跳跃按钮。",
+    ],
+    [],
+  );
   const deletingBusy = !!deletingGameId;
   const uiBusy = busy || deletingBusy;
   const currentGameTitle = useMemo(() => {
@@ -741,6 +750,19 @@ export default function CreateStudio({
     () => messages.filter((m) => hasRenderableMessageContent(m?.content)),
     [messages],
   );
+  const showStarterPrompts = useMemo(() => {
+    const hasUserMessage = messages.some((m) => m.role === "user" && String(m.content || "").trim());
+    const hasInput = !!input.trim();
+    const hasMetaContent =
+      !!String(gameMeta?.shortDesc || "").trim() ||
+      !!String(gameMeta?.rules || "").trim() ||
+      (!!String(gameMeta?.title || "").trim() && !looksLikeDraftGameIdTitle(String(gameMeta?.title || ""), gameId));
+    const hasRealProject = (projects || []).some((p) => {
+      const title = String(p?.title || "").trim();
+      return !!p?.published || !!p?.dirty || (!!title && !looksLikeDraftGameIdTitle(title, p.gameId));
+    });
+    return !autoStart && !uiBusy && !hasInput && !hasUserMessage && !hasMetaContent && !hasRealProject && (projects || []).length <= 1;
+  }, [autoStart, gameId, gameMeta?.rules, gameMeta?.shortDesc, gameMeta?.title, input, messages, projects, uiBusy]);
 
   // 防止切换 gameId 时把“旧项目 messages”误保存到“新项目”
   // 只有当 messages 已确认属于当前 gameId 时，才允许写入 localStorage。
@@ -792,10 +814,7 @@ export default function CreateStudio({
           .map((x: any) => ({ role: "user", content: String(x?.content || "").trim() }))
           .filter((m: any) => m.content);
         if (userMsgs.length) {
-          setMessages([
-            { role: "assistant", content: "（已从服务器恢复你之前发送的内容。AI 的历史回复未保存。）" },
-            ...userMsgs,
-          ]);
+          setMessages(userMsgs);
           chatOwnerGameIdRef.current = gameId;
         }
       } catch {
@@ -826,6 +845,11 @@ export default function CreateStudio({
   function updatePreviewUrl(url: string, options?: { enable?: boolean }) {
     setPreviewUrl(url);
     if (options?.enable != null) setPreviewEnabled(!!options.enable);
+  }
+
+  function useStarterPrompt(text: string) {
+    setInput(text);
+    window.requestAnimationFrame(() => inputElRef.current?.focus());
   }
 
   async function newGame() {
@@ -1809,6 +1833,30 @@ export default function CreateStudio({
 
   return (
     <section aria-label="create studio">
+      <section className="createGuide" aria-label="创作引导">
+        <div className="createGuideMain">
+          <h2>先说一句“我想做什么游戏”。</h2>
+          <p>告诉 AI 角色、玩法、按钮、胜负条件和画面风格。生成后右边马上试玩，不满意就继续说怎么改。</p>
+        </div>
+        <div className="createGuideSteps" aria-label="使用步骤">
+          <div className="createGuideStep">
+            <span>1</span>
+            <strong>说想法</strong>
+            <em>一句话也可以</em>
+          </div>
+          <div className="createGuideStep">
+            <span>2</span>
+            <strong>AI 生成</strong>
+            <em>过程会显示出来</em>
+          </div>
+          <div className="createGuideStep">
+            <span>3</span>
+            <strong>试玩修改</strong>
+            <em>满意后发布分享</em>
+          </div>
+        </div>
+      </section>
+
       <div className="createTopBar" aria-label="tools">
         <div className="createTopLeft">
           <label className="createTopInline">
@@ -2147,14 +2195,33 @@ export default function CreateStudio({
               ) : null}
             </div>
           ) : null}
+          {showStarterPrompts ? (
+            <div className="starterPromptRow" aria-label="示例需求">
+              <span className="starterPromptLabel">不会写？点一个例子试试</span>
+              <div className="starterPromptChips">
+                {starterPrompts.map((p, i) => (
+                  <button
+                    key={i}
+                    className="starterPromptChip"
+                    type="button"
+                    onClick={() => useStarterPrompt(p)}
+                    disabled={uiBusy}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <div className="chatRow">
             <textarea
+              ref={inputElRef}
               className="restTextarea"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               rows={4}
               disabled={uiBusy}
-              placeholder="描述你的需求或问题：玩法/按钮/胜负条件/画面风格；或直接描述 bug（复现步骤、期望/实际、设备/报错）"
+              placeholder="直接写：我想做一个……也可以说：把按钮变大、加一个技能、修复哪里不对。"
             />
             <div className="sendCol">
               <button

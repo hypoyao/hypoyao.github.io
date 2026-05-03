@@ -34,24 +34,27 @@ export default async function CreatePage({
     redirect(`/login?next=${encodeURIComponent(next)}`);
   }
   return (
-    <main className="wrap createWrap">
-      <section className="card createCard createBento">
-        <header className="header">
-          <div className="homeHeaderRow">
-            <h1>创作我的游戏</h1>
-            <div className="homeHeaderActions">
-              <TopActions />
+    <>
+      <div className="createPageMarker" aria-hidden="true" />
+      <main className="wrap createWrap">
+        <section className="card createCard createBento">
+          <header className="header">
+            <div className="homeHeaderRow">
+              <h1>创作我的游戏</h1>
+              <div className="homeHeaderActions">
+                <TopActions />
+              </div>
             </div>
-          </div>
-        </header>
+          </header>
 
-        <CreateStudio
-          initialPrompt={initialPrompt}
-          initialPromptKey={initialPromptKey}
-          autoStart={autoStart}
-          initialGameId={initialGameId}
-        />
-      </section>
-    </main>
+          <CreateStudio
+            initialPrompt={initialPrompt}
+            initialPromptKey={initialPromptKey}
+            autoStart={autoStart}
+            initialGameId={initialGameId}
+          />
+        </section>
+      </main>
+    </>
   );
 }

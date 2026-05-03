@@ -11,6 +11,18 @@
   box-sizing: border-box;
 }
 
+.createPageMarker {
+  display: none;
+}
+
+.createPageMarker ~ .siteLegalFooter {
+  padding: 0 16px 28px;
+}
+
+.createPageMarker ~ .siteLegalFooter .siteLegalFooterInner {
+  width: min(1560px, 100%);
+}
+
 /* create 页：大屏尽量铺宽，提升预览体验 */
 .createWrap {
   place-items: start center;
@@ -53,8 +65,86 @@
   height: 18px;
 }
 
+.createGuide {
+  margin-top: 6px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(430px, 0.78fr);
+  gap: 12px;
+  align-items: stretch;
+  border-radius: 20px;
+  border: 1px solid rgba(125, 211, 252, 0.34);
+  background:
+    radial-gradient(520px 220px at 8% 15%, rgba(56, 189, 248, 0.18), transparent 66%),
+    radial-gradient(520px 240px at 92% 18%, rgba(34, 197, 94, 0.14), transparent 66%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.92));
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.055);
+  padding: 12px 14px;
+  overflow: hidden;
+}
+.createGuideMain {
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  min-width: 0;
+}
+.createGuide h2 {
+  margin: 0;
+  color: rgba(15, 23, 42, 0.92);
+  font-size: clamp(18px, 1.45vw, 24px);
+  line-height: 1.18;
+  letter-spacing: 0.2px;
+}
+.createGuide p {
+  margin: 0;
+  max-width: 760px;
+  color: rgba(71, 85, 105, 0.96);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.42;
+}
+.createGuideSteps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  align-items: stretch;
+}
+.createGuideStep {
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  padding: 9px 10px;
+  border-radius: 16px;
+  border: 1px solid rgba(226, 232, 240, 0.92);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+}
+.createGuideStep span {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.95), rgba(34, 197, 94, 0.92));
+  color: white;
+  font-size: 12px;
+  font-weight: 1100;
+}
+.createGuideStep strong {
+  color: rgba(15, 23, 42, 0.9);
+  font-size: 13px;
+  font-weight: 1100;
+}
+.createGuideStep em {
+  color: rgba(100, 116, 139, 0.95);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
 .createTopBar {
-  margin-top: 8px;
+  margin-top: 10px;
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
@@ -492,6 +582,55 @@
   gap: 10px;
   min-width: 0;
 }
+.starterPromptRow {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.starterPromptLabel {
+  color: rgba(71, 85, 105, 0.96);
+  font-size: 12px;
+  font-weight: 1000;
+}
+.starterPromptChips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.starterPromptChip {
+  flex: 0 0 auto;
+  max-width: min(360px, 78vw);
+  border: 1px solid rgba(125, 211, 252, 0.42);
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(240, 249, 255, 0.98), rgba(240, 253, 244, 0.92));
+  color: rgba(15, 23, 42, 0.86);
+  box-shadow: 0 8px 18px rgba(14, 165, 233, 0.08);
+  cursor: pointer;
+  padding: 8px 11px;
+  font-size: 12px;
+  font-weight: 950;
+  line-height: 1.35;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (hover: hover) {
+  .starterPromptChip:hover {
+    filter: brightness(1.02);
+    border-color: rgba(56, 189, 248, 0.62);
+  }
+}
+.starterPromptChip:active {
+  transform: scale(0.99);
+}
+.starterPromptChip:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
 .chatRow {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -727,6 +866,12 @@
 }
 
 @media (max-width: 1180px) {
+  .createGuide {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .createGuideSteps {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
   .createTopBar {
     align-items: stretch;
   }
@@ -1081,6 +1226,31 @@
     height: 40px;
     flex-basis: 40px;
   }
+  .createGuide {
+    margin-top: 6px;
+    padding: 10px;
+    border-radius: 18px;
+    gap: 9px;
+  }
+  .createGuide h2 {
+    font-size: 18px;
+  }
+  .createGuide p {
+    font-size: 12px;
+    line-height: 1.38;
+  }
+  .createGuideSteps {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .createGuideStep {
+    flex: 0 0 132px;
+    padding: 8px 9px;
+    border-radius: 14px;
+  }
 
   .createTopBar {
     display: grid;
@@ -1170,6 +1340,12 @@
   .chatComposer {
     padding: 10px;
   }
+  .starterPromptLabel {
+    font-size: 11px;
+  }
+  .starterPromptChip {
+    max-width: min(320px, 84vw);
+  }
   .chatRow {
     grid-template-columns: minmax(0, 1fr);
     align-items: stretch;
@@ -1209,6 +1385,18 @@
   }
   .createCard > .header h1 {
     font-size: 18px;
+  }
+  .createGuide {
+    padding: 9px;
+  }
+  .createGuide h2 {
+    font-size: 17px;
+  }
+  .createGuide p {
+    font-size: 11px;
+  }
+  .createGuideStep {
+    flex-basis: 122px;
   }
   .createTopLeft {
     gap: 8px;
