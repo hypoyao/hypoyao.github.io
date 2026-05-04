@@ -85,6 +85,8 @@ function nowId() {
 
 const CREATOR_STORE_VER = 1;
 const CREATOR_LAST_KEY = "creatorStudio:last";
+const DEFAULT_PROVIDER = "bailian";
+const DEFAULT_BAILIAN_MODEL = "qwen3.6-plus-2026-04-02";
 function chatKey(gid: string) {
   return `creatorStudio:chat:${gid || "draft"}`;
 }
@@ -444,9 +446,9 @@ export default function CreateStudio({
   // 模型选择：DeepSeek / OpenRouter / 百炼 / 腾讯 / 中国移动
   // 注意：不要在 useState initializer 读取 localStorage，否则 SSR/CSR 初始值不一致会触发 hydration failed。
   // 这里先用稳定默认值，等客户端挂载后再从 localStorage 恢复。
-  const [provider, setProvider] = useState<"deepseek" | "openrouter" | "bailian" | "tencent" | "chinamobile">("openrouter");
-  // 默认模型：保持原先默认（不要在这里强行替用户改模型）
-  const [model, setModel] = useState<string>("nvidia/nemotron-3-super-120b-a12b:free");
+  const [provider, setProvider] = useState<"deepseek" | "openrouter" | "bailian" | "tencent" | "chinamobile">(DEFAULT_PROVIDER);
+  // 默认模型只影响首次进入或无本地缓存的用户；已有选择仍会在客户端挂载后恢复。
+  const [model, setModel] = useState<string>(DEFAULT_BAILIAN_MODEL);
   const [hydrated, setHydrated] = useState(false);
   const [currentModelLabel, setCurrentModelLabel] = useState<string>("");
   const [processCurrent, setProcessCurrent] = useState<ProcessRun | null>(null);
@@ -522,7 +524,7 @@ export default function CreateStudio({
 
   const openrouterModels = useMemo(
     () => [
-      { id: "nvidia/nemotron-3-super-120b-a12b:free", name: "nvidia/nemotron-3-super-120b-a12b:free（默认）" },
+      { id: "nvidia/nemotron-3-super-120b-a12b:free", name: "nvidia/nemotron-3-super-120b-a12b:free（OpenRouter）" },
       { id: "qwen/qwen3.6-plus", name: "qwen/qwen3.6-plus（Qwen3.6 Plus）" },
       { id: "qwen/qwen-2.5-72b-instruct:free", name: "qwen/qwen-2.5-72b-instruct:free" },
       { id: "deepseek/deepseek-v3.2", name: "deepseek/deepseek-v3.2" },
@@ -539,8 +541,8 @@ export default function CreateStudio({
 
   const bailianModels = useMemo(
     () => [
+      { id: DEFAULT_BAILIAN_MODEL, name: "qwen3.6-plus-2026-04-02（默认，百炼新版）" },
       { id: "qwen3.6-plus", name: "qwen3.6-plus（百炼直连）" },
-      { id: "qwen3.6-plus-2026-04-02", name: "qwen3.6-plus-2026-04-02（百炼新版）" },
       { id: "qwen-plus", name: "qwen-plus（百炼）" },
     ],
     [],
@@ -573,7 +575,7 @@ export default function CreateStudio({
       if (!ok) setModel("nvidia/nemotron-3-super-120b-a12b:free");
     } else if (provider === "bailian") {
       const ok = bailianModels.some((x) => x.id === model);
-      if (!ok) setModel("qwen3.6-plus");
+      if (!ok) setModel(DEFAULT_BAILIAN_MODEL);
     } else if (provider === "tencent") {
       const ok = tencentModels.some((x) => x.id === model);
       if (!ok) setModel("hy3-preview");
@@ -2504,7 +2506,7 @@ export default function CreateStudio({
                     if (p !== "deepseek" && p !== "openrouter" && p !== "bailian" && p !== "tencent" && p !== "chinamobile") return;
                     setProvider(p);
                     if (p === "openrouter") setModel("nvidia/nemotron-3-super-120b-a12b:free");
-                    else if (p === "bailian") setModel("qwen3.6-plus");
+                    else if (p === "bailian") setModel(DEFAULT_BAILIAN_MODEL);
                     else if (p === "tencent") setModel("hy3-preview");
                     else if (p === "chinamobile") setModel("minimax-m25");
                     else setModel("deepseek-v4-flash");

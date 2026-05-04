@@ -18,6 +18,7 @@ type ModelProvider = "openrouter" | "deepseek" | "bailian" | "tencent" | "chinam
 
 const TENCENT_TOKENHUB_MODELS = ["hy3-preview"] as const;
 const CHINAMOBILE_MODELS = ["minimax-m25"] as const;
+const DEFAULT_BAILIAN_MODEL = "qwen3.6-plus-2026-04-02";
 // DeepSeek 官方 API（OpenAI 兼容）模型：V4 系列
 // deepseek-chat / deepseek-reasoner 将逐步下线（官方已声明未来弃用）
 const DEEPSEEK_DIRECT_MODELS = ["deepseek-v4-pro", "deepseek-v4-flash"] as const;
@@ -2469,20 +2470,20 @@ export async function POST(req: Request) {
   messages = trimmed.reverse();
   if (!messages.length) return json(400, { ok: false, error: "MISSING_MESSAGES" });
 
-  // 默认优先 OpenRouter：如果用户没指定 provider，则在两者都配置时优先用 OpenRouter
+  // 默认优先百炼新版：如果用户没指定 provider/model，则和 create 页默认选择保持一致。
   const providerRaw = String((body as any)?.provider || "").trim().toLowerCase();
   const hasOpenRouter = !!(process.env.OPENROUTER_API_KEY || "");
   const hasDeepSeek = !!(process.env.DEEPSEEK_API_KEY || "");
   const hasBailian = !!(process.env.DASHSCOPE_API_KEY || process.env.BAILIAN_API_KEY || "");
   const hasTencentTokenHub = !!(process.env.TENCENT_TOKENHUB_API_KEY || process.env.TOKENHUB_API_KEY || "");
   const hasChinaMobile = !!String(process.env.CHINAMOBILE_TOKENHUB_API_KEY || "").trim();
-  let provider: ModelProvider = "openrouter";
+  let provider: ModelProvider = "bailian";
   if (providerRaw === "deepseek") provider = "deepseek";
   else if (providerRaw === "openrouter") provider = "openrouter";
   else if (providerRaw === "bailian" || providerRaw === "dashscope") provider = "bailian";
   else if (providerRaw === "tencent" || providerRaw === "tokenhub" || providerRaw === "hunyuan") provider = "tencent";
   else if (providerRaw === "chinamobile" || providerRaw === "china-mobile" || providerRaw === "cmcc" || providerRaw === "mobile") provider = "chinamobile";
-  else provider = hasTencentTokenHub ? "tencent" : hasBailian ? "bailian" : hasChinaMobile ? "chinamobile" : hasOpenRouter ? "openrouter" : "deepseek";
+  else provider = hasBailian ? "bailian" : hasTencentTokenHub ? "tencent" : hasChinaMobile ? "chinamobile" : hasOpenRouter ? "openrouter" : "deepseek";
 
   let url = "";
   let authKey = "";
@@ -2490,11 +2491,11 @@ export async function POST(req: Request) {
   if (provider === "deepseek") {
     authKey = process.env.DEEPSEEK_API_KEY || "";
     if (!authKey) {
-      // DeepSeek 未配置时自动回退 OpenRouter
-      if (hasTencentTokenHub) {
-        provider = "tencent";
-      } else if (hasBailian) {
+      // DeepSeek 未配置时回退到当前默认优先级。
+      if (hasBailian) {
         provider = "bailian";
+      } else if (hasTencentTokenHub) {
+        provider = "tencent";
       } else if (hasOpenRouter) {
         provider = "openrouter";
       } else {
@@ -2524,7 +2525,7 @@ export async function POST(req: Request) {
       url = `${baseUrl}/chat/completions`;
       const picked = String((body as any)?.model || "").trim();
       // 百炼模型名：例如 qwen3.6-plus / qwen-plus 等
-      model = picked || process.env.BAILIAN_MODEL || process.env.DASHSCOPE_MODEL || "qwen3.6-plus";
+      model = picked || process.env.BAILIAN_MODEL || process.env.DASHSCOPE_MODEL || DEFAULT_BAILIAN_MODEL;
     }
   } else if (provider === "tencent") {
     authKey = process.env.TENCENT_TOKENHUB_API_KEY || process.env.TOKENHUB_API_KEY || "";
@@ -3493,7 +3494,9 @@ export async function POST(req: Request) {
             };
 
             // 选择模型：始终优先使用前端“彩蛋”中用户选择的 provider/model（请求 body 传入的 model）。
-            const mvpModel = String(model || "").trim() || (hasOpenRouter ? "qwen/qwen3.6-plus" : model);
+            const mvpModel =
+              String(model || "").trim() ||
+              (provider === "bailian" ? DEFAULT_BAILIAN_MODEL : hasOpenRouter ? "qwen/qwen3.6-plus" : model);
             const refineModel = mvpModel;
 
             const userMsgs = messages.filter((m) => m.role === "user").slice(-2);
