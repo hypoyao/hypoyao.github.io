@@ -1285,6 +1285,7 @@ function normalizeGameTitle(raw: string) {
 
 function isPlaceholderGameTitle(raw: string) {
   const title = normalizeGameTitle(raw);
+  if (/^g-\d{8}-[a-z0-9]+$/i.test(title)) return true;
   return !title || /^(我的小游戏|未命名作品|未命名游戏|小游戏|游戏)$/i.test(title);
 }
 
@@ -4046,7 +4047,7 @@ export async function POST(req: Request) {
               const rec = String((obj as any).recommend || "A").trim() || "A";
               // 生成友好文案
               const lines: string[] = [];
-              lines.push(`我先帮你把需求补齐，再开始写代码。你可以直接回复 A/B/C 选择一个方向；如果这三个都不喜欢，也可以直接说“都不想选，我想自己定”。`);
+              lines.push(`我先帮你把需求补齐，再开始写代码。先选一个方向；如果这三个都不喜欢，也可以选择“其它”。`);
               for (const o of options.slice(0, 3)) {
                 const id = String(o?.id || "").trim() || "?";
                 const title = String(o?.title || "").trim();
@@ -4058,16 +4059,7 @@ export async function POST(req: Request) {
                 lines.push(`- 方案${id}${id === rec ? "（推荐）" : ""}：${title}`);
                 lines.push(`  - 风格：${style || "（默认）"}；平台：${plat || "（默认）"}；操作：${ctrl || "（默认）"}；胜负：${wl || "（默认）"}${notes ? `；特点：${notes}` : ""}`);
               }
-              if (qs.length) {
-                lines.push(`\n另外还有几个关键问题（可选回答）：`);
-                for (const q of qs.slice(0, 5)) {
-                  const qid = String(q?.id || "").trim();
-                  const qq = String(q?.question || "").trim();
-                  const ch = Array.isArray(q?.choices) ? q.choices : [];
-                  lines.push(`- ${qid ? `${qid}. ` : ""}${qq}${ch.length ? `（${ch.slice(0, 3).join(" / ")}）` : ""}`);
-                }
-              }
-              lines.push(`\n请回复：A / B / C；如果这三个都不合适，也可以直接说“都不想选，我想自己定”，或者补充一句你特别想要的效果。`);
+              lines.push(`\n可以直接点下面的按钮选择，也可以输入 A / B / C；如果都不合适，就选“其它”或直接描述你自己的想法。`);
 
               // 写入 meta.json：记录澄清阶段与澄清 JSON（中间变量）
               const clarifyTitleCandidate = String(options.find((x: any) => String(x?.id || "").toUpperCase() === rec)?.title || "").trim();
@@ -4189,9 +4181,9 @@ export async function POST(req: Request) {
                 const nextQ = unanswered[0] || null;
                 const remaining = Math.max(0, MAX_TURNS - turnsUsed);
                 const nextHint = !answers.choice
-                  ? "下一步：请选择一个方向（A/B/C/其它）。"
+                  ? "下一步：请选择一个方向。"
                   : nextQ
-                    ? `下一步：${String(nextQ?.question || "").trim() || "请回答下一个问题"}`
+                    ? "下一步：再补充一个关键细节，或者直接开始生成。"
                     : "下一步：如果没有更多要补充的，可以开始生成。";
                 const txt =
                   `收到，我已记录你的选择（已回答 ${turnsUsed}/${MAX_TURNS} 个问题）。\n` +

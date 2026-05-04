@@ -187,6 +187,17 @@ function summarizeStatusText(text: string) {
     .trim();
 }
 
+function formatElapsed(ms: number) {
+  const sec = Math.max(1, Math.floor(Number(ms || 0) / 1000));
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  const restSec = sec % 60;
+  if (min < 60) return restSec ? `${min}分${String(restSec).padStart(2, "0")}秒` : `${min}分`;
+  const hour = Math.floor(min / 60);
+  const restMin = min % 60;
+  return restMin ? `${hour}小时${String(restMin).padStart(2, "0")}分` : `${hour}小时`;
+}
+
 function isInternalCreatorCommand(text: string) {
   const t = String(text || "").trim();
   if (!t) return true;
@@ -271,9 +282,15 @@ function inferStepFromStatusText(text: string): { id: string; label: string; mod
 }
 
 function expectedProcessSteps(mode: ProcessMode, currentSteps: ProcessStep[]) {
-  if (mode === "clarify") return [{ id: "clarify", label: "需求澄清" }];
+  const openingSteps = [
+    { id: "prepare", label: "准备流程" },
+    { id: "route", label: "进入生成流程" },
+  ];
+  if (mode === "clarify") return [...openingSteps, { id: "clarify", label: "需求澄清" }];
   if (mode === "fix") {
     return [
+      { id: "prepare", label: "准备流程" },
+      { id: "route", label: "进入修复流程" },
       { id: "fix_classify", label: "修复策略分析" },
       { id: "fix_patch", label: "补丁/重生成" },
       { id: "fix_upgrade_regen", label: "升级恢复" },
@@ -282,6 +299,7 @@ function expectedProcessSteps(mode: ProcessMode, currentSteps: ProcessStep[]) {
   }
   if (mode === "patch") {
     return [
+      ...openingSteps,
       { id: "direct_refine_strategy", label: "小改动策略分析" },
       { id: "direct_refine_patch", label: "补丁/重生成" },
       { id: "direct_refine_upgrade", label: "升级恢复" },
@@ -297,6 +315,7 @@ function expectedProcessSteps(mode: ProcessMode, currentSteps: ProcessStep[]) {
         ]
       : [{ id: "game_js", label: "核心逻辑" }];
     return [
+      ...openingSteps,
       { id: "blueprint", label: "蓝图" },
       { id: "requirement_contract", label: "需求契约" },
       { id: "html", label: "页面结构" },
@@ -305,7 +324,7 @@ function expectedProcessSteps(mode: ProcessMode, currentSteps: ProcessStep[]) {
       { id: "validate", label: "验收与落库" },
     ];
   }
-  return [{ id: "prepare", label: "准备请求" }];
+  return [{ id: "prepare", label: "准备流程" }];
 }
 
 function mergeProcessStepsWithPending(mode: ProcessMode, steps: ProcessStep[]) {
@@ -323,6 +342,7 @@ function mergeProcessStepsWithPending(mode: ProcessMode, steps: ProcessStep[]) {
 }
 
 const THINK_PREFIX = "[[THINK]]";
+const CREATE_LEAVE_CONFIRM_TEXT = "确定要离开创作页面吗？当前正在编辑的内容可能还没发布。";
 
 function parseSseChunk(state: { buf: string }, chunk: string) {
   state.buf += chunk;
@@ -347,6 +367,61 @@ function parseSseChunk(state: { buf: string }, chunk: string) {
     }
   }
   return events;
+}
+
+function PreviewCreationProcess({ run }: { run: ProcessRun }) {
+  const elapsed = formatElapsed((run.finishedAt || Date.now()) - run.startedAt);
+  const steps = Array.isArray(run.steps) ? run.steps : [];
+  const logs = Array.isArray(run.logs)
+    ? run.logs
+        .map((log) => String(log?.text || "").trim())
+        .filter(Boolean)
+        .filter((text, idx, arr) => idx === 0 || text !== arr[idx - 1])
+        .slice(-6)
+    : [];
+  const contractItems = [
+    run.contract?.topic ? `主题：${run.contract.topic}` : "",
+    run.contract?.gameplay ? `玩法：${run.contract.gameplay}` : "",
+    run.contract?.theme ? `风格：${run.contract.theme}` : "",
+    run.contract?.platform ? `平台：${run.contract.platform}` : "",
+  ].filter(Boolean);
+  const draft = String(run.draftPreview || "").trim();
+
+  return (
+    <div className="previewProcess" aria-live="polite">
+      <div className="previewProcessHero">
+        <div>
+          <div className="previewProcessKicker">AI 创作现场</div>
+          <div className="previewProcessTitle">{run.summary || "AI 正在生成游戏"}</div>
+        </div>
+        <div className="previewProcessTime">{elapsed}</div>
+      </div>
+
+      <div className="previewProcessSteps" aria-label="生成阶段">
+        {steps.map((step) => (
+          <div key={step.id} className={`previewProcessStep is-${step.status}`}>
+            <span className="previewProcessStepDot" aria-hidden="true" />
+            <span className="previewProcessStepLabel">{step.label}</span>
+          </div>
+        ))}
+      </div>
+
+      {contractItems.length ? (
+        <div className="previewProcessContract">
+          {contractItems.map((item) => (
+            <span key={item}>{item}</span>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="previewProcessStream">
+        <div className="previewProcessStreamHead">
+          <span>生成动态</span>
+        </div>
+        <pre>{draft || logs.join("\n") || "AI 正在理解你的想法，马上开始搭建游戏…"}</pre>
+      </div>
+    </div>
+  );
 }
 
 export default function CreateStudio({
@@ -375,6 +450,7 @@ export default function CreateStudio({
   const [hydrated, setHydrated] = useState(false);
   const [currentModelLabel, setCurrentModelLabel] = useState<string>("");
   const [processCurrent, setProcessCurrent] = useState<ProcessRun | null>(null);
+  const [previewProcessRunId, setPreviewProcessRunId] = useState<string>("");
   const [creatorName, setCreatorName] = useState<string>("");
   const [creatorAvatarUrl, setCreatorAvatarUrl] = useState<string>("");
   const [creatorProfilePath, setCreatorProfilePath] = useState<string>("");
@@ -389,6 +465,7 @@ export default function CreateStudio({
   const [loggedIn, setLoggedIn] = useState(false);
   const [published, setPublished] = useState(false);
   const [publishDirty, setPublishDirty] = useState(false);
+  const [publishingGameId, setPublishingGameId] = useState<string>("");
   const [deletingGameId, setDeletingGameId] = useState<string>("");
   const [speechSupported, setSpeechSupported] = useState(false);
   const [listening, setListening] = useState(false);
@@ -397,13 +474,19 @@ export default function CreateStudio({
   const inputRef = useRef<string>("");
   const inputElRef = useRef<HTMLTextAreaElement | null>(null);
   const sendLockRef = useRef(false);
+  const publishingRef = useRef(false);
   const activeRunIdRef = useRef<string>("");
+  const suppressLeaveGuardRef = useRef(false);
   const bootRef = useRef(false);
   const [lastFailedText, setLastFailedText] = useState<string>("");
   const abortRef = useRef<AbortController | null>(null);
   const opMenuRef = useRef<HTMLDetailsElement | null>(null);
 
-  const publishText = useMemo(() => (published ? (publishDirty ? "发布更新" : "更新") : "发布"), [publishDirty, published]);
+  const publishingBusy = !!publishingGameId;
+  const publishText = useMemo(
+    () => (publishingBusy ? "发布中…" : published ? (publishDirty ? "发布更新" : "更新") : "发布"),
+    [publishDirty, published, publishingBusy],
+  );
   const starterPrompts = useMemo(
     () => [
       "我想做一个可爱的跳跳球游戏，背景是彩虹，要有排行榜和成就。",
@@ -413,17 +496,22 @@ export default function CreateStudio({
     [],
   );
   const deletingBusy = !!deletingGameId;
-  const uiBusy = busy || deletingBusy;
+  const uiBusy = busy || deletingBusy || publishingBusy;
   const currentGameTitle = useMemo(() => {
     const metaTitle = String(gameMeta?.title || "").trim();
     if (metaTitle && !looksLikeDraftGameIdTitle(metaTitle, gameId)) return metaTitle;
     const projectTitle = String((projects || []).find((p) => p.gameId === gameId)?.title || "").trim();
-    if (projectTitle) return projectTitle;
+    if (projectTitle && !looksLikeDraftGameIdTitle(projectTitle, gameId)) return projectTitle;
     return "未命名作品";
   }, [gameId, gameMeta?.title, projects]);
   const currentCreatorName = String(creatorName || "").trim() || String(gameMeta?.creator?.name || "").trim() || "创作者";
   const currentCreatorAvatarUrl = String(creatorAvatarUrl || "").trim() || String(gameMeta?.creator?.avatarUrl || "").trim();
   const currentCreatorProfilePath = String(creatorProfilePath || "").trim() || String(gameMeta?.creator?.profilePath || "").trim();
+  const showProcessInPreview =
+    busy &&
+    !!processCurrent &&
+    processCurrent.status === "running" &&
+    processCurrent.id === previewProcessRunId;
 
   const applyMeProfile = (me: any) => {
     setLoggedIn(!!me?.loggedIn);
@@ -452,6 +540,7 @@ export default function CreateStudio({
   const bailianModels = useMemo(
     () => [
       { id: "qwen3.6-plus", name: "qwen3.6-plus（百炼直连）" },
+      { id: "qwen3.6-plus-2026-04-02", name: "qwen3.6-plus-2026-04-02（百炼新版）" },
       { id: "qwen-plus", name: "qwen-plus（百炼）" },
     ],
     [],
@@ -698,9 +787,60 @@ export default function CreateStudio({
 
   useEffect(() => {
     setProcessCurrent(null);
+    setPreviewProcessRunId("");
   }, [gameId]);
 
+  useEffect(() => {
+    if (!hydrated) return;
+
+    const shouldGuard = () => {
+      if (suppressLeaveGuardRef.current) return false;
+      return true;
+    };
+
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!shouldGuard()) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
+
+    const onDocumentClick = (e: MouseEvent) => {
+      if (!shouldGuard()) return;
+      if (e.defaultPrevented) return;
+      if (e.button !== 0) return;
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const target = e.target as Element | null;
+      const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!anchor) return;
+      const rawHref = anchor.getAttribute("href") || "";
+      if (!rawHref || rawHref.startsWith("#") || rawHref.startsWith("javascript:")) return;
+      if ((anchor.target || "").trim() && anchor.target !== "_self") return;
+      let nextUrl: URL;
+      try {
+        nextUrl = new URL(rawHref, window.location.href);
+      } catch {
+        return;
+      }
+      if (nextUrl.href === window.location.href) return;
+      if (nextUrl.pathname.startsWith("/create")) return;
+      if (!window.confirm(CREATE_LEAVE_CONFIRM_TEXT)) {
+        e.preventDefault();
+        e.stopPropagation();
+      } else {
+        suppressLeaveGuardRef.current = true;
+      }
+    };
+
+    window.addEventListener("beforeunload", onBeforeUnload);
+    document.addEventListener("click", onDocumentClick, true);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      document.removeEventListener("click", onDocumentClick, true);
+    };
+  }, [hydrated]);
+
   function act(type: "new" | "publish" | "delete") {
+    if (type === "publish" && (publishingBusy || publishingRef.current)) return;
     const ok =
       type === "new"
         ? window.confirm("确定新建一个游戏吗？\n\n当前游戏不会丢失，你可以在“我的游戏”里再切回来。")
@@ -865,6 +1005,7 @@ export default function CreateStudio({
       if (r.status === 401 || err === "UNAUTHORIZED") {
         // 避免 window.confirm 造成页面“卡住”（尤其是自动化/某些浏览器环境下弹窗不明显）。
         // 直接跳转登录页即可，减少重复弹窗导致的“无法点击”体验。
+        suppressLeaveGuardRef.current = true;
         window.location.href = `/login?next=${encodeURIComponent("/create")}`;
         throw new Error("UNAUTHORIZED");
       }
@@ -1267,6 +1408,8 @@ export default function CreateStudio({
     let requestStarted = false;
     const startAt = Date.now();
     const myMsg: ChatMsg = { role: "user", content: text };
+    const hasUserBefore = useBase.some((m) => m.role === "user");
+    const runMode = guessProcessMode(text);
 
     try {
       setLastFailedText("");
@@ -1276,10 +1419,11 @@ export default function CreateStudio({
       setInput("");
       runId = nowId();
       activeRunIdRef.current = runId;
+      setPreviewProcessRunId(runId);
       setProcessCurrent({
         id: runId,
         gameId: useId,
-        mode: guessProcessMode(text),
+        mode: runMode,
         provider,
         model,
         status: "running",
@@ -1311,8 +1455,7 @@ export default function CreateStudio({
       // 第一句用户输入：把它写到 prompt.md（用于“我的游戏”下拉框显示关键词）
       // 性能优化：不要阻塞 UI / 不要阻塞 AI 请求（之前这里 await 会导致“点发送后几秒没反应”）
       // 只在当前对话还没有 user 消息时写入，避免后续不断覆盖
-      const hasUser = useBase.some((m) => m.role === "user");
-      if (!hasUser) {
+      if (!hasUserBefore) {
         void (async () => {
           try {
             await writePrompt(useId, text);
@@ -1359,8 +1502,7 @@ export default function CreateStudio({
         const progressFallback = { runId, gameId: useId, provider, model };
         const isRunActive = () => activeRunIdRef.current === runId;
         const withTime = (t: string) => {
-          const sec = Math.max(1, Math.floor((Date.now() - startAt) / 1000));
-          return `${t}（${sec}s）`;
+          return `${t}（${formatElapsed(Date.now() - startAt)}）`;
         };
         let draft = "";
         let lastPaint = 0;
@@ -1552,14 +1694,18 @@ export default function CreateStudio({
           const questions = Array.isArray(all?.questions) ? all.questions : [];
           const selected = (ui as any)?.selected && typeof (ui as any).selected === "object" ? { ...(ui as any).selected } : {};
           const maxTurns = typeof (ui as any)?.maxTurns === "number" ? (ui as any).maxTurns : 3;
+          const answeredQuestionCount = questions.filter((q: any) => {
+            const id = String(q?.id || "").trim();
+            return !!id && !!String(selected[id] || "").trim();
+          }).length;
           setClarifyLocal({
             options,
             questions,
             selected,
             maxTurns,
             // turn 表示“已回答的问题数”（不包含选 A/B/C）
-            turn: 0,
-            qIndex: 0,
+            turn: typeof (ui as any)?.turn === "number" ? (ui as any).turn : answeredQuestionCount,
+            qIndex: answeredQuestionCount,
           });
           clarifyAutoSubmittedRef.current = false;
         } else {
@@ -1594,10 +1740,17 @@ export default function CreateStudio({
         const creator = metaRaw?.creator && typeof metaRaw.creator === "object" ? metaRaw.creator : {};
         const currentCreator = currentMeta?.creator && typeof currentMeta.creator === "object" ? currentMeta.creator : {};
         const fallbackProjectTitle = String(projects.find((p) => p.gameId === useId)?.title || "").trim();
+        const metaTitle = String(metaRaw?.title || "").trim();
+        const currentTitle = String(currentMeta?.title || "").trim();
+        const safeProjectTitle = !looksLikeDraftGameIdTitle(fallbackProjectTitle, useId) ? fallbackProjectTitle : "";
         metaPersist = {
           ...(currentMeta as Record<string, any>),
           ...(metaRaw as Record<string, any>),
-          title: String(metaRaw?.title || "").trim() || String(currentMeta?.title || "").trim() || fallbackProjectTitle || useId,
+          title:
+            (metaTitle && !looksLikeDraftGameIdTitle(metaTitle, useId) ? metaTitle : "") ||
+            (currentTitle && !looksLikeDraftGameIdTitle(currentTitle, useId) ? currentTitle : "") ||
+            safeProjectTitle ||
+            "未命名作品",
           shortDesc: String(metaRaw?.shortDesc || "").trim() || String(currentMeta?.shortDesc || "").trim(),
           rules: String(metaRaw?.rules || "").trim() || String(currentMeta?.rules || "").trim(),
           creator: {
@@ -1715,7 +1868,61 @@ export default function CreateStudio({
     }
   }, [clarifyLocal, busy]);
 
+  function applyLocalClarifyInput(raw: string) {
+    const text = String(raw || "").trim();
+    if (!text || !clarifyLocal || busy) return false;
+    const selected: any = clarifyLocal.selected || {};
+    const maxTurns = Number(clarifyLocal.maxTurns || 3) || 3;
+    const questions: any[] = Array.isArray(clarifyLocal.questions) ? clarifyLocal.questions : [];
+    const hasChoice = !!String(selected.choice || "").trim();
+
+    if (!hasChoice) {
+      const m = text.match(/^(?:方案)?\s*(OTHER|[ABCabc]|[123])\b/i);
+      const rawChoice = m
+        ? String(m[1] || "").toUpperCase()
+        : /(这三个都不想选|这三个都不喜欢|都不想选|都不喜欢|其他|其它|自己定|自定义|我自己说)/i.test(text)
+          ? "OTHER"
+          : "";
+      if (!rawChoice) return false;
+      const choice = rawChoice === "1" ? "A" : rawChoice === "2" ? "B" : rawChoice === "3" ? "C" : rawChoice;
+      setClarifyLocal((prev: any) => ({
+        ...(prev || {}),
+        selected: { ...((prev || {}).selected || {}), choice },
+        qIndex: 0,
+      }));
+      setInput("");
+      return true;
+    }
+
+    const qIndex = Number(clarifyLocal.qIndex || 0) || 0;
+    let nextIdx = -1;
+    for (let i = qIndex; i < questions.length; i++) {
+      const q = questions[i] || {};
+      const id = String(q.id || "").trim();
+      if (!id) continue;
+      if (!String(selected[id] || "").trim()) {
+        nextIdx = i;
+        break;
+      }
+    }
+    if (nextIdx < 0) return false;
+    const q = questions[nextIdx] || {};
+    const qid = String(q.id || "").trim() || `q${nextIdx + 1}`;
+    setClarifyLocal((prev: any) => {
+      const p = prev || {};
+      return {
+        ...p,
+        selected: { ...(p.selected || {}), [qid]: text.slice(0, 80) },
+        turn: Math.min(maxTurns, (Number(p.turn || 0) || 0) + 1),
+        qIndex: nextIdx + 1,
+      };
+    });
+    setInput("");
+    return true;
+  }
+
   async function send() {
+    if (applyLocalClarifyInput(input)) return;
     return sendText(input);
   }
 
@@ -1761,29 +1968,46 @@ export default function CreateStudio({
       } else if (type === "publish") {
         if (!gameId) return;
         (async () => {
+          const targetGameId = gameId;
+          if (publishingRef.current) return;
+          publishingRef.current = true;
+          setPublishingGameId(targetGameId);
           // 有时页面刚加载完，loggedIn 还没来得及从 /api/me 更新；
           // 这里再确认一次，避免“明明已登录却提示去登录”。
-          let okLogin = loggedIn;
-          if (!okLogin) {
-            try {
-              const me = await fetch("/api/me", { cache: "no-store" })
-                .then((x) => x.json())
-                .catch(() => null);
-              okLogin = !!me?.loggedIn;
-              setLoggedIn(okLogin);
-            } catch {
-              okLogin = false;
+          try {
+            let okLogin = loggedIn;
+            if (!okLogin) {
+              try {
+                const me = await fetch("/api/me", { cache: "no-store" })
+                  .then((x) => x.json())
+                  .catch(() => null);
+                okLogin = !!me?.loggedIn;
+                setLoggedIn(okLogin);
+              } catch {
+                okLogin = false;
+              }
             }
+            if (!okLogin) {
+              if (window.confirm("发布需要先登录。现在去登录吗？")) {
+                suppressLeaveGuardRef.current = true;
+                window.location.href = `/login?next=${encodeURIComponent("/create")}`;
+                return;
+              }
+              setPublishingGameId((cur) => (cur === targetGameId ? "" : cur));
+              publishingRef.current = false;
+              return;
+            }
+            setMsg("发布中…正在打开发布页面…");
+            // 让提示先渲染出来再跳转
+            setTimeout(() => {
+              suppressLeaveGuardRef.current = true;
+              window.location.href = `/publish?id=${encodeURIComponent(targetGameId)}`;
+            }, 80);
+          } catch (err: any) {
+            setPublishingGameId((cur) => (cur === targetGameId ? "" : cur));
+            publishingRef.current = false;
+            setMsg(`发布失败：${err?.message || "未知错误"}`);
           }
-          if (!okLogin) {
-            if (window.confirm("发布需要先登录。现在去登录吗？")) window.location.href = `/login?next=${encodeURIComponent("/create")}`;
-            return;
-          }
-          setMsg("发布中…正在打开发布页面…");
-          // 让提示先渲染出来再跳转
-          setTimeout(() => {
-            window.location.href = `/publish?id=${encodeURIComponent(gameId)}`;
-          }, 80);
         })();
       } else if (type === "delete") {
         if (!gameId) return;
@@ -1829,7 +2053,7 @@ export default function CreateStudio({
     };
     window.addEventListener("creatorStudioAction", onAction as any);
     return () => window.removeEventListener("creatorStudioAction", onAction as any);
-  }, [gameId, loggedIn]);
+  }, [gameId, loggedIn, publishingBusy]);
 
   return (
     <section aria-label="create studio">
@@ -2333,7 +2557,7 @@ export default function CreateStudio({
                     <span className="simDot yellow" />
                     <span className="simDot green" />
                   </div>
-                  <div className="simTitle"> </div>
+                  <div className="simTitle">{showProcessInPreview ? "正在创作游戏" : "游戏预览"}</div>
                   <div className="simActions">
                     <a
                       className="btn btnGray iconBtn simOpenBtn"
@@ -2358,7 +2582,9 @@ export default function CreateStudio({
                   </div>
                 </div>
                 <div className="simScreen">
-                  {previewEnabled ? (
+                  {showProcessInPreview && processCurrent ? (
+                    <PreviewCreationProcess run={processCurrent} />
+                  ) : previewEnabled ? (
                     <iframe className="previewFrame" src={previewUrl} title="preview" />
                   ) : (
                     <div

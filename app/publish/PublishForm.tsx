@@ -33,6 +33,7 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, lockId, i
   const [path, setPath] = useState(initial?.path || "");
   const [msg, setMsg] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const coverFileRef = useRef<HTMLInputElement | null>(null);
   const [submitTried, setSubmitTried] = useState(false);
   const [touched, setTouched] = useState<{ id?: boolean; title?: boolean; creatorId?: boolean }>({});
@@ -158,10 +159,12 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, lockId, i
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (submitting) return;
+    if (submitting || submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitTried(true);
     // 必填项校验：为空则标红 + 聚焦
     if (idMissing || titleMissing || creatorMissing) {
+      submittingRef.current = false;
       setMsg("请先填写必填项（标红处）。");
       if (idMissing) idRef.current?.focus();
       else if (titleMissing) titleRef.current?.focus();
@@ -170,6 +173,7 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, lockId, i
     }
     setSubmitting(true);
     setMsg(`${actionLabel}中…`);
+    let shouldResetSubmitting = true;
     try {
       const r = await fetch("/api/games/publish", {
         method: "POST",
@@ -179,15 +183,20 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, lockId, i
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
         setMsg(`${actionLabel}失败：${data?.error || r.status}`);
+        submittingRef.current = false;
         return;
       }
       syncProjectPublishCache(String(payload.id || ""), String(title || ""));
       setMsg(`${actionLabel}成功，正在返回游戏…`);
       const p = typeof data?.path === "string" ? data.path : payload.path || `/games/${payload.id}/`;
       const entry = p.endsWith("/") ? `${p}index.html` : p;
+      shouldResetSubmitting = false;
       window.location.href = entry;
     } finally {
-      setSubmitting(false);
+      if (shouldResetSubmitting) {
+        setSubmitting(false);
+        submittingRef.current = false;
+      }
     }
   }
 

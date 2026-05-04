@@ -8,6 +8,7 @@ import { ensureCreatorsAuthFields } from "@/lib/db/ensureCreatorsAuthFields";
 import { ensureGamesCoverFields } from "@/lib/db/ensureGamesCoverFields";
 import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
 import { ensureGameFilesTables } from "@/lib/db/ensureGameFilesTables";
+import { ensureCreatorUserMessagesTable } from "@/lib/db/ensureCreatorUserMessagesTable";
 import { isSuperAdminId } from "@/lib/auth/admin";
 
 export const dynamic = "force-dynamic";
@@ -65,6 +66,45 @@ function parseJsonObject(raw: string) {
     return obj && typeof obj === "object" ? (obj as Record<string, any>) : null;
   } catch {
     return null;
+  }
+}
+
+function isInternalCreatorCommand(text: string) {
+  const t = String(text || "").trim();
+  if (!t) return true;
+  return /^@(retry|answers?|choice|select|clarify|stop)\b/i.test(t);
+}
+
+function normalizeCreatorStepText(text: string) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+async function readCreatorPromptFromMessages(gameIds: string[], creatorId: string) {
+  const ids = Array.from(new Set((gameIds || []).map((id) => String(id || "").trim()).filter(Boolean)));
+  if (!ids.length || !creatorId) return "";
+  try {
+    await ensureCreatorUserMessagesTable();
+    const idFilter = sql.join(ids.map((id) => sql`game_id = ${id}`), sql` or `);
+    const rows = await db.execute(sql`
+      select content
+      from creator_user_messages
+      where creator_id = ${creatorId}
+        and (${idFilter})
+      order by created_at asc, id asc
+      limit 400
+    `);
+    const list = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const r of list) {
+      const text = normalizeCreatorStepText(String((r as any)?.content || ""));
+      if (!text || isInternalCreatorCommand(text) || seen.has(text)) continue;
+      seen.add(text);
+      out.push(text);
+    }
+    return out.slice(-12).map((text, i) => `${i + 1}. ${text}`).join("\n");
+  } catch {
+    return "";
   }
 }
 
@@ -293,6 +333,19 @@ export async function POST(req: Request) {
         do update set content = excluded.content, updated_at = now()
       `);
     }
+  }
+
+  const promptFromMessages = await readCreatorPromptFromMessages(
+    [publishGameId, src, storedSourceDraftId, actualSourceDraftId],
+    effCreatorId,
+  );
+  if (promptFromMessages) {
+    await db.execute(sql`
+      insert into game_files (game_id, path, content)
+      values (${publishGameId}, 'prompt.md', ${promptFromMessages})
+      on conflict (game_id, path)
+      do update set content = excluded.content, updated_at = now()
+    `);
   }
 
   // 3) 写入/覆盖 meta.json：保留原设计/生成元信息，只覆盖发布表单字段。

@@ -52,12 +52,14 @@ export async function POST(req: Request) {
   const ext = parsed.mime === "image/png" ? "png" : parsed.mime === "image/jpeg" ? "jpg" : "webp";
   const buf = Buffer.from(parsed.b64, "base64");
   if (buf.length > 1_200_000) return json(400, { ok: false, error: "IMAGE_TOO_LARGE" });
+  const stamp = `${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`;
+  const fileName = `${id}-${stamp}.${ext}`;
 
   if (hasBlobToken()) {
-    const blob = await put(`covers/${id}.${ext}`, buf, {
+    // 每次上传使用新文件名，避免浏览器/CDN 因相同 URL 继续显示旧封面。
+    const blob = await put(`covers/${fileName}`, buf, {
       access: "public",
       addRandomSuffix: false,
-      allowOverwrite: true,
       contentType: parsed.mime,
       cacheControlMaxAge: 60 * 60 * 24 * 30,
     });
@@ -71,8 +73,8 @@ export async function POST(req: Request) {
   const outDir = path.join(process.cwd(), "public", "assets", "covers");
   await fs.mkdir(outDir, { recursive: true });
 
-  const outFile = path.join(outDir, `${id}.${ext}`);
+  const outFile = path.join(outDir, fileName);
   await fs.writeFile(outFile, buf);
 
-  return json(200, { ok: true, coverUrl: `/assets/covers/${id}.${ext}`, storage: "local-file" });
+  return json(200, { ok: true, coverUrl: `/assets/covers/${fileName}`, storage: "local-file" });
 }

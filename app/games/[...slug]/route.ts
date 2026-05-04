@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
 import { ensureGameFilesTables } from "@/lib/db/ensureGameFilesTables";
+import { ensureCreatorUserMessagesTable } from "@/lib/db/ensureCreatorUserMessagesTable";
 import { getGameEngagement } from "@/lib/db/gameEngagement";
 
 export const runtime = "nodejs";
@@ -33,6 +34,45 @@ function stripDangerousLocalBehaviorArtifacts(html: string) {
     .replace(/\n?\s*<script\b[^>]*data-ai-local-behavior=["']1["'][^>]*>[\s\S]*?<\/script>/gi, "");
 }
 
+function isInternalCreatorCommand(text: string) {
+  const t = String(text || "").trim();
+  if (!t) return true;
+  return /^@(retry|answers?|choice|select|clarify|stop)\b/i.test(t);
+}
+
+function normalizeCreatorStepText(text: string) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+async function readCreatorPromptFromMessages(gameIds: string[], creatorId: string) {
+  const ids = Array.from(new Set((gameIds || []).map((id) => String(id || "").trim()).filter(Boolean)));
+  if (!ids.length || !creatorId) return "";
+  try {
+    await ensureCreatorUserMessagesTable();
+    const idFilter = sql.join(ids.map((id) => sql`game_id = ${id}`), sql` or `);
+    const rows = await db.execute(sql`
+      select content
+      from creator_user_messages
+      where creator_id = ${creatorId}
+        and (${idFilter})
+      order by created_at asc, id asc
+      limit 400
+    `);
+    const list = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const r of list) {
+      const text = normalizeCreatorStepText(String((r as any)?.content || ""));
+      if (!text || isInternalCreatorCommand(text) || seen.has(text)) continue;
+      seen.add(text);
+      out.push(text);
+    }
+    return out.slice(-12).map((text, i) => `${i + 1}. ${text}`).join("\n");
+  } catch {
+    return "";
+  }
+}
+
 function injectEmbedCleanup(html: string) {
   const src = stripDangerousLocalBehaviorArtifacts(html);
   // 只用于“嵌入模式”：把创作者/规则信息从游戏区隐藏（信息在右栏展示）
@@ -51,11 +91,11 @@ function injectEmbedCleanup(html: string) {
     "function run(){" +
     "var roots=[];var h=document.querySelector('header');if(h)roots.push(h);" +
     "var hs=document.querySelectorAll('.header,.top,.topbar,.gameHeader');hs.forEach(function(x){roots.push(x)});" +
-    "roots.push(document.body||document.documentElement);" +
     "var reC=/创作者\\s*[:：]/;var reR=/规则\\s*[:：]/;var reP=/(发布|更新)\\b/;var reH=/(返回首页|回到首页|返回主页|回到主页)/;" +
     "roots.forEach(function(root){" +
     "root.querySelectorAll('a,button,div,p,span,li').forEach(function(el){" +
     "var t=(el.textContent||'').trim();if(!t)return;" +
+    "if(t.length>80 && el.children && el.children.length>0)return;" +
     "if(reC.test(t)||t.includes('创作者：')) el.style.display='none';" +
     "if(reR.test(t)||t.includes('规则：')) el.style.display='none';" +
     "if(reP.test(t)) el.style.display='none';" +
@@ -130,7 +170,15 @@ async function buildShellHtml(gameId: string) {
   // 1) 优先发布表
   try {
     const rows = await db.execute(sql`
-      select g.title, g.short_desc, g.rule_text, c.name as creator_name, c.avatar_url as creator_avatar, c.profile_path as creator_profile
+      select
+        g.title,
+        g.short_desc,
+        g.rule_text,
+        g.source_draft_id,
+        g.creator_id,
+        c.name as creator_name,
+        c.avatar_url as creator_avatar,
+        c.profile_path as creator_profile
       from games g
       join creators c on c.id = g.creator_id
       where g.id = ${gameId}
@@ -147,7 +195,12 @@ async function buildShellHtml(gameId: string) {
       creatorAvatarUrl = String(r.creator_avatar || creatorAvatarUrl);
       creatorProfilePath = String(r.creator_profile || "");
       // prompt/meta 优先读文件（更完整）
-      prompt = (await readGameText(gameId, "prompt.md")) || "";
+      const linkedDraftId = String(r.source_draft_id || "").trim();
+      const creatorId = String(r.creator_id || "").trim();
+      prompt =
+        (await readCreatorPromptFromMessages([gameId, linkedDraftId], creatorId)) ||
+        (await readGameText(gameId, "prompt.md")) ||
+        "";
       const metaRaw = await readGameText(gameId, "meta.json");
       if (metaRaw) {
         try {
