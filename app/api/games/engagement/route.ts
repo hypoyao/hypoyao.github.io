@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { NextResponse } from "next/server";
+import { getCurrentCreatorId } from "@/lib/auth/currentCreator";
 import { gameExists, getGameEngagement, recordGameView, toggleGameLike } from "@/lib/db/gameEngagement";
 
 export const runtime = "nodejs";
@@ -73,7 +74,8 @@ export async function POST(req: Request) {
   if (!(await gameExists(gameId))) return json(404, { ok: false, error: "GAME_NOT_FOUND" });
 
   const { visitorId, fresh } = getOrCreateVisitorId(req);
-  const stats = action === "view" ? await recordGameView(gameId, visitorId) : await toggleGameLike(gameId, visitorId);
+  const creatorId = await getCurrentCreatorId();
+  const stats = action === "view" ? await recordGameView(gameId, visitorId, creatorId) : await toggleGameLike(gameId, visitorId);
   const res = json(200, { ok: true, gameId, ...stats });
   return fresh ? withVisitorCookie(res, visitorId) : res;
 }

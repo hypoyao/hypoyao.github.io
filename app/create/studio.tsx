@@ -6,6 +6,7 @@ import { consumeLaunchPrompt } from "@/lib/creator/launchPrompt";
 type ChatMsg = { role: "system" | "user" | "assistant"; content: string };
 
 type ModelFile = { path: string; content: string };
+type ProjectItem = { gameId: string; title?: string; entry: string; mtimeMs?: number; published?: boolean; dirty?: boolean; publishId?: string };
 
 type GameMeta = {
   title?: string;
@@ -98,6 +99,19 @@ function hasRenderableMessageContent(content: unknown) {
   return !!text.trim();
 }
 
+function isSeedPromptPlaceholder(content: unknown) {
+  const compact = String(content || "").replace(/\s+/g, "").trim();
+  return compact === "我想做一个什么小游戏呢？" || compact === "我想做一个什么小游戏呢";
+}
+
+function isDisplayableChatMessage(m: any) {
+  if (!m || (m.role !== "user" && m.role !== "assistant")) return false;
+  if (!hasRenderableMessageContent(m.content)) return false;
+  // 新建草稿的 prompt.md 占位文案不是用户输入，历史 localStorage 里如果已经缓存过也要过滤掉。
+  if (m.role === "user" && isSeedPromptPlaceholder(m.content)) return false;
+  return true;
+}
+
 function safeLoadChat(gid: string): { messages: ChatMsg[] } | null {
   try {
     if (typeof window === "undefined") return null;
@@ -107,9 +121,7 @@ function safeLoadChat(gid: string): { messages: ChatMsg[] } | null {
     if (j?.v !== CREATOR_STORE_VER) return null;
     const arr = Array.isArray(j?.messages) ? j.messages : null;
     if (!arr) return null;
-    const messages: ChatMsg[] = arr
-      .filter((m: any) => m && (m.role === "user" || m.role === "assistant") && hasRenderableMessageContent(m.content))
-      .map((m: any) => ({ role: m.role, content: String(m.content) }));
+    const messages: ChatMsg[] = arr.filter(isDisplayableChatMessage).map((m: any) => ({ role: m.role, content: String(m.content) }));
     if (!messages.length) return null;
     return { messages };
   } catch {
@@ -123,7 +135,7 @@ function safeSaveChat(gid: string, messages: ChatMsg[]) {
     const MAX_MSG = 40;
     const MAX_LEN = 4000;
     const trimmed = (messages || [])
-      .filter((m) => (m?.role === "user" || m?.role === "assistant") && hasRenderableMessageContent(m?.content))
+      .filter(isDisplayableChatMessage)
       .slice(-MAX_MSG)
       .map((m) => ({ role: m.role, content: String(m.content || "").slice(0, MAX_LEN) }));
     window.localStorage.setItem(
@@ -134,6 +146,16 @@ function safeSaveChat(gid: string, messages: ChatMsg[]) {
   } catch {
     // ignore
   }
+}
+
+function normalizeChatMessages(raw: any, fallbackRole: ChatMsg["role"] = "user") {
+  const arr = Array.isArray(raw) ? raw : [];
+  return arr
+    .map((x: any) => {
+      const role = x?.role === "assistant" ? "assistant" : x?.role === "system" ? "system" : fallbackRole;
+      return { role, content: String(x?.content || "").trim() } as ChatMsg;
+    })
+    .filter(isDisplayableChatMessage);
 }
 
 function safeDeleteChat(gid: string) {
@@ -277,6 +299,7 @@ function inferStepFromStatusText(text: string): { id: string; label: string; mod
   if (raw.includes("补全核心逻辑细节")) return { id: "game_js_complete", label: "核心逻辑补全", mode: "create" };
   if (raw.includes("生成核心逻辑")) return { id: "game_js", label: "核心逻辑", mode: "create" };
   if (raw.includes("修复 bug")) return { id: "fix", label: "Bug 修复", mode: "fix" };
+  if (raw.includes("升级为蓝图重生成")) return { id: "fix_upgrade_blueprint_regen", label: "升级为蓝图重生成", mode: "fix" };
   if (raw.includes("小改动")) return { id: "patch", label: "小改动", mode: "patch" };
   if (raw.includes("结构不一致") || raw.includes("验收没通过")) return { id: "validate", label: "强验收与恢复" };
   if (raw.includes("JSON")) return { id: "repair", label: "结构修复" };
@@ -284,6 +307,7 @@ function inferStepFromStatusText(text: string): { id: string; label: string; mod
 }
 
 function expectedProcessSteps(mode: ProcessMode, currentSteps: ProcessStep[]) {
+  const hasStep = (id: string) => currentSteps.some((s) => s.id === id);
   const openingSteps = [
     { id: "prepare", label: "准备流程" },
     { id: "route", label: "进入生成流程" },
@@ -294,6 +318,7 @@ function expectedProcessSteps(mode: ProcessMode, currentSteps: ProcessStep[]) {
       { id: "prepare", label: "准备流程" },
       { id: "route", label: "进入修复流程" },
       { id: "fix_classify", label: "修复策略分析" },
+      ...(hasStep("fix_upgrade_blueprint_regen") ? [{ id: "fix_upgrade_blueprint_regen", label: "升级为蓝图重生成" }] : []),
       { id: "fix_patch", label: "补丁/重生成" },
       { id: "fix_upgrade_regen", label: "升级恢复" },
       { id: "fix_validate", label: "强验收与落库" },
@@ -310,6 +335,9 @@ function expectedProcessSteps(mode: ProcessMode, currentSteps: ProcessStep[]) {
   }
   if (mode === "create") {
     const hasTwoStepJs = currentSteps.some((s) => s.id === "game_js_skeleton" || s.id === "game_js_complete");
+    const blueprintSteps = hasStep("blueprint_update")
+      ? [{ id: "blueprint_update", label: "蓝图（增量）" }]
+      : [{ id: "blueprint", label: "蓝图" }];
     const jsSteps = hasTwoStepJs
       ? [
           { id: "game_js_skeleton", label: "核心逻辑骨架" },
@@ -318,7 +346,8 @@ function expectedProcessSteps(mode: ProcessMode, currentSteps: ProcessStep[]) {
       : [{ id: "game_js", label: "核心逻辑" }];
     return [
       ...openingSteps,
-      { id: "blueprint", label: "蓝图" },
+      ...(hasStep("fix_upgrade_blueprint_regen") ? [{ id: "fix_upgrade_blueprint_regen", label: "升级为蓝图重生成" }] : []),
+      ...blueprintSteps,
       { id: "requirement_contract", label: "需求契约" },
       { id: "html", label: "页面结构" },
       { id: "css", label: "页面样式" },
@@ -461,10 +490,9 @@ export default function CreateStudio({
   const [clarifyLocal, setClarifyLocal] = useState<any>(null);
   const clarifyAutoSubmittedRef = useRef(false);
   const listRef = useRef<HTMLDivElement | null>(null);
-  const [projects, setProjects] = useState<Array<{ gameId: string; title?: string; entry: string; mtimeMs?: number; published?: boolean; dirty?: boolean; publishId?: string }>>(
-    [],
-  );
+  const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [loggedIn, setLoggedIn] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [published, setPublished] = useState(false);
   const [publishDirty, setPublishDirty] = useState(false);
   const [publishingGameId, setPublishingGameId] = useState<string>("");
@@ -483,10 +511,11 @@ export default function CreateStudio({
   const [lastFailedText, setLastFailedText] = useState<string>("");
   const abortRef = useRef<AbortController | null>(null);
   const opMenuRef = useRef<HTMLDetailsElement | null>(null);
+  const modelPrefsRestoredRef = useRef(false);
 
   const publishingBusy = !!publishingGameId;
   const publishText = useMemo(
-    () => (publishingBusy ? "发布中…" : published ? (publishDirty ? "发布更新" : "更新") : "发布"),
+    () => (publishingBusy ? (published ? "更新中" : "发布中") : published ? (publishDirty ? "发布更新" : "更新") : "发布"),
     [publishDirty, published, publishingBusy],
   );
   const starterPrompts = useMemo(
@@ -517,6 +546,7 @@ export default function CreateStudio({
 
   const applyMeProfile = (me: any) => {
     setLoggedIn(!!me?.loggedIn);
+    setIsAdmin(!!me?.isAdmin);
     if (me?.creator?.name) setCreatorName(String(me.creator.name));
     if (me?.creator?.avatarUrl) setCreatorAvatarUrl(String(me.creator.avatarUrl));
     if (me?.creator?.profilePath) setCreatorProfilePath(String(me.creator.profilePath));
@@ -589,9 +619,15 @@ export default function CreateStudio({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider, model]);
 
-  // 客户端挂载后恢复用户上次选择，避免 SSR/CSR hydration mismatch
+  // 客户端挂载后再允许读取浏览器状态，避免 SSR/CSR hydration mismatch。
   useEffect(() => {
     setHydrated(true);
+  }, []);
+
+  // 模型选择只给管理员使用；普通用户始终走默认模型，避免旧缓存继续影响生成成本。
+  useEffect(() => {
+    if (!hydrated || !isAdmin || modelPrefsRestoredRef.current) return;
+    modelPrefsRestoredRef.current = true;
     try {
       const p = window.localStorage.getItem("creatorStudio:modelProvider");
       const m = window.localStorage.getItem("creatorStudio:modelName");
@@ -600,15 +636,15 @@ export default function CreateStudio({
     } catch {
       // ignore
     }
-  }, []);
+  }, [hydrated, isAdmin]);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || !isAdmin) return;
     try {
       window.localStorage.setItem("creatorStudio:modelProvider", provider);
       window.localStorage.setItem("creatorStudio:modelName", model);
     } catch {}
-  }, [provider, model, hydrated]);
+  }, [provider, model, hydrated, isAdmin]);
 
   // 顶部/聊天区展示当前模型（常驻显示）
   useEffect(() => {
@@ -938,31 +974,37 @@ export default function CreateStudio({
     if (!gameId) return;
     // 从首页模板进来属于“强制新建并自动开始”，不要用旧记录覆盖
     if ((initialPrompt || "").trim() && autoStart) return;
+    let cancelled = false;
     // gameId 刚变化时，先标记“未确认归属”，避免 save effect 把旧 messages 写到新 gid
     chatOwnerGameIdRef.current = "";
     const saved = safeLoadChat(gameId);
     if (saved?.messages?.length) {
       setMessages(saved.messages);
       chatOwnerGameIdRef.current = gameId;
-      return;
     }
-    // 本地没有，再从服务器恢复（只包含用户发送内容）
+    // 本地没有完整记录时，再从服务器恢复；新版优先 fullMessages（用户 + AI），旧版 fallback 到用户消息。
     (async () => {
       try {
         const r = await fetch(`/api/creator/chatlog?gameId=${encodeURIComponent(gameId)}`, { cache: "no-store" });
         const j = await r.json().catch(() => ({}));
-        const arr = Array.isArray(j?.messages) ? j.messages : [];
-        const userMsgs: ChatMsg[] = arr
-          .map((x: any) => ({ role: "user", content: String(x?.content || "").trim() }))
-          .filter((m: any) => m.content);
-        if (userMsgs.length) {
-          setMessages(userMsgs);
+        if (cancelled) return;
+        const serverMsgs = normalizeChatMessages(j?.fullMessages, "user");
+        const legacyUserMsgs = normalizeChatMessages(j?.messages, "user");
+        const nextMsgs = serverMsgs.length ? serverMsgs : saved?.messages?.length ? [] : legacyUserMsgs;
+        if (nextMsgs.length) {
+          setMessages(nextMsgs);
+          chatOwnerGameIdRef.current = gameId;
+        } else if (!saved?.messages?.length) {
+          setMessages([{ role: "assistant", content: "好耶！我们从一个全新的小游戏开始吧～你想做什么？" }]);
           chatOwnerGameIdRef.current = gameId;
         }
       } catch {
         // ignore
       }
     })();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameId]);
 
@@ -987,6 +1029,34 @@ export default function CreateStudio({
   function updatePreviewUrl(url: string, options?: { enable?: boolean }) {
     setPreviewUrl(url);
     if (options?.enable != null) setPreviewEnabled(!!options.enable);
+  }
+
+  function activateDraftGame(gid: string, title = "") {
+    const id = String(gid || "").trim();
+    if (!id) return;
+    const now = Date.now();
+    const optimistic: ProjectItem = {
+      gameId: id,
+      title,
+      entry: entryOf(id),
+      mtimeMs: now,
+      published: false,
+      dirty: false,
+      publishId: "",
+    };
+    setGameId(id);
+    chatOwnerGameIdRef.current = "";
+    setProjects((prev) => {
+      const next = [optimistic, ...prev.filter((p) => p.gameId !== id)];
+      safeSaveProjectsCache(next);
+      return next;
+    });
+    try {
+      window.localStorage.setItem(CREATOR_LAST_KEY, JSON.stringify({ v: CREATOR_STORE_VER, gameId: id, updatedAt: now }));
+    } catch {
+      // ignore
+    }
+    updatePreviewUrl(`${entryOf(id)}?t=${encodeURIComponent(nowId())}`, { enable: true });
   }
 
   function useStarterPrompt(text: string) {
@@ -1014,9 +1084,7 @@ export default function CreateStudio({
       // 兜底：把状态码带上，避免只看到 NEW_GAME_FAILED
       throw new Error(err || `NEW_GAME_FAILED(${r.status})`);
     }
-    setGameId(j.gameId);
-    // 还没来得及切换/恢复新项目的 messages，先不要让 save effect 误写
-    chatOwnerGameIdRef.current = "";
+    activateDraftGame(j.gameId);
     return j.gameId as string;
   }
 
@@ -1166,9 +1234,7 @@ export default function CreateStudio({
           setMessages(baseAssistant);
           setMsg("");
           const gid = await newGame();
-          await ensureSeed(gid);
-          updatePreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`, { enable: true });
-          await refreshProjects();
+          void refreshProjects().catch(() => null);
           await writePrompt(gid, bootPrompt);
           // 自动把首页的 prompt 作为第一句话发给 AI（用户点击“开始创造/模板”即表示要开始）
           await sendText(bootPrompt, gid, baseAssistant);
@@ -1226,13 +1292,8 @@ export default function CreateStudio({
         if (me) applyMeProfile(me);
       } catch {}
       try {
-        const gid = await newGame();
-        await ensureSeed(gid);
-        updatePreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`, { enable: true });
-        // 刷新项目列表
-        const r2 = await fetch("/api/creator/list", { cache: "no-store" });
-        const j2 = await r2.json().catch(() => ({}));
-        setProjects(Array.isArray(j2?.games) ? j2.games : []);
+        await newGame();
+        void refreshProjects().catch(() => null);
       } catch {}
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1340,7 +1401,7 @@ export default function CreateStudio({
     setProjects(arr);
     // 本地缓存一份：让 create 首屏先秒出列表，再后台刷新
     safeSaveProjectsCache(arr);
-    return arr as Array<{ gameId: string; title?: string; entry: string; mtimeMs?: number; published?: boolean; dirty?: boolean; publishId?: string }>;
+    return arr as ProjectItem[];
   }
 
   async function writeFiles(files: ModelFile[], gid?: string) {
@@ -1474,7 +1535,7 @@ export default function CreateStudio({
         fetch("/api/creator/chatlog", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ gameId: useId, content: text }),
+          body: JSON.stringify({ gameId: useId, role: "user", content: text, runId }),
         }).catch(() => null);
       } catch {
         // ignore
@@ -1721,6 +1782,15 @@ export default function CreateStudio({
       }
 
       const assistantText = String(parsed.assistant || "").trim() || (repaired ? "（AI 已自动修复输出格式）" : "（AI 回复为空）");
+      try {
+        fetch("/api/creator/chatlog", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ gameId: useId, role: "assistant", content: assistantText, runId }),
+        }).catch(() => null);
+      } catch {
+        // ignore
+      }
       // 把占位消息替换为最终文本
       setMessages((m) => {
         const mm = m.slice();
@@ -1935,8 +2005,7 @@ export default function CreateStudio({
     } catch {}
   }
 
-  // 顶部操作（新建/发布/删除）已移动到页面 header（TopActions 下拉菜单）
-  // studio 只负责：选择游戏、聊天、预览
+  // 顶部操作（新建/发布/删除）集中在 create 顶部工具区；studio 负责具体动作。
   useEffect(() => {
     const emit = () => {
       window.dispatchEvent(
@@ -1959,10 +2028,8 @@ export default function CreateStudio({
           setMessages([{ role: "assistant", content: "好耶！我们从一个全新的小游戏开始吧～你想做什么？" }]);
           setMsg("");
           try {
-            const gid = await newGame();
-            await ensureSeed(gid);
-            updatePreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`, { enable: true });
-            await refreshProjects();
+            await newGame();
+            void refreshProjects().catch(() => null);
           } catch (err: any) {
             setMsg(`新建游戏失败：${err?.message || "未知错误"}`);
           }
@@ -1999,7 +2066,7 @@ export default function CreateStudio({
               publishingRef.current = false;
               return;
             }
-            setMsg("发布中…正在打开发布页面…");
+            setMsg("");
             // 让提示先渲染出来再跳转
             setTimeout(() => {
               suppressLeaveGuardRef.current = true;
@@ -2033,16 +2100,12 @@ export default function CreateStudio({
             if (arr.length && arr[0]?.gameId) {
               setGameId(arr[0].gameId);
               updatePreviewUrl(`${entryOf(arr[0].gameId)}?t=${encodeURIComponent(nowId())}`, { enable: true });
-              // 不要覆盖新项目的聊天记录（否则看起来像“把另一个游戏的对话弄丢了”）
-              setMsg("已删除当前游戏。已切换到其它游戏。");
               return;
             }
 
             // 没有任何历史游戏了：自动新建一个
             const gid = await newGame();
-            await ensureSeed(gid);
-            updatePreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`, { enable: true });
-            await refreshProjects();
+            void refreshProjects().catch(() => null);
             chatOwnerGameIdRef.current = gid;
             setMessages([{ role: "assistant", content: "我帮你新建了一个空白小游戏～你想做什么？" }]);
           } catch (err: any) {
@@ -2092,6 +2155,10 @@ export default function CreateStudio({
               value={gameId}
               onChange={(e) => {
                 const gid = e.target.value;
+                if (gid === "__new__") {
+                  act("new");
+                  return;
+                }
                 void ensureEditableDraft(gid).then(() => refreshProjects()).catch(() => null);
                 setGameId(gid);
                 if (gid) updatePreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`, { enable: true });
@@ -2100,6 +2167,7 @@ export default function CreateStudio({
               aria-label="选择历史游戏"
               style={{ padding: "8px 10px", fontSize: 13, fontWeight: 900 }}
             >
+              <option value="__new__">＋ 新建游戏</option>
               {projects.length ? null : <option value="">（暂无历史游戏）</option>}
               {projects.map((p) => (
                 <option key={p.gameId} value={p.gameId}>
@@ -2109,29 +2177,39 @@ export default function CreateStudio({
               ))}
             </select>
           </label>
+        </div>
 
+        <div className="createTopRight createPrimaryActions" aria-label="常用操作">
+          <button
+            className={`createTopActionBtn createPublishActionBtn ${published && publishDirty ? "isDirty" : ""}`}
+            type="button"
+            onClick={() => act("publish")}
+            disabled={uiBusy || !gameId}
+          >
+            {publishingBusy ? (
+              <span className="loadingLabel">
+                {published ? "更新中" : "发布中"}
+                <span className="loadingDots" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </span>
+              </span>
+            ) : (
+              publishText
+            )}
+          </button>
           <details className="createMenu" ref={opMenuRef}>
             <summary className="createMenuBtn" aria-label="更多操作">
-              {deletingBusy ? "删除中…" : "操作 ▾"}
+              {deletingBusy ? "删除中…" : "更多 ▾"}
             </summary>
             <div className="createMenuPanel" role="menu" aria-label="创作操作菜单">
-              <button className="createMenuItem" type="button" onClick={() => act("new")} disabled={uiBusy}>
-                新建游戏
-              </button>
-              <button className="createMenuItem" type="button" onClick={() => act("publish")} disabled={uiBusy || !gameId}>
-                {publishText}
-              </button>
               <button className="createMenuItem" type="button" onClick={() => act("delete")} disabled={uiBusy || !gameId}>
                 {deletingBusy ? "删除中…" : "删除游戏"}
               </button>
             </div>
           </details>
         </div>
-        {deletingBusy ? (
-          <div className="createBusyHint" role="status" aria-live="polite">
-            正在删除游戏…
-          </div>
-        ) : null}
       </div>
 
       <section className="createGrid">
@@ -2489,63 +2567,64 @@ export default function CreateStudio({
             </div>
           </div>
 
-          {/* 彩蛋：模型选择（默认收起，避免占用首屏） */}
-          <details className="modelEgg" aria-label="模型选择（彩蛋）">
-            <summary className="modelEggBtn" title={currentModelLabel || `${provider} / ${model}`}>
-              模型（彩蛋）：{model} ▾
-            </summary>
-            <div className="modelEggPanel">
-              <div className="modelEggRow">
-                <span className="modelEggLabel">平台</span>
-                <select
-                  className="restInput modelEggSelect"
-                  value={provider}
-                  disabled={uiBusy}
-                  onChange={(e) => {
-                    const p = (e.target.value || "openrouter") as any;
-                    if (p !== "deepseek" && p !== "openrouter" && p !== "bailian" && p !== "tencent" && p !== "chinamobile") return;
-                    setProvider(p);
-                    if (p === "openrouter") setModel("nvidia/nemotron-3-super-120b-a12b:free");
-                    else if (p === "bailian") setModel(DEFAULT_BAILIAN_MODEL);
-                    else if (p === "tencent") setModel("hy3-preview");
-                    else if (p === "chinamobile") setModel("minimax-m25");
-                    else setModel("deepseek-v4-flash");
-                  }}
-                  aria-label="选择模型平台"
-                >
-                  <option value="openrouter">OpenRouter</option>
-                  <option value="bailian">阿里云百炼</option>
-                  <option value="tencent">腾讯混元 TokenHub</option>
-                  <option value="chinamobile">中国移动 MaaS</option>
-                  <option value="deepseek">DeepSeek</option>
-                </select>
+          {isAdmin ? (
+            <details className="modelEgg" aria-label="模型选择（管理员）">
+              <summary className="modelEggBtn" title={currentModelLabel || `${provider} / ${model}`}>
+                模型（管理员）：{model} ▾
+              </summary>
+              <div className="modelEggPanel">
+                <div className="modelEggRow">
+                  <span className="modelEggLabel">平台</span>
+                  <select
+                    className="restInput modelEggSelect"
+                    value={provider}
+                    disabled={uiBusy}
+                    onChange={(e) => {
+                      const p = (e.target.value || "openrouter") as any;
+                      if (p !== "deepseek" && p !== "openrouter" && p !== "bailian" && p !== "tencent" && p !== "chinamobile") return;
+                      setProvider(p);
+                      if (p === "openrouter") setModel("nvidia/nemotron-3-super-120b-a12b:free");
+                      else if (p === "bailian") setModel(DEFAULT_BAILIAN_MODEL);
+                      else if (p === "tencent") setModel("hy3-preview");
+                      else if (p === "chinamobile") setModel("minimax-m25");
+                      else setModel("deepseek-v4-flash");
+                    }}
+                    aria-label="选择模型平台"
+                  >
+                    <option value="openrouter">OpenRouter</option>
+                    <option value="bailian">阿里云百炼</option>
+                    <option value="tencent">腾讯混元 TokenHub</option>
+                    <option value="chinamobile">中国移动 MaaS</option>
+                    <option value="deepseek">DeepSeek</option>
+                  </select>
+                </div>
+                <div className="modelEggRow">
+                  <span className="modelEggLabel">模型</span>
+                  <select
+                    className="restInput modelEggSelect"
+                    value={model}
+                    disabled={uiBusy}
+                    onChange={(e) => setModel(e.target.value)}
+                    aria-label="选择模型"
+                  >
+                    {(provider === "openrouter"
+                      ? openrouterModels
+                      : provider === "bailian"
+                        ? bailianModels
+                        : provider === "tencent"
+                          ? tencentModels
+                          : provider === "chinamobile"
+                            ? chinaMobileModels
+                            : deepseekModels).map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-              <div className="modelEggRow">
-                <span className="modelEggLabel">模型</span>
-                <select
-                  className="restInput modelEggSelect"
-                  value={model}
-                  disabled={uiBusy}
-                  onChange={(e) => setModel(e.target.value)}
-                  aria-label="选择模型"
-                >
-                  {(provider === "openrouter"
-                    ? openrouterModels
-                    : provider === "bailian"
-                      ? bailianModels
-                      : provider === "tencent"
-                        ? tencentModels
-                        : provider === "chinamobile"
-                          ? chinaMobileModels
-                          : deepseekModels).map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </details>
+            </details>
+          ) : null}
         </div>
       </div>
 

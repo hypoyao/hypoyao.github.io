@@ -4,6 +4,7 @@ import { ownerKeyFromSession } from "@/lib/creator/creatorIndex";
 import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
+import { recordUsageEvent } from "@/lib/db/usageAnalytics";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -61,19 +62,18 @@ export async function POST() {
       "if(!el) return; el.innerHTML=\"<div style='font-weight:900'>准备就绪 ✅</div>\";})();";
     const promptMd = "我想做一个什么小游戏呢？\n\n（你可以在左边对 AI 说：我想做一个……）\n";
 
-    const files: Array<[string, string]> = [
-      ["index.html", indexHtml],
-      ["style.css", styleCss],
-      ["game.js", gameJs],
-      ["prompt.md", promptMd],
-    ];
-    for (const [p, c] of files) {
-      await db.execute(sql`
-        insert into creator_draft_files (game_id, path, content)
-        values (${id}, ${p}, ${c})
-        on conflict (game_id, path) do nothing
-      `);
-    }
+    await db.execute(sql`
+      insert into creator_draft_files (game_id, path, content)
+      values
+        (${id}, 'index.html', ${indexHtml}),
+        (${id}, 'style.css', ${styleCss}),
+        (${id}, 'game.js', ${gameJs}),
+        (${id}, 'prompt.md', ${promptMd})
+      on conflict (game_id, path) do nothing
+    `);
+
+    const creatorId = sess.phone ? `u_${sess.phone}` : null;
+    recordUsageEvent({ eventType: "draft_created", creatorId, gameId: id }).catch(() => null);
 
     return json(200, { ok: true, gameId: id, entry: `/games/${id}/index.html` });
   } catch (e: any) {

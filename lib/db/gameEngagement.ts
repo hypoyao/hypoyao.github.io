@@ -54,12 +54,12 @@ export async function getGameEngagement(gameId: string, visitorId?: string | nul
   };
 }
 
-export async function recordGameView(gameId: string, visitorId: string) {
+export async function recordGameView(gameId: string, visitorId: string, creatorId?: string | null) {
   if (!gameId) return getGameEngagement(gameId, visitorId);
   await ensureGameEngagementReady();
   await db.execute(sql`
-    insert into game_play_events (game_id, visitor_id)
-    values (${gameId}, ${visitorId || null})
+    insert into game_play_events (game_id, visitor_id, creator_id)
+    values (${gameId}, ${visitorId || null}, ${String(creatorId || "").trim() || null})
   `);
   return getGameEngagement(gameId, visitorId);
 }

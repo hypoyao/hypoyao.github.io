@@ -1,0 +1,501 @@
+:root {
+  --tile-border: rgba(15, 23, 42, 0.10);
+}
+
+.homeCard {
+  width: min(1120px, 100%);
+}
+
+.homeNew .header {
+  margin-bottom: 12px;
+}
+
+.homeBrand {
+  display: grid;
+  gap: 2px;
+}
+.homeBrandTitle {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 1100;
+  letter-spacing: 0.2px;
+  line-height: 1.15;
+  color: rgba(15, 23, 42, 0.86);
+}
+.homeBrandSub {
+  font-size: 12px;
+  color: rgba(100, 116, 139, 0.95);
+  font-weight: 800;
+}
+
+.homeHeaderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.homeHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 仅在首页隐藏右上角“创作我的游戏”，不影响 create 页面右上角“回首页”按钮 */
+.homeNew .homeHeaderActions .homeCreateBtn {
+  display: none;
+}
+
+.homeCreateBtn {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(37, 99, 235, 0.22);
+  background: rgba(37, 99, 235, 0.08);
+  box-shadow: 0 10px 22px rgba(2, 6, 23, 0.06);
+  font-size: 13px;
+  font-weight: 1000;
+  text-decoration: none;
+  color: rgba(37, 99, 235, 0.95);
+  user-select: none;
+  transition: transform 120ms ease, filter 120ms ease;
+}
+
+.homeCreateBtn:hover {
+  filter: brightness(1.02);
+}
+.homeCreateBtn:active {
+  transform: scale(0.99);
+}
+
+.homeLoginBtn {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: rgba(255, 255, 255, 0.65);
+  box-shadow: 0 10px 22px rgba(2, 6, 23, 0.06);
+  font-size: 13px;
+  font-weight: 900;
+  text-decoration: none;
+  color: rgba(15, 23, 42, 0.85);
+  user-select: none;
+  transition: transform 120ms ease, filter 120ms ease;
+}
+
+.homeLoginBtn:hover {
+  filter: brightness(1.02);
+}
+.homeLoginBtn:active {
+  transform: scale(0.99);
+}
+
+.homeAvatarBtn {
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: rgba(255, 255, 255, 0.65);
+  box-shadow: 0 10px 22px rgba(2, 6, 23, 0.06);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  text-decoration: none;
+}
+
+.homeAvatarImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.homeSub {
+  margin: -6px 0 14px;
+  color: var(--muted);
+  line-height: 1.55;
+  font-size: 13px;
+}
+
+.homeHeroGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+.heroPanel {
+  border-radius: 22px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: radial-gradient(900px 420px at 10% 10%, rgba(59, 130, 246, 0.16), transparent 60%),
+    radial-gradient(900px 420px at 90% 10%, rgba(34, 197, 94, 0.12), transparent 60%),
+    linear-gradient(180deg, rgba(241, 245, 249, 0.65), rgba(255, 255, 255, 0.85));
+  box-shadow: 0 18px 40px rgba(2, 6, 23, 0.08);
+  padding: 16px;
+  overflow: hidden;
+}
+.heroTitle {
+  margin: 0 0 8px;
+  font-size: 28px;
+  font-weight: 1100;
+  letter-spacing: 0.2px;
+}
+.heroDesc {
+  margin: 0 0 12px;
+  color: rgba(71, 85, 105, 0.95);
+  line-height: 1.55;
+  font-size: 13px;
+  font-weight: 800;
+}
+.heroInputRow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 10px 26px rgba(2, 6, 23, 0.06);
+}
+.heroInput {
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, 0.90);
+}
+.heroCtaBtn {
+  border: none;
+  cursor: pointer;
+  padding: 10px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 1100;
+  color: rgba(255, 255, 255, 0.96);
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.95), rgba(34, 197, 94, 0.95));
+  box-shadow: 0 14px 26px rgba(2, 6, 23, 0.10);
+  transition: transform 120ms ease, filter 120ms ease;
+}
+.heroCtaBtn:hover {
+  filter: brightness(1.02);
+}
+.heroCtaBtn:active {
+  transform: scale(0.99);
+}
+
+.heroChips {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.heroChip {
+  text-decoration: none;
+  color: rgba(15, 23, 42, 0.82);
+  font-size: 12px;
+  font-weight: 900;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  background: rgba(255, 255, 255, 0.65);
+}
+
+/* 手机端：示例模板只展示前两个，避免首屏过长 */
+@media (max-width: 420px) {
+  .heroChips .heroChip:nth-child(n + 3) {
+    display: none;
+  }
+}
+
+.promptBody {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(71, 85, 105, 0.95);
+  white-space: pre-wrap;
+}
+
+.gamePromptPanel {
+  margin-top: 8px;
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  background: rgba(248, 250, 252, 0.65);
+  padding: 8px 10px;
+}
+.gamePromptPanel > summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+  font-weight: 1000;
+  color: rgba(15, 23, 42, 0.78);
+}
+.gamePromptPanel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.homeSection {
+  margin-top: 28px;
+}
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 0 10px;
+}
+
+.homeHeroGrid {
+  margin-top: 10px;
+}
+
+.homeSection {
+  padding-top: 10px;
+}
+
+.promptTrigger {
+  margin-top: 8px;
+  width: fit-content;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  background: rgba(255, 255, 255, 0.65);
+  color: rgba(15, 23, 42, 0.78);
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 1000;
+  cursor: pointer;
+}
+
+.promptModal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(2, 6, 23, 0.40);
+  display: grid;
+  place-items: center;
+  padding: 18px;
+}
+
+.promptModalPanel {
+  width: min(720px, 100%);
+  max-height: min(72dvh, 680px);
+  overflow: hidden;
+  border-radius: 18px;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 28px 80px rgba(2, 6, 23, 0.22);
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.promptModalHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 12px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  background: linear-gradient(180deg, rgba(241, 245, 249, 0.85), rgba(255, 255, 255, 0.85));
+}
+
+.promptModalTitle {
+  font-size: 13px;
+  font-weight: 1100;
+  color: rgba(15, 23, 42, 0.86);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.promptModalActions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.promptIconBtn {
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: rgba(255, 255, 255, 0.75);
+  color: rgba(15, 23, 42, 0.80);
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 1000;
+  cursor: pointer;
+}
+
+.promptModalBody {
+  margin: 0;
+  padding: 12px 12px 14px;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.6;
+  color: rgba(30, 41, 59, 0.92);
+  white-space: pre-wrap;
+}
+.sectionTitle {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 1100;
+  letter-spacing: 0.2px;
+  line-height: 1.15;
+  color: rgba(15, 23, 42, 0.86);
+  white-space: nowrap;
+}
+.sectionSub {
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(100, 116, 139, 0.95);
+}
+
+.gameGrid {
+  display: grid;
+  /* 上下滚动布局：每行 2-3 个 */
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+@media (max-width: 760px) {
+  .gameGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.gameItem {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 16px;
+  border: 1px solid var(--tile-border);
+  background: rgba(255, 255, 255, 0.65);
+  box-shadow: 0 10px 24px rgba(2, 6, 23, 0.06);
+  color: inherit;
+  transition: transform 120ms ease, filter 120ms ease;
+}
+
+.gameItem:hover {
+  filter: brightness(1.02);
+}
+
+.gameItem:active {
+  transform: scale(0.992);
+}
+
+.gameLink {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 8px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.gameActions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.gameThumb {
+  width: 100%;
+  /* 首页封面统一 1:1 */
+  aspect-ratio: 1 / 1;
+  border-radius: 12px;
+  object-fit: contain;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: linear-gradient(180deg, #ffffff, #f1f5f9);
+}
+
+.gameName {
+  font-weight: 1000;
+  font-size: 15px;
+  letter-spacing: 0.2px;
+}
+
+.gameDesc {
+  margin-top: 4px;
+  font-size: 12px;
+  color: rgba(100, 116, 139, 0.95);
+  line-height: 1.4;
+}
+
+.gameStatRow {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.gameStatChip {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  background: rgba(248, 250, 252, 0.92);
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(71, 85, 105, 0.96);
+}
+
+.gameMeta {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(15, 23, 42, 0.72);
+}
+
+.gameMetaRow {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.gameMetaRow .gameMeta {
+  /* 在一行内对齐头像与文字，避免 margin-top 造成“下沉” */
+  margin-top: 0;
+  line-height: 18px;
+  display: inline-flex;
+  align-items: center;
+}
+.gameMetaAvatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  object-fit: cover;
+  background: #fff;
+}
+
+.homeFooter {
+  margin-top: 14px;
+  display: flex;
+  justify-content: center;
+}
+
+.homeFooter .btn {
+  min-width: 160px;
+}
+
+@media (max-width: 420px) {
+  .gameGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .gameItem {
+    border-radius: 14px;
+  }
+  .gameName {
+    font-size: 15px;
+  }
+}
+
+@media (max-width: 340px) {
+  .gameGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 920px) {
+  .heroTitle {
+    font-size: 24px;
+  }
+}

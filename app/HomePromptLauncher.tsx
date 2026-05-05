@@ -45,12 +45,12 @@ export default function HomePromptLauncher() {
           className="heroInput"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="输入一句话，例如：做一个打地鼠小游戏，带难度等级、音效和排行榜"
+          placeholder="帮我生成一个小学英语单词闯关小游戏"
           autoComplete="off"
           name="prompt"
         />
         <button className="heroCtaBtn" type="submit">
-          开始创建
+          立即生成
         </button>
       </form>
 

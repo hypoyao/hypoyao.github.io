@@ -52,6 +52,7 @@ export async function ensureCreatorDraftTables(force = false) {
 
     // 同样补齐旧表可能缺失的列
     await db.execute(sql`alter table creator_draft_files add column if not exists updated_at timestamptz not null default now();`);
+    await db.execute(sql`create index if not exists creator_draft_files_game_path_updated_idx on creator_draft_files(game_id, path, updated_at desc);`);
 
     state.ensured = true;
     state.ensuring = null;

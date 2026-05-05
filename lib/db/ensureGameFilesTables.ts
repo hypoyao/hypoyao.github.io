@@ -21,9 +21,9 @@ export async function ensureGameFilesTables() {
       );
     `);
     await db.execute(sql`create index if not exists game_files_game_idx on game_files(game_id);`);
+    await db.execute(sql`create index if not exists game_files_game_path_updated_idx on game_files(game_id, path, updated_at desc);`);
     _ensured = true;
     _ensuring = null;
   })();
   return _ensuring;
 }
-

@@ -10,6 +10,7 @@ import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
 import { ensureGameFilesTables } from "@/lib/db/ensureGameFilesTables";
 import { ensureCreatorUserMessagesTable } from "@/lib/db/ensureCreatorUserMessagesTable";
 import { isSuperAdminId } from "@/lib/auth/admin";
+import { recordUsageEvent } from "@/lib/db/usageAnalytics";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -382,6 +383,17 @@ export async function POST(req: Request) {
         and source_draft_id = ${publishGameId}
         and creator_id = ${effCreatorId}
     `);
+  }
+
+  try {
+    await recordUsageEvent({
+      eventType: existing ? "game_updated" : "game_published",
+      creatorId: effCreatorId,
+      gameId: publishGameId,
+      detail: { sourceDraftId: storedSourceDraftId || undefined, title },
+    });
+  } catch {
+    // 管理统计失败不影响发布
   }
 
   return json(200, { ok: true, id: publishGameId, path: effPath });

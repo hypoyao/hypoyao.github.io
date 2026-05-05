@@ -187,6 +187,8 @@ const CLARIFY_PROMPT = `
 5) 绝对不要出现“状态机/渲染方案/胜负判定/物理参数”等专业词。
 6) 你提出的方案和问题必须紧扣“用户最早的主题/目标”（例如：学英语口语、背单词、练听力等），不能跑题成通用小游戏。
 7) 你可以参考【参考案例类型库】来保持方向一致；如果你不确定应该参考哪种类型，就一定要问用户选 A-F（选择题形式）。
+8) A/B/C 只能是同一主题下的“玩法/操作/难度/画风变体”，严禁替换核心主题、主角、学科或学习目标。
+9) 如果用户说的是“打地鼠小猫”，三个方案都必须仍然是打地鼠/小猫相关；如果是“英语口语”，三个方案都必须仍然是英语口语相关。
 
 【输出要求：只输出合法 JSON（json_object）】
 Schema：
@@ -1627,6 +1629,31 @@ function buildClarifyUiOptions(options: any[]) {
     payload: "@choice OTHER",
   });
   return base;
+}
+
+function hasConcreteGameTopic(text: string) {
+  const raw = String(text || "").trim();
+  if (!raw) return false;
+  const compact = raw.replace(/\s+/g, "").replace(/[，。！？、,.!?;；:："'“”‘’（）()【】\[\]{}]/g, "");
+  if (!compact) return false;
+  if (/^(做|生成|写|创建|帮我做|给我做|我想做)?(一个|一款)?(h5)?(小游戏|游戏|小应用)(吧|呀|呢|就行|就可以)?$/i.test(compact)) {
+    return false;
+  }
+
+  // 明确游戏/教学类型即视为“主题已明确”，不要为了缺操作/平台/画风而强行反问。
+  if (
+    /(扫雷|围棋|五子棋|象棋|数独|贪吃蛇|打地鼠|跳跳球|跑酷|躲避|射击|消消乐|拼图|华容道|记忆|配对|问答|答题|闯关|口算|数学|英语|单词|口语|听力|成语|科学|地理|历史|物理|化学|生物|恐龙|小猫|小狗|飞船|赛车|篮球|足球)/i.test(
+      compact,
+    )
+  ) {
+    return true;
+  }
+
+  const residue = compact.replace(
+    /(我想|我要|帮我|给我|请|做|生成|写|创建|设计|一个|一款|h5|小游戏|游戏|小应用|可爱|好玩|有趣|简单|酷炫|卡通|的|吧|呀|呢|一下|可以|想)/gi,
+    "",
+  );
+  return /[a-z0-9]{3,}/i.test(residue) || residue.length >= 2;
 }
 
 type IncrementalEditProfile = {
@@ -3939,7 +3966,9 @@ export async function POST(req: Request) {
             const hasPlatform = /(手机|移动端|pc|电脑|竖屏|横屏|双端|网页|浏览器|ipad)/i.test(userIntent);
             const missingCount = [hasControls, hasWinLose, hasStyle, hasPlatform].filter((x) => !x).length;
             const genericOnly = /^(做|生成|写|创建)?\s*(一个|一款)?\s*(h5\s*)?(小游戏|游戏|小应用)(吧|呀|就行|就可以)?[！!。.\s]*$/i.test(userIntent);
-            const isVague = genericOnly || userIntent.length < 12 || (userIntent.length < 24 && missingCount >= 3);
+            const hasClearTopic = hasConcreteGameTopic(seedPrompt || userIntent);
+            // 只在“主题本身不明确”时澄清。主题明确但缺少操作/平台/画风时，蓝图阶段用稳定默认值补齐，避免 A/B/C 跑偏主题。
+            const isVague = genericOnly || (!hasClearTopic && (userIntent.length < 12 || (userIntent.length < 24 && missingCount >= 3)));
             // 如果正在等待用户选择方案/确认配置，则进入对应阶段处理
             const pickChoice = (s: string) => {
               const t = String(s || "").trim();
@@ -4019,6 +4048,9 @@ export async function POST(req: Request) {
                     content:
                       `【用户最早的主题】\n${seedPrompt || userIntent}\n\n` +
                       `【用户最新补充】\n${userIntent}\n\n` +
+                      `【主题锁定】\n` +
+                      `- A/B/C 必须全部保留同一个核心主题，不允许换成另一个游戏类型、主角、学科或学习目标。\n` +
+                      `- 你只能补齐玩法细节、操作方式、平台、画风和难度，不能重新发明主题。\n\n` +
                       `请严格围绕“用户最早的主题”给出 A/B/C 三个方向，并提出选择题问题。`,
                   },
                 ],

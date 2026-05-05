@@ -186,6 +186,61 @@
   position: relative;
   flex: 0 0 auto;
 }
+.createPrimaryActions {
+  align-items: center;
+}
+.createTopActionBtn {
+  flex: 0 0 auto;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 10px 22px rgba(2, 6, 23, 0.06);
+  color: rgba(15, 23, 42, 0.88);
+  font-size: 13px;
+  font-weight: 1100;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition: filter 120ms ease, transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+.createNewActionBtn {
+  color: rgba(37, 99, 235, 0.96);
+  border-color: rgba(37, 99, 235, 0.20);
+  background: rgba(239, 246, 255, 0.92);
+}
+.createPublishActionBtn {
+  min-width: 82px;
+  color: rgba(255, 255, 255, 0.98);
+  border-color: transparent;
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.98), rgba(14, 165, 233, 0.95));
+  box-shadow: 0 14px 28px rgba(37, 99, 235, 0.18);
+}
+.createPublishActionBtn.isDirty {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.98), rgba(249, 115, 22, 0.95));
+  box-shadow: 0 14px 28px rgba(249, 115, 22, 0.16);
+}
+@media (hover: hover) {
+  .createTopActionBtn:hover {
+    filter: brightness(1.02);
+    border-color: rgba(15, 23, 42, 0.18);
+  }
+}
+.createTopActionBtn:active {
+  transform: scale(0.99);
+}
+.createTopActionBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+  filter: grayscale(0.1);
+  transform: none;
+  box-shadow: none;
+}
 .createMenuBtn {
   list-style: none;
   cursor: pointer;
@@ -1165,6 +1220,7 @@
 }
 
 .createBento .createTopActions .homeCreateBtn,
+.createBento .createTopActionBtn,
 .createBento .createMenuBtn {
   border: 1px solid var(--b-border);
   box-shadow: var(--b-shadow);
@@ -1172,7 +1228,23 @@
   background: rgba(255, 255, 255, 1);
   font-weight: 1000;
 }
+.createBento .createNewActionBtn {
+  color: rgba(37, 99, 235, 0.96);
+  background: rgba(239, 246, 255, 1);
+  border-color: rgba(191, 219, 254, 1);
+}
+.createBento .createPublishActionBtn {
+  color: rgba(255, 255, 255, 0.98);
+  border-color: transparent;
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.98), rgba(14, 165, 233, 0.95));
+  box-shadow: 0 10px 20px rgba(37, 99, 235, 0.14);
+}
+.createBento .createPublishActionBtn.isDirty {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.98), rgba(249, 115, 22, 0.95));
+  box-shadow: 0 10px 20px rgba(249, 115, 22, 0.14);
+}
 @media (hover: hover) {
+  .createBento .createTopActionBtn:hover,
   .createBento .createMenuBtn:hover {
     filter: brightness(1.02);
     border-color: rgba(148, 163, 184, 0.55);
@@ -1669,5 +1741,28 @@
 @media (max-width: 420px) {
   .previewGame {
     min-height: max(520px, 66dvh);
+  }
+}
+
+@media (max-width: 720px) {
+  .createPrimaryActions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  .createPrimaryActions .createMenu {
+    min-width: 0;
+  }
+
+  .createTopActionBtn,
+  .createMenuBtn {
+    width: 100%;
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
 }

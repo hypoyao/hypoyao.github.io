@@ -172,7 +172,7 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, lockId, i
       return;
     }
     setSubmitting(true);
-    setMsg(`${actionLabel}中…`);
+    setMsg("");
     let shouldResetSubmitting = true;
     try {
       const r = await fetch("/api/games/publish", {
@@ -314,7 +314,18 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, lockId, i
 
         <div className="actions">
           <button className="btn" type="submit" disabled={submitting} aria-busy={submitting}>
-            {submitting ? `${actionLabel}中…` : actionLabel}
+            {submitting ? (
+              <span className="loadingLabel">
+                {actionLabel}中
+                <span className="loadingDots" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </span>
+              </span>
+            ) : (
+              actionLabel
+            )}
           </button>
           <a
             className={`btn btnGray${submitting ? " isDisabled" : ""}`}
@@ -330,7 +341,7 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, lockId, i
         </div>
       </div>
 
-      {msg ? (
+      {msg && !submitting ? (
         <div style={{ marginTop: 10, fontSize: 13, fontWeight: 900, color: "rgba(15,23,42,0.75)" }}>{msg}</div>
       ) : null}
     </form>
