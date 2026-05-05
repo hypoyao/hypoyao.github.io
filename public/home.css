@@ -72,10 +72,14 @@
 
 .homeNavLinks a {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: rgba(17, 24, 39, 0.74);
   text-decoration: none;
   font-size: 15px;
   font-weight: 950;
+  line-height: 1;
   white-space: nowrap;
 }
 
@@ -992,16 +996,18 @@
   display: grid;
   grid-template-columns: 150px 1fr;
   gap: 14px;
-  min-height: 160px;
+  min-height: 174px;
   padding: 12px;
+  align-items: start;
   color: inherit;
   text-decoration: none;
 }
 
 .gameThumb {
   width: 100%;
-  height: 100%;
-  min-height: 136px;
+  height: auto;
+  min-height: 0;
+  aspect-ratio: 1 / 1;
   border-radius: 15px;
   object-fit: cover;
   border: 1px solid rgba(37, 99, 235, 0.10);
@@ -1629,6 +1635,17 @@
     height: auto;
   }
 
+  .worksGameGrid .gameLink,
+  .communitySection .gameLink {
+    grid-template-columns: 150px minmax(0, 1fr);
+    min-height: 174px;
+  }
+
+  .worksGameGrid .gameThumb,
+  .communitySection .gameThumb {
+    aspect-ratio: 1 / 1;
+  }
+
   .communityHead {
     display: grid;
     justify-items: center;
@@ -1708,6 +1725,18 @@
   .gameGrid,
   .worksGameGrid {
     grid-template-columns: 1fr;
+  }
+
+  .worksGameGrid .gameLink,
+  .communitySection .gameLink {
+    grid-template-columns: 128px minmax(0, 1fr);
+    min-height: 152px;
+    gap: 12px;
+  }
+
+  .worksGameGrid .gameThumb,
+  .communitySection .gameThumb {
+    aspect-ratio: 1 / 1;
   }
 
   .heroProduct {
@@ -1997,8 +2026,7 @@
   line-height: 1.55;
 }
 
-.teacherEntryLink,
-.sectionMoreLink {
+.teacherEntryLink {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -2014,6 +2042,27 @@
   font-weight: 1050;
   text-decoration: none;
   white-space: nowrap;
+}
+
+.sectionMoreLink {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: rgba(37, 99, 235, 0.96);
+  font-size: 13px;
+  font-weight: 1050;
+  line-height: 1.2;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.sectionMoreLink::after {
+  content: "›";
+  font-size: 17px;
+  font-weight: 1100;
+  line-height: 1;
+  transform: translateY(-0.5px);
 }
 
 .teacherEntryLink {
@@ -2128,15 +2177,16 @@
   display: grid;
   grid-template-columns: 150px 1fr;
   gap: 14px;
-  min-height: 160px;
+  min-height: 174px;
   padding: 12px;
+  align-items: start;
 }
 
 .homeNew .homeWallGrid .gameThumb {
   width: 100%;
-  height: 100%;
-  min-height: 136px;
-  aspect-ratio: auto;
+  height: auto;
+  min-height: 0;
+  aspect-ratio: 1 / 1;
   object-fit: cover;
   border-radius: 15px;
   border: 1px solid rgba(37, 99, 235, 0.10);
@@ -2286,13 +2336,16 @@
   }
 
   .homeNew .homeWallGrid .gameLink {
-    grid-template-columns: 1fr;
+    grid-template-columns: 112px minmax(0, 1fr);
+    gap: 10px;
+    min-height: 136px;
+    padding: 10px;
   }
 
   .homeNew .homeWallGrid .gameThumb {
     height: auto;
     min-height: 0;
-    aspect-ratio: 1.5 / 1;
+    aspect-ratio: 1 / 1;
   }
 
   .homeNew .gameItem {
@@ -2303,8 +2356,7 @@
     font-size: 15px;
   }
 
-  .teacherEntryLink,
-  .sectionMoreLink {
+  .teacherEntryLink {
     width: 100%;
   }
 }

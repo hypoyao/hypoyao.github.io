@@ -34,13 +34,6 @@ export default function LegalPage({
           </div>
         </header>
 
-        {cfg.hasPlaceholder ? (
-          <div className="legalWarning">
-            这是一份适合上线前准备阶段的法律文档草案。正式商业化、投放广告、向学校/机构收费，或面向 13 岁以下儿童开放前，请补全运营主体、联系邮箱、
-            争议解决信息，并由熟悉未成年人、隐私和平台责任的律师复核。
-          </div>
-        ) : null}
-
         <div className="legalContent">
           {sections.map((section) => (
             <section key={section.title} className="legalSection">
