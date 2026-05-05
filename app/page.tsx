@@ -47,7 +47,7 @@ export default async function HomePage() {
           <div className="sectionHead">
             <h2 className="sectionTitle">精选作品</h2>
             <a className="sectionMoreLink" href="/works">
-              社区作品
+              全部作品
             </a>
           </div>
           <section className="gameGrid homeWallGrid" aria-label="game list">

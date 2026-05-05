@@ -2284,7 +2284,7 @@ export default function CreateStudio({
         <div className="createPanel isChat" aria-label="chat">
           <div className="createPanelHeader">
             <div>
-              <div className="createPanelName" title={currentGameTitle}>{currentGameTitle}</div>
+              <div className="createPanelName" title={currentGameTitle}>与 AI 对话</div>
             </div>
           </div>
 
