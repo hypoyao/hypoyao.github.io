@@ -88,6 +88,7 @@ const CREATOR_STORE_VER = 1;
 const CREATOR_LAST_KEY = "creatorStudio:last";
 const DEFAULT_PROVIDER = "bailian";
 const DEFAULT_BAILIAN_MODEL = "qwen3.6-plus-2026-04-02";
+const BAILIAN_FALLBACK_MODEL = "qwen3-max-2026-01-23";
 function chatKey(gid: string) {
   return `creatorStudio:chat:${gid || "draft"}`;
 }
@@ -621,6 +622,7 @@ export default function CreateStudio({
   const bailianModels = useMemo(
     () => [
       { id: DEFAULT_BAILIAN_MODEL, name: "qwen3.6-plus-2026-04-02（默认，百炼新版）" },
+      { id: BAILIAN_FALLBACK_MODEL, name: "qwen3-max-2026-01-23（备用，Qwen3 Max）" },
       { id: "qwen3.6-plus", name: "qwen3.6-plus（百炼直连）" },
       { id: "qwen-plus", name: "qwen-plus（百炼）" },
     ],

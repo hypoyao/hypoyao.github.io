@@ -30,13 +30,6 @@ export default async function WorksPage() {
         </div>
       </nav>
 
-      <section className="worksHero">
-        <a className="worksBackLink" href="/">
-          ← 返回首页
-        </a>
-        <h1>社区作品</h1>
-      </section>
-
       <section className="worksGridWrap" aria-label="全部社区作品">
         {games.length ? (
           <section className="gameGrid worksGameGrid" aria-label="game list">

@@ -19,6 +19,7 @@ type ModelProvider = "openrouter" | "deepseek" | "bailian" | "tencent" | "chinam
 const TENCENT_TOKENHUB_MODELS = ["hy3-preview"] as const;
 const CHINAMOBILE_MODELS = ["minimax-m25"] as const;
 const DEFAULT_BAILIAN_MODEL = "qwen3.6-plus-2026-04-02";
+const BAILIAN_FALLBACK_MODEL = "qwen3-max-2026-01-23";
 // DeepSeek 官方 API（OpenAI 兼容）模型：V4 系列
 // deepseek-chat / deepseek-reasoner 将逐步下线（官方已声明未来弃用）
 const DEEPSEEK_DIRECT_MODELS = ["deepseek-v4-pro", "deepseek-v4-flash"] as const;
@@ -3030,6 +3031,17 @@ export async function POST(req: Request) {
               eml.includes("not available");
             const isNetwork =
               eml.includes("fetch_failed") || eml.includes("network error") || eml.includes("timeout") || eml.includes("gateway");
+
+            const canFallbackBailian =
+              provider === "bailian" &&
+              String(payload?.model || "").trim() === DEFAULT_BAILIAN_MODEL;
+            if (canFallbackBailian) {
+              sendStatus(`当前默认模型不稳定/不可用，我切换到 ${BAILIAN_FALLBACK_MODEL} 再试一次…`);
+              sendMeta({ provider, model: BAILIAN_FALLBACK_MODEL, reason: "fallback_model_unstable" });
+              model = BAILIAN_FALLBACK_MODEL;
+              const p2: any = { ...payload, model: BAILIAN_FALLBACK_MODEL };
+              return await callStreamToString(p2, stepTag, strictJson, realTimeout);
+            }
 
             if (canSwapModel && (isRegionBlocked || isModelUnavailable || isNetwork)) {
               const curModel = String(payload?.model || "");
