@@ -24,8 +24,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* 复用原有静态样式（位于 public/） */}
         {/* 注意：public 下的 css 可能被浏览器/CDN 缓存；这里加版本号方便样式立即生效 */}
         <link rel="stylesheet" href="/styles.css?v=21" />
-        <link rel="stylesheet" href="/home.css?v=29" />
-        <link rel="stylesheet" href="/creators.css?v=20" />
+        <link rel="stylesheet" href="/home.css?v=30" />
+        <link rel="stylesheet" href="/creators.css?v=21" />
         <link rel="stylesheet" href="/create.css?v=29" />
       </head>
       <body>

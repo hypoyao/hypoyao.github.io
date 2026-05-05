@@ -1742,7 +1742,7 @@
 }
 
 .homeCard {
-  width: min(var(--home-content-width), 100%);
+  width: min(var(--home-content-width, var(--site-content-width)), 100%);
 }
 
 .homeNew .header {

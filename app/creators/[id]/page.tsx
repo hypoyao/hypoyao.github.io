@@ -118,24 +118,30 @@ export default async function CreatorPage({ params }: { params: Promise<{ id: st
           </div>
         </header>
 
-        <section className="creatorList" aria-label="creator">
-          <section className="creatorCard" aria-label="creator-card">
-            <div className="creatorWorks">
+        <section className="creatorList" aria-label="作品列表">
+          {games.length ? (
+            <section className="gameGrid creatorWorks creatorWorksWall" aria-label={`${creator.name}的作品`}>
               {games.map((g) => (
-                <a key={g.id} className="gameItem gameItemCompact" href={toGameEntryHref(g.path)} aria-label={g.title}>
-                  <img className="gameThumb" src={g.coverUrl} alt={`${g.title}截图`} />
-                  <div>
-                    <div className="gameName">{g.title}</div>
-                    <div className="gameDesc">{g.shortDesc}</div>
-                    <div className="gameStatRow" aria-label="游戏数据">
-                      <span className="gameStatChip">玩过 {g.playCount}</span>
-                      <span className="gameStatChip">点赞 {g.likeCount}</span>
+                <article key={g.id} className="gameItem" aria-label={g.title}>
+                  <a className="gameLink" href={toGameEntryHref(g.path)} aria-label={`打开游戏：${g.title}`}>
+                    <img className="gameThumb" src={g.coverUrl} alt={`${g.title}截图`} loading="lazy" decoding="async" />
+                    <div className="gameBody">
+                      <div className="gameName">{g.title}</div>
+                      <div className="gameDesc">{g.shortDesc}</div>
+                      {g.playCount >= 3 || g.likeCount >= 1 ? (
+                        <div className="gameStatRow" aria-label="游戏数据">
+                          {g.playCount >= 3 ? <span className="gameStatChip">玩过 {g.playCount}</span> : null}
+                          {g.likeCount >= 1 ? <span className="gameStatChip">点赞 {g.likeCount}</span> : null}
+                        </div>
+                      ) : null}
                     </div>
-                  </div>
-                </a>
+                  </a>
+                </article>
               ))}
-            </div>
-          </section>
+            </section>
+          ) : (
+            <div className="worksEmpty creatorWorksEmpty">还没有公开作品。</div>
+          )}
         </section>
 
         {/* 右上角已提供“回到主页”图标 */}

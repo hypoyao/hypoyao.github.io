@@ -131,8 +131,25 @@
 
 .creatorWorks {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+}
+
+.creatorWorksWall {
+  gap: 18px;
+}
+
+.creatorWorksWall .gameLink {
+  grid-template-columns: 150px 1fr;
+  min-height: 160px;
+}
+
+.creatorWorksWall .gameThumb {
+  min-height: 136px;
+}
+
+.creatorWorksEmpty {
+  margin-top: 4px;
 }
 
 /* ===== profile edit ===== */
@@ -182,22 +199,6 @@
   color: rgba(15, 23, 42, 0.72);
 }
 
-.gameItemCompact {
-  padding: 10px;
-  border-radius: 16px;
-  text-decoration: none;
-  color: inherit;
-}
-
-.gameItemCompact .gameName,
-.gameItemCompact .gameDesc {
-  text-decoration: none;
-}
-
-.gameItemCompact .gameThumb {
-  aspect-ratio: 4 / 3;
-}
-
 @media (max-width: 520px) {
   .creatorWorks {
     grid-template-columns: 1fr;
@@ -222,5 +223,27 @@
   }
   .profileGrid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .creatorWorks {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .creatorWorks {
+    grid-template-columns: 1fr;
+  }
+
+  .creatorWorksWall .gameLink {
+    grid-template-columns: 1fr;
+  }
+
+  .creatorWorksWall .gameThumb {
+    height: auto;
+    min-height: 0;
+    aspect-ratio: 1.5 / 1;
   }
 }
