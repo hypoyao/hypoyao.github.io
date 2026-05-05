@@ -6,7 +6,6 @@ import { creators } from "@/lib/db/schema";
 import { encodeSession, sessionCookieName } from "@/lib/auth/session";
 import { genCuteName, normalizePhone, sha256Hex } from "@/lib/auth/phone";
 import { ensureCreatorsAuthFields } from "@/lib/db/ensureCreatorsAuthFields";
-import { ensureInviteCodesTable } from "@/lib/db/ensureInviteCodesTable";
 import { safeProfilePathForCreatorId } from "@/lib/creatorProfilePath";
 
 const COOKIE = "phone_code_v1";
@@ -15,17 +14,10 @@ function json(status: number, data: unknown) {
   return NextResponse.json(data, { status, headers: { "cache-control": "no-store" } });
 }
 
-function normalizeInviteCode(s: string) {
-  return String(s || "")
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "");
-}
-
 export async function POST(req: Request) {
-  let body: { phone?: string; code?: string; next?: string; inviteCode?: string } = {};
+  let body: { phone?: string; code?: string; next?: string } = {};
   try {
-    body = (await req.json()) as { phone?: string; code?: string; next?: string; inviteCode?: string };
+    body = (await req.json()) as { phone?: string; code?: string; next?: string };
   } catch {
     return json(400, { ok: false, error: "INVALID_JSON" });
   }
@@ -33,7 +25,6 @@ export async function POST(req: Request) {
   const phone = normalizePhone(body.phone || "");
   const code = String(body.code || "").trim();
   const next = typeof body.next === "string" && body.next.startsWith("/") ? body.next : "/";
-  const inviteCode = normalizeInviteCode(body.inviteCode || "");
   if (!phone || !/^\d{6}$/.test(code)) return json(400, { ok: false, error: "INVALID_INPUT" });
 
   const jar = await cookies();
@@ -57,54 +48,8 @@ export async function POST(req: Request) {
 
   try {
     await ensureCreatorsAuthFields();
-    await ensureInviteCodesTable();
   } catch (e) {
     return json(500, { ok: false, error: "DB_MIGRATION_FAILED" });
-  }
-
-  // 是否首次注册：若 creators 中不存在该手机号，则需要邀请码
-  let exists = false;
-  try {
-    const r = await db.execute(sql`select id from creators where phone = ${phone} limit 1;`);
-    exists = Array.isArray((r as any).rows) && (r as any).rows.length > 0;
-  } catch {}
-
-  if (!exists) {
-    if (!inviteCode) return json(400, { ok: false, error: "INVITE_REQUIRED" });
-    // 校验邀请码可用，并为当前手机号预占一次。若上次账号写入失败，同一手机号可幂等重试。
-    try {
-      const row = await db.execute(sql`
-        select code, enabled, max_uses, used_count, last_used_phone
-        from invite_codes
-        where code = ${inviteCode}
-        limit 1
-      `);
-      const it = Array.isArray((row as any).rows) ? (row as any).rows[0] : null;
-      if (!it || it.enabled !== true) return json(400, { ok: false, error: "INVITE_INVALID" });
-      // 规则：每个邀请码只能被一个用户使用
-      const maxUses = 1;
-      const usedCount = Number(it.used_count || 0);
-      const lastUsedPhone = String(it.last_used_phone || "");
-      if (usedCount >= maxUses && lastUsedPhone !== phone) return json(400, { ok: false, error: "INVITE_EXHAUSTED" });
-
-      if (usedCount < maxUses) {
-        const upd = await db.execute(sql`
-          update invite_codes
-          set
-            used_count = used_count + 1,
-            last_used_phone = ${phone},
-            last_used_at = now(),
-            updated_at = now()
-          where code = ${inviteCode}
-            and enabled = true
-            and used_count < 1
-        `);
-        const changed = Number((upd as any).rowCount ?? 0);
-        if (!changed) return json(400, { ok: false, error: "INVITE_EXHAUSTED" });
-      }
-    } catch {
-      return json(400, { ok: false, error: "INVITE_INVALID" });
-    }
   }
 
   // upsert 到 creators：把手机号当“用户账号”，id 使用 u_<phone>

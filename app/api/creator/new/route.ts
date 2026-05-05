@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
-import { ownerKeyFromSession } from "@/lib/creator/creatorIndex";
+import { ownerKeyFromSessionOrGuest } from "@/lib/creator/creatorIndex";
 import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
@@ -23,20 +23,19 @@ function genId() {
   return `g-${y}${m}${day}-${rand}`;
 }
 
-export async function POST() {
+export async function POST(req: Request) {
   let sess: any = null;
   try {
     sess = await getSession();
   } catch (e: any) {
     return json(500, { ok: false, error: `AUTH_FAILED:${String(e?.message || e)}` });
   }
-  if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED" });
 
   try {
     await ensureCreatorDraftTables();
     const id = genId();
-    const ownerKey = ownerKeyFromSession(sess);
-    if (!ownerKey) return json(401, { ok: false, error: "UNAUTHORIZED" });
+    const ownerKey = await ownerKeyFromSessionOrGuest(sess, req);
+    if (!ownerKey) return json(500, { ok: false, error: "OWNER_KEY_FAILED" });
 
     await db.execute(sql`
       insert into creator_draft_games (id, owner_key, title)
@@ -72,7 +71,7 @@ export async function POST() {
       on conflict (game_id, path) do nothing
     `);
 
-    const creatorId = sess.phone ? `u_${sess.phone}` : null;
+    const creatorId = sess?.phone ? `u_${sess.phone}` : null;
     recordUsageEvent({ eventType: "draft_created", creatorId, gameId: id }).catch(() => null);
 
     return json(200, { ok: true, gameId: id, entry: `/games/${id}/index.html` });

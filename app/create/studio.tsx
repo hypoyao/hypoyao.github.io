@@ -176,6 +176,55 @@ function safeSaveProjectsCache(projects: Array<{ gameId: string; title?: string;
   }
 }
 
+const CREATOR_FP_KEY = "creatorStudio:fingerprint:v1";
+
+function hashFingerprintSeed(seed: string) {
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(36);
+}
+
+function getCreatorFingerprint() {
+  try {
+    if (typeof window === "undefined") return "";
+    const stored = window.localStorage.getItem(CREATOR_FP_KEY);
+    if (stored && /^[a-z0-9_-]{8,160}$/i.test(stored)) return stored;
+    const nav = window.navigator as any;
+    const scr = window.screen;
+    const seed = [
+      nav.userAgent,
+      nav.language,
+      Array.isArray(nav.languages) ? nav.languages.join(",") : "",
+      Intl.DateTimeFormat().resolvedOptions().timeZone || "",
+      `${scr?.width || 0}x${scr?.height || 0}x${scr?.colorDepth || 0}`,
+      String(window.devicePixelRatio || 1),
+      String(nav.hardwareConcurrency || ""),
+      String(nav.deviceMemory || ""),
+      String(nav.platform || ""),
+      String(nav.maxTouchPoints || 0),
+    ].join("|");
+    const fp = `fp_${hashFingerprintSeed(seed)}_${hashFingerprintSeed(seed.split("").reverse().join(""))}`;
+    window.localStorage.setItem(CREATOR_FP_KEY, fp);
+    return fp;
+  } catch {
+    return "";
+  }
+}
+
+function creatorHeaders(base?: HeadersInit) {
+  const headers = new Headers(base || {});
+  const fp = getCreatorFingerprint();
+  if (fp) headers.set("x-creator-fingerprint", fp);
+  return headers;
+}
+
+function creatorFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  return fetch(input, { ...init, headers: creatorHeaders(init.headers) });
+}
+
 function safeJsonParse(s: string): any | null {
   try {
     return JSON.parse(s);
@@ -879,13 +928,15 @@ export default function CreateStudio({
 
   function act(type: "new" | "publish" | "delete") {
     if (type === "publish" && (publishingBusy || publishingRef.current)) return;
-    const ok =
-      type === "new"
-        ? window.confirm("确定新建一个游戏吗？\n\n当前游戏不会丢失，你可以在“我的游戏”里再切回来。")
-        : type === "publish"
-          ? window.confirm(`确定${publishText}吗？`)
+    if (type === "publish") {
+      if (!canPublish) return;
+    } else {
+      const ok =
+        type === "new"
+          ? window.confirm("确定新建一个游戏吗？\n\n当前游戏不会丢失，你可以在“我的游戏”里再切回来。")
           : window.confirm("确定删除当前游戏吗？\n\n删除后无法恢复。");
-    if (!ok) return;
+      if (!ok) return;
+    }
     if (opMenuRef.current) opMenuRef.current.open = false;
     window.dispatchEvent(new CustomEvent("creatorStudioAction", { detail: { type } }));
   }
@@ -942,6 +993,25 @@ export default function CreateStudio({
     return !autoStart && !uiBusy && !hasInput && !hasUserMessage && !hasMetaContent && !hasRealProject && (projects || []).length <= 1;
   }, [autoStart, gameId, gameMeta?.rules, gameMeta?.shortDesc, gameMeta?.title, input, messages, projects, uiBusy]);
 
+  const canPublish = useMemo(() => {
+    if (!gameId) return false;
+    if (published || publishDirty) return true;
+    const hasUserMessage = messages.some((m) => {
+      if (m.role !== "user") return false;
+      const text = normalizeCreatorStepText(m.content);
+      return !!text && !isInternalCreatorCommand(text) && !isSeedPromptPlaceholder(text);
+    });
+    if (hasUserMessage) return true;
+    const hasMetaContent =
+      !!String(gameMeta?.shortDesc || "").trim() ||
+      !!String(gameMeta?.rules || "").trim() ||
+      (!!String(gameMeta?.title || "").trim() && !looksLikeDraftGameIdTitle(String(gameMeta?.title || ""), gameId));
+    if (hasMetaContent) return true;
+    const project = (projects || []).find((p) => p.gameId === gameId);
+    const projectTitle = String(project?.title || "").trim();
+    return !!project?.dirty || (!!projectTitle && !looksLikeDraftGameIdTitle(projectTitle, gameId));
+  }, [gameId, gameMeta?.rules, gameMeta?.shortDesc, gameMeta?.title, messages, projects, publishDirty, published]);
+
   // 防止切换 gameId 时把“旧项目 messages”误保存到“新项目”
   // 只有当 messages 已确认属于当前 gameId 时，才允许写入 localStorage。
   const chatOwnerGameIdRef = useRef<string>("");
@@ -985,7 +1055,7 @@ export default function CreateStudio({
     // 本地没有完整记录时，再从服务器恢复；新版优先 fullMessages（用户 + AI），旧版 fallback 到用户消息。
     (async () => {
       try {
-        const r = await fetch(`/api/creator/chatlog?gameId=${encodeURIComponent(gameId)}`, { cache: "no-store" });
+        const r = await creatorFetch(`/api/creator/chatlog?gameId=${encodeURIComponent(gameId)}`, { cache: "no-store" });
         const j = await r.json().catch(() => ({}));
         if (cancelled) return;
         const serverMsgs = normalizeChatMessages(j?.fullMessages, "user");
@@ -1065,7 +1135,7 @@ export default function CreateStudio({
   }
 
   async function newGame() {
-    const r = await fetch("/api/creator/new", { method: "POST" });
+    const r = await creatorFetch("/api/creator/new", { method: "POST" });
     let j: any = null;
     try {
       j = await r.json();
@@ -1090,7 +1160,7 @@ export default function CreateStudio({
 
   async function ensureSeed(gid: string) {
     // 初始化该小游戏文件（seed 模式下 index.html 不会覆盖已存在内容）
-    const r = await fetch("/api/creator/write", {
+    const r = await creatorFetch("/api/creator/write", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -1142,7 +1212,7 @@ export default function CreateStudio({
   async function writePrompt(gid: string, promptText: string) {
     const content = (promptText || "").trim();
     if (!content) return;
-    const r = await fetch("/api/creator/write", {
+    const r = await creatorFetch("/api/creator/write", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -1264,7 +1334,7 @@ export default function CreateStudio({
           }
         } catch {}
 
-        const listP = fetch("/api/creator/list", { cache: "no-store" }).then((x) => x.json().catch(() => ({})));
+        const listP = creatorFetch("/api/creator/list", { cache: "no-store" }).then((x) => x.json().catch(() => ({})));
         // 优先把“我的游戏”列表展示出来；me 允许慢一点再更新登录态
         const j = await listP;
         const arr = Array.isArray(j?.games) ? j.games : [];
@@ -1395,7 +1465,7 @@ export default function CreateStudio({
   }
 
   async function refreshProjects() {
-    const r = await fetch("/api/creator/list", { cache: "no-store" });
+    const r = await creatorFetch("/api/creator/list", { cache: "no-store" });
     const j = await r.json().catch(() => ({}));
     const arr = Array.isArray(j?.games) ? j.games : [];
     setProjects(arr);
@@ -1407,7 +1477,7 @@ export default function CreateStudio({
   async function writeFiles(files: ModelFile[], gid?: string) {
     const useId = gid || gameId;
     if (!useId) throw new Error("NO_GAME_ID");
-    const r = await fetch("/api/creator/write", {
+    const r = await creatorFetch("/api/creator/write", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ gameId: useId, files }),
@@ -1532,7 +1602,7 @@ export default function CreateStudio({
 
       // 只把“用户发给 AI 的内容”存到数据库（失败不影响创作）
       try {
-        fetch("/api/creator/chatlog", {
+        creatorFetch("/api/creator/chatlog", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ gameId: useId, role: "user", content: text, runId }),
@@ -1541,7 +1611,7 @@ export default function CreateStudio({
         // ignore
       }
 
-      const r = await fetch("/api/creator/chat", {
+      const r = await creatorFetch("/api/creator/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
         // 只传 user/assistant；system 由服务端统一注入
@@ -1783,7 +1853,7 @@ export default function CreateStudio({
 
       const assistantText = String(parsed.assistant || "").trim() || (repaired ? "（AI 已自动修复输出格式）" : "（AI 回复为空）");
       try {
-        fetch("/api/creator/chatlog", {
+        creatorFetch("/api/creator/chatlog", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ gameId: useId, role: "assistant", content: assistantText, runId }),
@@ -2057,13 +2127,8 @@ export default function CreateStudio({
               }
             }
             if (!okLogin) {
-              if (window.confirm("发布需要先登录。现在去登录吗？")) {
-                suppressLeaveGuardRef.current = true;
-                window.location.href = `/login?next=${encodeURIComponent("/create")}`;
-                return;
-              }
-              setPublishingGameId((cur) => (cur === targetGameId ? "" : cur));
-              publishingRef.current = false;
+              suppressLeaveGuardRef.current = true;
+              window.location.href = `/login?next=${encodeURIComponent(`/publish?id=${targetGameId}`)}`;
               return;
             }
             setMsg("");
@@ -2085,7 +2150,7 @@ export default function CreateStudio({
           setDeletingGameId(deletingId);
           try {
             setMsg("");
-            const r = await fetch("/api/creator/delete", {
+            const r = await creatorFetch("/api/creator/delete", {
               method: "POST",
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ gameId: deletingId }),
@@ -2184,7 +2249,8 @@ export default function CreateStudio({
             className={`createTopActionBtn createPublishActionBtn ${published && publishDirty ? "isDirty" : ""}`}
             type="button"
             onClick={() => act("publish")}
-            disabled={uiBusy || !gameId}
+            disabled={uiBusy || !canPublish}
+            title={canPublish ? publishText : "先发一句需求，让 AI 生成游戏后再发布"}
           >
             {publishingBusy ? (
               <span className="loadingLabel">

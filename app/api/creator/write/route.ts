@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
-import { ownerKeyFromSession } from "@/lib/creator/creatorIndex";
+import { ownerKeyFromSessionOrGuest } from "@/lib/creator/creatorIndex";
 import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
 import { ensureCreatorsAuthFields } from "@/lib/db/ensureCreatorsAuthFields";
 import { ensureGamesCoverFields } from "@/lib/db/ensureGamesCoverFields";
@@ -133,9 +133,8 @@ async function clonePublishedGameToDraft(gid: string, ownerKey: string, creatorI
 export async function POST(req: Request) {
   try {
     const sess = await getSession();
-    if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED" });
-    const ownerKey = ownerKeyFromSession(sess);
-    if (!ownerKey) return json(401, { ok: false, error: "UNAUTHORIZED" });
+    const ownerKey = await ownerKeyFromSessionOrGuest(sess, req);
+    if (!ownerKey) return json(500, { ok: false, error: "OWNER_KEY_FAILED" });
     let body: Body;
     try {
       body = (await req.json()) as Body;

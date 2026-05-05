@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import { Script } from "node:vm";
 import { CREATOR_GAME_TYPE_LIBRARY_ADDON, CREATOR_OUTPUT_FORMAT_ADDON, CREATOR_SYSTEM_PROMPT } from "@/lib/creator/systemPrompt";
 import { getSession } from "@/lib/auth/session";
-import { ownerKeyFromSession } from "@/lib/creator/creatorIndex";
+import { ownerKeyFromSessionOrGuest } from "@/lib/creator/creatorIndex";
 import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
@@ -2461,8 +2461,7 @@ function createStepLogger(scope: string) {
 
 export async function POST(req: Request) {
   const sess = await getSession();
-  if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED" });
-  const ownerKey = ownerKeyFromSession(sess);
+  const ownerKey = await ownerKeyFromSessionOrGuest(sess, req);
 
   let body: { messages?: Msg[]; model?: string; provider?: string; promptAddon?: string; gameId?: string; runId?: string; mode?: string; quality?: string };
   try {

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
-import { ownerKeyFromSession } from "@/lib/creator/creatorIndex";
+import { ownerKeyFromSessionOrGuest } from "@/lib/creator/creatorIndex";
 import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
@@ -21,9 +21,8 @@ function safeGameId(id: string) {
 
 export async function GET(req: Request) {
   const sess = await getSession();
-  if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED" });
-  const ownerKey = ownerKeyFromSession(sess);
-  if (!ownerKey) return json(401, { ok: false, error: "UNAUTHORIZED" });
+  const ownerKey = await ownerKeyFromSessionOrGuest(sess, req);
+  if (!ownerKey) return json(500, { ok: false, error: "OWNER_KEY_FAILED" });
 
   const url = new URL(req.url);
   const gameId = safeGameId(url.searchParams.get("gameId") || "");
@@ -57,4 +56,3 @@ export async function GET(req: Request) {
 
   return json(200, { ok: true, gameId, files });
 }
-

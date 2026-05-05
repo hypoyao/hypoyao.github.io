@@ -305,7 +305,7 @@ function isSeedPromptPlaceholder(text: string) {
 
 export async function GET(req: Request) {
   const sess = await getSession();
-  if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED" });
+  if (!sess) return json(200, { ok: true, gameId: "", messages: [], fullMessages: [], skipped: true });
   const creatorId = await getMyCreatorId(sess);
   // 有些环境可能还没有创建 creators 记录：聊天记录只是“可选增强”，不要因为它影响创作体验
   if (!creatorId) return json(200, { ok: true, gameId: "", messages: [] });
@@ -355,7 +355,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   const sess = await getSession();
-  if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED" });
+  if (!sess) return json(200, { ok: true, skipped: true });
   const creatorId = await getMyCreatorId(sess);
   // 同上：没有 creatorId 时直接忽略写入（不报错）
   if (!creatorId) return json(200, { ok: true, skipped: true });

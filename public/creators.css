@@ -47,11 +47,18 @@
 .creatorTopActions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
+}
+
+.creatorTopActions form {
+  margin: 0;
 }
 
 .iconMiniBtn {
+  appearance: none;
   width: 30px;
   height: 30px;
+  padding: 0;
   border-radius: 999px;
   border: 1px solid rgba(15, 23, 42, 0.12);
   background: rgba(255, 255, 255, 0.70);
@@ -61,6 +68,7 @@
   color: rgba(15, 23, 42, 0.82);
   text-decoration: none;
   user-select: none;
+  cursor: pointer;
   transition: transform 120ms ease, filter 120ms ease;
 }
 .iconMiniBtn:hover {

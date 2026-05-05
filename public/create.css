@@ -225,6 +225,13 @@
   background: linear-gradient(135deg, rgba(245, 158, 11, 0.98), rgba(249, 115, 22, 0.95));
   box-shadow: 0 14px 28px rgba(249, 115, 22, 0.16);
 }
+.createPublishActionBtn:disabled,
+.createBento .createPublishActionBtn:disabled {
+  color: rgba(100, 116, 139, 0.82);
+  border-color: rgba(203, 213, 225, 0.88);
+  background: rgba(226, 232, 240, 0.82);
+  box-shadow: none;
+}
 @media (hover: hover) {
   .createTopActionBtn:hover {
     filter: brightness(1.02);

@@ -88,6 +88,29 @@ export default async function CreatorPage({ params }: { params: Promise<{ id: st
               ) : null}
             </div>
             <div className="creatorTopActions">
+              {isMe ? (
+                <form action="/api/auth/logout" method="post">
+                  <button className="iconMiniBtn" type="submit" aria-label="退出登录" title="退出登录">
+                    <svg className="iconMiniSvg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path
+                        d="M10 17l5-5-5-5"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <path d="M15 12H3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <path
+                        d="M14 4h5a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-5"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
+                </form>
+              ) : null}
               <Link className="iconMiniBtn" href="/" aria-label="回到主页" prefetch>
                 {/* home */}
                 <svg className="iconMiniSvg" viewBox="0 0 24 24" fill="none" aria-hidden="true">

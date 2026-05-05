@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
-import { ownerKeyFromSession } from "@/lib/creator/creatorIndex";
+import { ownerKeyFromSessionOrGuest } from "@/lib/creator/creatorIndex";
 import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
@@ -16,11 +16,10 @@ function json(status: number, data: unknown) {
   return NextResponse.json(data, { status, headers: { "cache-control": "no-store" } });
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const sess = await getSession();
-  if (!sess) return json(401, { ok: false, error: "UNAUTHORIZED", games: [] });
-  const ownerKey = ownerKeyFromSession(sess);
-  if (!ownerKey) return json(401, { ok: false, error: "UNAUTHORIZED", games: [] });
+  const ownerKey = await ownerKeyFromSessionOrGuest(sess, req);
+  if (!ownerKey) return json(500, { ok: false, error: "OWNER_KEY_FAILED", games: [] });
 
   // 并发拉取：草稿 + 已发布
   await Promise.all([
@@ -31,10 +30,10 @@ export async function GET() {
 
   let creatorId = "";
   try {
-    if (sess.phone) {
+    if (sess?.phone) {
       const [c] = await db.select({ id: creators.id }).from(creators).where(eq(creators.phone, sess.phone)).limit(1);
       creatorId = String(c?.id || "");
-    } else if (sess.openid) {
+    } else if (sess?.openid) {
       const [c] = await db.select({ id: creators.id }).from(creators).where(eq(creators.openid, sess.openid)).limit(1);
       creatorId = String(c?.id || "");
     }

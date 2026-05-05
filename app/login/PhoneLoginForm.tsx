@@ -5,7 +5,6 @@ import { useState } from "react";
 export default function PhoneLoginForm({ next = "/" }: { next?: string }) {
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
-  const [inviteCode, setInviteCode] = useState("");
   const [msg, setMsg] = useState("");
   const [tempCode, setTempCode] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -49,7 +48,7 @@ export default function PhoneLoginForm({ next = "/" }: { next?: string }) {
       const r = await fetch("/api/auth/phone/verify", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ phone, code, inviteCode, next }),
+        body: JSON.stringify({ phone, code, next }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
@@ -57,9 +56,6 @@ export default function PhoneLoginForm({ next = "/" }: { next?: string }) {
         const map: Record<string, string> = {
           CODE_EXPIRED: "验证码已过期或已失效，请重新获取验证码。",
           CODE_MISMATCH: "手机号或验证码不匹配，请检查后再试。",
-          INVITE_REQUIRED: "需要邀请码才能注册（老用户登录不需要）。",
-          INVITE_INVALID: "邀请码不正确。",
-          INVITE_EXHAUSTED: "邀请码已用完。",
         };
         setMsg(`登录失败：${map[err] || err}`);
         return;
@@ -89,17 +85,6 @@ export default function PhoneLoginForm({ next = "/" }: { next?: string }) {
         <label className="loginField">
           <div className="loginLabel">验证码</div>
           <input className="restInput" value={code} onChange={(e) => setCode(e.target.value)} placeholder="6位验证码" />
-        </label>
-
-        <label className="loginField">
-          <div className="loginLabel">邀请码（新用户）</div>
-          <input
-            className="restInput"
-            value={inviteCode}
-            onChange={(e) => setInviteCode(e.target.value)}
-            placeholder="已有账号可不填"
-            autoComplete="off"
-          />
         </label>
 
         <div className="actions loginFooterActions">
