@@ -65,84 +65,6 @@
   height: 18px;
 }
 
-.createGuide {
-  margin-top: 6px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(430px, 0.78fr);
-  gap: 12px;
-  align-items: stretch;
-  border-radius: 20px;
-  border: 1px solid rgba(125, 211, 252, 0.34);
-  background:
-    radial-gradient(520px 220px at 8% 15%, rgba(56, 189, 248, 0.18), transparent 66%),
-    radial-gradient(520px 240px at 92% 18%, rgba(34, 197, 94, 0.14), transparent 66%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.92));
-  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.055);
-  padding: 12px 14px;
-  overflow: hidden;
-}
-.createGuideMain {
-  display: grid;
-  align-content: center;
-  gap: 8px;
-  min-width: 0;
-}
-.createGuide h2 {
-  margin: 0;
-  color: rgba(15, 23, 42, 0.92);
-  font-size: clamp(18px, 1.45vw, 24px);
-  line-height: 1.18;
-  letter-spacing: 0.2px;
-}
-.createGuide p {
-  margin: 0;
-  max-width: 760px;
-  color: rgba(71, 85, 105, 0.96);
-  font-size: 12px;
-  font-weight: 850;
-  line-height: 1.42;
-}
-.createGuideSteps {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  align-items: stretch;
-}
-.createGuideStep {
-  min-width: 0;
-  display: grid;
-  align-content: center;
-  gap: 5px;
-  padding: 9px 10px;
-  border-radius: 16px;
-  border: 1px solid rgba(226, 232, 240, 0.92);
-  background: rgba(255, 255, 255, 0.78);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
-}
-.createGuideStep span {
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  border-radius: 999px;
-  background: linear-gradient(135deg, rgba(56, 189, 248, 0.95), rgba(34, 197, 94, 0.92));
-  color: white;
-  font-size: 12px;
-  font-weight: 1100;
-}
-.createGuideStep strong {
-  color: rgba(15, 23, 42, 0.9);
-  font-size: 13px;
-  font-weight: 1100;
-}
-.createGuideStep em {
-  color: rgba(100, 116, 139, 0.95);
-  font-size: 11px;
-  font-style: normal;
-  font-weight: 850;
-  line-height: 1.35;
-}
-
 .createTopBar {
   margin-top: 10px;
   display: flex;
@@ -350,9 +272,9 @@
 .createGrid {
   margin-top: 10px;
   display: grid;
-  /* 更适合孩子：对话框更宽一点，且面板间距更通透 */
-  grid-template-columns: minmax(320px, 520px) minmax(0, 1fr);
-  gap: 24px;
+  /* 优先保证聊天与预览可用空间；右侧信息栏在 previewSplit 内收窄。 */
+  grid-template-columns: minmax(360px, 540px) minmax(0, 1fr);
+  gap: 18px;
   align-items: stretch;
   min-width: 0;
 }
@@ -769,8 +691,8 @@
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 260px);
+  gap: 10px;
   align-items: stretch;
   min-width: 0;
 }
@@ -828,6 +750,22 @@
 }
 .metaPre {
   white-space: pre-wrap;
+}
+
+@media (max-width: 1360px) {
+  .createGrid {
+    grid-template-columns: minmax(340px, 460px) minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .previewSplit {
+    grid-template-columns: minmax(0, 1fr) minmax(190px, 220px);
+    gap: 8px;
+  }
+
+  .metaPanel {
+    padding: 10px;
+  }
 }
 
 .previewFrame {
@@ -1086,12 +1024,6 @@
 }
 
 @media (max-width: 1180px) {
-  .createGuide {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .createGuideSteps {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
   .createTopBar {
     align-items: stretch;
   }
@@ -1463,32 +1395,6 @@
     height: 40px;
     flex-basis: 40px;
   }
-  .createGuide {
-    margin-top: 6px;
-    padding: 10px;
-    border-radius: 18px;
-    gap: 9px;
-  }
-  .createGuide h2 {
-    font-size: 18px;
-  }
-  .createGuide p {
-    font-size: 12px;
-    line-height: 1.38;
-  }
-  .createGuideSteps {
-    display: flex;
-    gap: 8px;
-    overflow-x: auto;
-    padding-bottom: 2px;
-    -webkit-overflow-scrolling: touch;
-  }
-  .createGuideStep {
-    flex: 0 0 132px;
-    padding: 8px 9px;
-    border-radius: 14px;
-  }
-
   .createTopBar {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -1647,18 +1553,6 @@
   .createCard > .header h1 {
     font-size: 18px;
   }
-  .createGuide {
-    padding: 9px;
-  }
-  .createGuide h2 {
-    font-size: 17px;
-  }
-  .createGuide p {
-    font-size: 11px;
-  }
-  .createGuideStep {
-    flex-basis: 122px;
-  }
   .createTopLeft {
     gap: 8px;
   }
@@ -1777,10 +1671,6 @@
 }
 
 @media (max-width: 720px) {
-  .createGuide {
-    display: none;
-  }
-
   .createPrimaryActions {
     width: 100%;
     display: grid;

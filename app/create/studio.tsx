@@ -2189,30 +2189,6 @@ export default function CreateStudio({
 
   return (
     <section aria-label="create studio">
-      <section className="createGuide" aria-label="创作引导">
-        <div className="createGuideMain">
-          <h2>先说一句“我想做什么游戏”。</h2>
-          <p>告诉 AI 角色、玩法、按钮、胜负条件和画面风格。生成后右边马上试玩，不满意就继续说怎么改。</p>
-        </div>
-        <div className="createGuideSteps" aria-label="使用步骤">
-          <div className="createGuideStep">
-            <span>1</span>
-            <strong>说想法</strong>
-            <em>一句话也可以</em>
-          </div>
-          <div className="createGuideStep">
-            <span>2</span>
-            <strong>AI 生成</strong>
-            <em>过程会显示出来</em>
-          </div>
-          <div className="createGuideStep">
-            <span>3</span>
-            <strong>试玩修改</strong>
-            <em>满意后发布分享</em>
-          </div>
-        </div>
-      </section>
-
       <div className="createTopBar" aria-label="tools">
         <div className="createTopLeft">
           <label className="createTopInline">
