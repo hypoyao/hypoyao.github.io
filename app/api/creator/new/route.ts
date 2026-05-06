@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
-import { ownerKeyFromSessionOrGuest } from "@/lib/creator/creatorIndex";
+import { creatorActorFromSessionOrGuest } from "@/lib/creator/creatorIndex";
+import { getOrCreateCreatorIdForActor } from "@/lib/creator/actorCreator";
 import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
@@ -34,7 +35,8 @@ export async function POST(req: Request) {
   try {
     await ensureCreatorDraftTables();
     const id = genId();
-    const ownerKey = await ownerKeyFromSessionOrGuest(sess, req);
+    const actor = await creatorActorFromSessionOrGuest(sess, req);
+    const ownerKey = actor.ownerKey;
     if (!ownerKey) return json(500, { ok: false, error: "OWNER_KEY_FAILED" });
 
     await db.execute(sql`
@@ -71,8 +73,16 @@ export async function POST(req: Request) {
       on conflict (game_id, path) do nothing
     `);
 
-    const creatorId = sess?.phone ? `u_${sess.phone}` : null;
-    recordUsageEvent({ eventType: "draft_created", creatorId, gameId: id }).catch(() => null);
+    const creatorId = await getOrCreateCreatorIdForActor(sess, actor);
+    recordUsageEvent({
+      eventType: "draft_created",
+      creatorId,
+      ownerKey,
+      visitorId: actor.visitorId,
+      actorType: actor.actorType,
+      gameId: id,
+      detail: { fingerprintHash: actor.fingerprintHash, ipHash: actor.ipHash },
+    }).catch(() => null);
 
     return json(200, { ok: true, gameId: id, entry: `/games/${id}/index.html` });
   } catch (e: any) {

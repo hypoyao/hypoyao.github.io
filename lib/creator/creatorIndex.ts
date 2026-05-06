@@ -4,6 +4,13 @@ import { cookies } from "next/headers";
 type SessLike = { phone?: string; openid?: string } | null;
 
 export type CreatorIndexItem = { gameId: string; entry: string; mtimeMs: number; title?: string };
+export type CreatorActorIdentity = {
+  ownerKey: string;
+  actorType: "creator" | "guest";
+  visitorId: string | null;
+  fingerprintHash: string | null;
+  ipHash: string | null;
+};
 
 const GUEST_OWNER_COOKIE = "creator_guest_owner_v1";
 const GUEST_FP_HEADER = "x-creator-fingerprint";
@@ -35,6 +42,16 @@ function clientIpFromRequest(req?: Request) {
   return String(raw).split(",")[0]?.trim().slice(0, 96) || "";
 }
 
+function userAgentFromRequest(req?: Request) {
+  if (!req) return "";
+  return String(req.headers.get("user-agent") || "").trim().slice(0, 240);
+}
+
+function languageFromRequest(req?: Request) {
+  if (!req) return "";
+  return String(req.headers.get("accept-language") || "").trim().slice(0, 160);
+}
+
 function fingerprintFromRequest(req?: Request) {
   if (!req) return "";
   return String(req.headers.get(GUEST_FP_HEADER) || "")
@@ -44,16 +61,43 @@ function fingerprintFromRequest(req?: Request) {
     .slice(0, 160);
 }
 
-export async function ownerKeyFromSessionOrGuest(sess: SessLike, req?: Request) {
-  const sessionOwnerKey = ownerKeyFromSession(sess);
-  if (sessionOwnerKey) return sessionOwnerKey;
+function isValidGuestToken(token: string) {
+  return /^[a-f0-9]{32,96}$/i.test(token);
+}
 
-  const jar = await cookies();
+function hashSignal(value: string) {
+  const text = String(value || "").trim();
+  return text ? stableHash(text).slice(0, 16) : null;
+}
+
+function createGuestToken(req?: Request) {
   const fp = fingerprintFromRequest(req);
   const ip = clientIpFromRequest(req);
-  const deterministicToken = fp ? stableHash(`fp:${fp}:ip:${ip || "unknown"}`).slice(0, 48) : "";
+  const ua = userAgentFromRequest(req);
+  const lang = languageFromRequest(req);
+  const random = crypto.randomBytes(24).toString("hex");
+  return stableHash(["guest-v2", fp || "nofp", ip || "noip", ua || "noua", lang || "nolang", random].join("|")).slice(
+    0,
+    64,
+  );
+}
+
+export async function creatorActorFromSessionOrGuest(sess: SessLike, req?: Request): Promise<CreatorActorIdentity> {
+  const sessionOwnerKey = ownerKeyFromSession(sess);
+  if (sessionOwnerKey) {
+    return {
+      ownerKey: sessionOwnerKey,
+      actorType: "creator",
+      visitorId: null,
+      fingerprintHash: hashSignal(fingerprintFromRequest(req)),
+      ipHash: hashSignal(clientIpFromRequest(req)),
+    };
+  }
+
+  const jar = await cookies();
   const existing = String(jar.get(GUEST_OWNER_COOKIE)?.value || "").trim();
-  const token = deterministicToken || (/^[a-f0-9]{32,96}$/i.test(existing) ? existing : crypto.randomBytes(24).toString("hex"));
+  // Cookie token 是主身份。指纹/IP只参与首次生成，避免 IP 变化导致同一游客变成新人。
+  const token = isValidGuestToken(existing) ? existing : createGuestToken(req);
   if (token !== existing) {
     jar.set(GUEST_OWNER_COOKIE, token, {
       httpOnly: true,
@@ -63,7 +107,18 @@ export async function ownerKeyFromSessionOrGuest(sess: SessLike, req?: Request) 
       maxAge: 180 * 24 * 60 * 60,
     });
   }
-  return hashOwnerId(`guest:${token}`);
+  const ownerKey = hashOwnerId(`guest:${token}`);
+  return {
+    ownerKey,
+    actorType: "guest",
+    visitorId: ownerKey,
+    fingerprintHash: hashSignal(fingerprintFromRequest(req)),
+    ipHash: hashSignal(clientIpFromRequest(req)),
+  };
+}
+
+export async function ownerKeyFromSessionOrGuest(sess: SessLike, req?: Request) {
+  return (await creatorActorFromSessionOrGuest(sess, req)).ownerKey;
 }
 
 // 旧版本曾用文件存储（data/creator-index.json）做“我的游戏”索引缓存。

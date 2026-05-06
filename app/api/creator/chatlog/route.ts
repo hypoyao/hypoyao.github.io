@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server";
-import { eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { creators } from "@/lib/db/schema";
 import { getSession } from "@/lib/auth/session";
-import { ensureCreatorsAuthFields } from "@/lib/db/ensureCreatorsAuthFields";
 import { ensureGamesCoverFields } from "@/lib/db/ensureGamesCoverFields";
 import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
 import { ensureCreatorUserMessagesTable } from "@/lib/db/ensureCreatorUserMessagesTable";
 import { ensureUsageAnalyticsTables } from "@/lib/db/ensureUsageAnalyticsTables";
 import { recordUsageEvent } from "@/lib/db/usageAnalytics";
-import { ownerKeyFromSession } from "@/lib/creator/creatorIndex";
+import { creatorActorFromSessionOrGuest, type CreatorActorIdentity } from "@/lib/creator/creatorIndex";
+import { getOrCreateCreatorIdForActor } from "@/lib/creator/actorCreator";
 import { isSuperAdminId } from "@/lib/auth/admin";
 
 export const dynamic = "force-dynamic";
@@ -17,25 +16,6 @@ export const runtime = "nodejs";
 
 function json(status: number, data: unknown) {
   return NextResponse.json(data, { status, headers: { "cache-control": "no-store" } });
-}
-
-async function getMyCreatorId(sessArg?: Awaited<ReturnType<typeof getSession>> | null) {
-  const sess = sessArg ?? (await getSession());
-  const openid = sess?.openid;
-  const phone = sess?.phone;
-  if (!openid && !phone) return null;
-  try {
-    await ensureCreatorsAuthFields();
-    if (phone) {
-      const [row] = await db.select({ id: creators.id }).from(creators).where(eq(creators.phone, phone)).limit(1);
-      return row?.id || null;
-    }
-    if (openid) {
-      const [row] = await db.select({ id: creators.id }).from(creators).where(eq(creators.openid, openid)).limit(1);
-      return row?.id || null;
-    }
-  } catch {}
-  return null;
 }
 
 function normalizeGameId(id: string) {
@@ -59,17 +39,18 @@ type ChatScope = {
   gameIds: string[];
   linkedDraftId: string;
   creatorIds: string[];
+  ownerKey: string;
   allCreators: boolean;
 };
 
 async function getChatScope(
   gameId: string,
-  sess: Awaited<ReturnType<typeof getSession>>,
   viewerCreatorId: string | null,
+  actor: CreatorActorIdentity,
 ): Promise<ChatScope | null> {
   if (!gameId) return null;
   const isAdmin = isSuperAdminId(viewerCreatorId);
-  const ownerKey = ownerKeyFromSession(sess);
+  const ownerKey = actor.ownerKey;
   let publishedRows: Array<{ id: string; source_draft_id: string | null; creator_id: string | null }> = [];
   try {
     await ensureGamesCoverFields();
@@ -124,12 +105,13 @@ async function getChatScope(
 
   // 不是管理员/作者/草稿拥有者时，最多只能读取自己 creatorId 下的同 gameId 消息。
   // 这样既保留旧体验，也避免通过猜 gameId 读取别人的创作记录。
-  if (!isAdmin && !creatorIds.length) return null;
+  if (!isAdmin && !creatorIds.length && !ownerKey) return null;
 
   return {
     gameIds,
     linkedDraftId,
     creatorIds,
+    ownerKey,
     allCreators: isAdmin,
   };
 }
@@ -159,6 +141,27 @@ async function fetchChatRows(scope: ChatScope) {
           });
         }
         continue;
+      }
+      if (scope.ownerKey) {
+        const rows = rowsOf(
+          await db.execute(sql`
+            select id, role, content, created_at
+            from creator_chat_messages
+            where owner_key = ${scope.ownerKey} and game_id = ${gid}
+            order by created_at asc, id asc
+            limit 400
+          `),
+        );
+        for (const r of rows) {
+          const role = String((r as any).role || "user") === "assistant" ? "assistant" : "user";
+          out.push({
+            id: `chat:${(r as any).id}`,
+            role,
+            content: String((r as any).content || ""),
+            createdAt: (r as any).created_at,
+            sortAt: timeOf((r as any).created_at),
+          });
+        }
       }
       for (const cid of scope.creatorIds) {
         const rows = rowsOf(
@@ -305,10 +308,8 @@ function isSeedPromptPlaceholder(text: string) {
 
 export async function GET(req: Request) {
   const sess = await getSession();
-  if (!sess) return json(200, { ok: true, gameId: "", messages: [], fullMessages: [], skipped: true });
-  const creatorId = await getMyCreatorId(sess);
-  // 有些环境可能还没有创建 creators 记录：聊天记录只是“可选增强”，不要因为它影响创作体验
-  if (!creatorId) return json(200, { ok: true, gameId: "", messages: [] });
+  const actor = await creatorActorFromSessionOrGuest(sess, req);
+  const creatorId = await getOrCreateCreatorIdForActor(sess, actor);
 
   const url = new URL(req.url);
   const gameId = normalizeGameId(url.searchParams.get("gameId") || "");
@@ -320,7 +321,7 @@ export async function GET(req: Request) {
   } catch {
     // 新版完整聊天表只是管理看板增强；失败时仍保留旧用户消息读取能力。
   }
-  const scope = await getChatScope(gameId, sess, creatorId);
+  const scope = await getChatScope(gameId, creatorId, actor);
   if (!scope) return json(200, { ok: true, gameId, messages: [], fullMessages: [] });
 
   const list = mergeChatRows([...(await fetchChatRows(scope)), ...(await fetchLegacyUserRows(scope))]);
@@ -355,10 +356,8 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   const sess = await getSession();
-  if (!sess) return json(200, { ok: true, skipped: true });
-  const creatorId = await getMyCreatorId(sess);
-  // 同上：没有 creatorId 时直接忽略写入（不报错）
-  if (!creatorId) return json(200, { ok: true, skipped: true });
+  const actor = await creatorActorFromSessionOrGuest(sess, req);
+  const creatorId = await getOrCreateCreatorIdForActor(sess, actor);
 
   let body: any = null;
   try {
@@ -377,22 +376,34 @@ export async function POST(req: Request) {
   await ensureCreatorUserMessagesTable();
   await ensureUsageAnalyticsTables();
 
-  if (role === "user") {
+  if (role === "user" && creatorId) {
     await db.execute(sql`
       insert into creator_user_messages (game_id, creator_id, content)
       values (${gameId}, ${creatorId}, ${content})
     `);
   }
   await db.execute(sql`
-    insert into creator_chat_messages (game_id, creator_id, role, content, run_id)
-    values (${gameId}, ${creatorId}, ${role}, ${content}, ${runId || null})
+    insert into creator_chat_messages (game_id, creator_id, owner_key, visitor_id, actor_type, role, content, run_id)
+    values (
+      ${gameId},
+      ${creatorId || null},
+      ${actor.ownerKey || null},
+      ${actor.visitorId || null},
+      ${actor.actorType},
+      ${role},
+      ${content},
+      ${runId || null}
+    )
   `);
   try {
     await recordUsageEvent({
       eventType: role === "assistant" ? "chat_assistant" : "chat_user",
       creatorId,
+      ownerKey: actor.ownerKey,
+      visitorId: actor.visitorId,
+      actorType: actor.actorType,
       gameId,
-      detail: { runId: runId || undefined, chars: content.length },
+      detail: { runId: runId || undefined, chars: content.length, fingerprintHash: actor.fingerprintHash, ipHash: actor.ipHash },
     });
   } catch {
     // 统计失败不影响聊天主流程

@@ -22,7 +22,9 @@ function safeJson(detail: unknown) {
 export async function recordUsageEvent(input: {
   eventType: UsageEventType;
   creatorId?: string | null;
+  ownerKey?: string | null;
   visitorId?: string | null;
+  actorType?: "creator" | "guest" | string | null;
   gameId?: string | null;
   detail?: unknown;
 }) {
@@ -30,10 +32,12 @@ export async function recordUsageEvent(input: {
   if (!eventType) return;
   await ensureUsageAnalyticsTables();
   await db.execute(sql`
-    insert into creator_usage_events (creator_id, visitor_id, game_id, event_type, detail)
+    insert into creator_usage_events (creator_id, owner_key, visitor_id, actor_type, game_id, event_type, detail)
     values (
       ${String(input.creatorId || "").trim() || null},
+      ${String(input.ownerKey || "").trim() || null},
       ${String(input.visitorId || "").trim() || null},
+      ${String(input.actorType || "").trim() || null},
       ${String(input.gameId || "").trim() || null},
       ${eventType},
       ${safeJson(input.detail)}

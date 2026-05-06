@@ -12,7 +12,7 @@ import "./usage.css";
 
 export const dynamic = "force-dynamic";
 
-type Search = { gameId?: string; creatorId?: string };
+type Search = { gameId?: string; creatorId?: string; actorKey?: string };
 
 function rowsOf<T = any>(res: any): T[] {
   return Array.isArray(res?.rows) ? res.rows : [];
@@ -106,6 +106,7 @@ export default async function UsageAdminPage({ searchParams }: { searchParams?: 
   const sp = searchParams ? await searchParams : {};
   const selectedGameId = String(sp?.gameId || "").trim().slice(0, 120);
   const selectedCreatorId = String(sp?.creatorId || "").trim().slice(0, 120);
+  const selectedActorKey = String(sp?.actorKey || "").trim().slice(0, 120);
 
   const warnings: string[] = [];
   await safeEnsure("用户字段", ensureCreatorsAuthFields, warnings);
@@ -200,6 +201,7 @@ export default async function UsageAdminPage({ searchParams }: { searchParams?: 
                 (select count(*)::int from game_like_votes) as like_count,
                 (select count(*)::int from creator_user_messages) as legacy_user_message_count,
                 (select count(*)::int from creator_chat_messages) as chat_message_count,
+                (select count(distinct owner_key)::int from creator_chat_messages where actor_type = 'guest' and owner_key is not null) as guest_actor_count,
                 (select count(*)::int from creator_usage_events) as usage_event_count
             `),
       warnings,
@@ -341,6 +343,9 @@ export default async function UsageAdminPage({ searchParams }: { searchParams?: 
         e.id,
         e.event_type,
         e.creator_id,
+        e.owner_key,
+        e.visitor_id,
+        e.actor_type,
         c.name as creator_name,
         e.game_id,
         coalesce(g.title, dg.title, e.game_id) as game_title,
@@ -359,6 +364,8 @@ export default async function UsageAdminPage({ searchParams }: { searchParams?: 
       select
         cm.game_id,
         cm.creator_id,
+        cm.owner_key,
+        cm.actor_type,
         c.name as creator_name,
         coalesce(g.title, dg.title, cm.game_id) as game_title,
         count(*)::int as message_count,
@@ -368,7 +375,7 @@ export default async function UsageAdminPage({ searchParams }: { searchParams?: 
       left join games g on g.id = cm.game_id
       left join creator_draft_games dg on dg.id = cm.game_id
       ${selectedCreatorId ? sql`where cm.creator_id = ${selectedCreatorId}` : sql``}
-      group by cm.game_id, cm.creator_id, c.name, coalesce(g.title, dg.title, cm.game_id)
+      group by cm.game_id, cm.creator_id, cm.owner_key, cm.actor_type, c.name, coalesce(g.title, dg.title, cm.game_id)
       order by last_at desc
       limit 80
     `), warnings),
@@ -388,11 +395,14 @@ export default async function UsageAdminPage({ searchParams }: { searchParams?: 
             cm.content,
             cm.created_at,
             cm.creator_id,
+            cm.owner_key,
+            cm.actor_type,
             c.name as creator_name
           from creator_chat_messages cm
           left join creators c on c.id = cm.creator_id
           where cm.game_id = ${selectedGameId}
             ${selectedCreatorId ? sql`and cm.creator_id = ${selectedCreatorId}` : sql``}
+            ${selectedActorKey ? sql`and cm.owner_key = ${selectedActorKey}` : sql``}
           order by cm.created_at asc, cm.id asc
           limit 300
         `),
@@ -523,6 +533,7 @@ export default async function UsageAdminPage({ searchParams }: { searchParams?: 
         ["总试玩次数", n(summary.play_count)],
         ["总点赞数", n(summary.like_count)],
         ["对话消息", n(summary.chat_message_count) || n(summary.legacy_user_message_count)],
+        ["游客创作者", n(summary.guest_actor_count)],
         ["使用事件", n(summary.usage_event_count)],
       ];
 
@@ -688,11 +699,15 @@ export default async function UsageAdminPage({ searchParams }: { searchParams?: 
                 <div className="usageItem" key={String(e.id)}>
                   <div>
                     <span className="usageBadge">{eventName(e.event_type)}</span>
-                    <a className="usageStrong" href={e.game_id ? qs({ gameId: e.game_id, creatorId: e.creator_id }) : "#"}>
+                    <a
+                      className="usageStrong"
+                      href={e.game_id ? qs({ gameId: e.game_id, creatorId: e.creator_id, actorKey: e.creator_id ? undefined : e.owner_key }) : "#"}
+                    >
                       {e.game_title || e.game_id || "-"}
                     </a>
                     <div className="usageSub">
-                      {e.creator_name || e.creator_id || "访客"} · {clip(e.detail, 80)}
+                      {e.creator_name || e.creator_id || (e.owner_key ? `访客 ${String(e.owner_key).slice(-8)}` : "访客")} ·{" "}
+                      {clip(e.detail, 80)}
                     </div>
                   </div>
                   <time>{fmtTime(e.created_at)}</time>
@@ -708,11 +723,16 @@ export default async function UsageAdminPage({ searchParams }: { searchParams?: 
             </div>
             <div className="usageList">
               {conversations.map((c: any) => (
-                <a className="usageItem usageItemLink" key={`${c.game_id}-${c.creator_id}`} href={qs({ gameId: c.game_id, creatorId: c.creator_id })}>
+                <a
+                  className="usageItem usageItemLink"
+                  key={`${c.game_id}-${c.creator_id || c.owner_key}`}
+                  href={qs({ gameId: c.game_id, creatorId: c.creator_id, actorKey: c.creator_id ? undefined : c.owner_key })}
+                >
                   <div>
                     <span className="usageStrong">{c.game_title || c.game_id}</span>
                     <div className="usageSub">
-                      {c.creator_name || c.creator_id} · {n(c.message_count)} 条消息
+                      {c.creator_name || c.creator_id || (c.owner_key ? `访客 ${String(c.owner_key).slice(-8)}` : "访客")} ·{" "}
+                      {n(c.message_count)} 条消息
                     </div>
                   </div>
                   <time>{fmtTime(c.last_at)}</time>
@@ -734,7 +754,7 @@ export default async function UsageAdminPage({ searchParams }: { searchParams?: 
                   <article className={`usageChatMsg ${String(m.role) === "assistant" ? "isAi" : "isUser"}`} key={String(m.id)}>
                     <header>
                       <strong>{roleName(m.role)}</strong>
-                      <span>{m.creator_name || m.creator_id || ""}</span>
+                      <span>{m.creator_name || m.creator_id || (m.owner_key ? `访客 ${String(m.owner_key).slice(-8)}` : "")}</span>
                       <time>{fmtTime(m.created_at)}</time>
                     </header>
                     <p>{clip(m.content, 1200)}</p>

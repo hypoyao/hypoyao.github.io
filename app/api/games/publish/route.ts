@@ -389,6 +389,8 @@ export async function POST(req: Request) {
     await recordUsageEvent({
       eventType: existing ? "game_updated" : "game_published",
       creatorId: effCreatorId,
+      ownerKey,
+      actorType: "creator",
       gameId: publishGameId,
       detail: { sourceDraftId: storedSourceDraftId || undefined, title },
     });

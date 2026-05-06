@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
-import { ownerKeyFromSessionOrGuest } from "@/lib/creator/creatorIndex";
+import { creatorActorFromSessionOrGuest } from "@/lib/creator/creatorIndex";
+import { getOrCreateCreatorIdForActor } from "@/lib/creator/actorCreator";
 import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
-import { creators } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
 import { ensureCreatorsAuthFields } from "@/lib/db/ensureCreatorsAuthFields";
 import { ensureGamesCoverFields } from "@/lib/db/ensureGamesCoverFields";
 
@@ -18,7 +17,8 @@ function json(status: number, data: unknown) {
 
 export async function GET(req: Request) {
   const sess = await getSession();
-  const ownerKey = await ownerKeyFromSessionOrGuest(sess, req);
+  const actor = await creatorActorFromSessionOrGuest(sess, req);
+  const ownerKey = actor.ownerKey;
   if (!ownerKey) return json(500, { ok: false, error: "OWNER_KEY_FAILED", games: [] });
 
   // 并发拉取：草稿 + 已发布
@@ -28,18 +28,7 @@ export async function GET(req: Request) {
     ensureGamesCoverFields().catch(() => null),
   ]);
 
-  let creatorId = "";
-  try {
-    if (sess?.phone) {
-      const [c] = await db.select({ id: creators.id }).from(creators).where(eq(creators.phone, sess.phone)).limit(1);
-      creatorId = String(c?.id || "");
-    } else if (sess?.openid) {
-      const [c] = await db.select({ id: creators.id }).from(creators).where(eq(creators.openid, sess.openid)).limit(1);
-      creatorId = String(c?.id || "");
-    }
-  } catch {
-    creatorId = "";
-  }
+  const creatorId = (await getOrCreateCreatorIdForActor(sess, actor).catch(() => null)) || "";
 
   const draftP = db.execute(sql`
     select
