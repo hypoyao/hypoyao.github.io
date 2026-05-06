@@ -1,6 +1,5 @@
 import { listGames } from "@/lib/db/queries";
 import HomeAccount from "./HomeAccount";
-import HomePromptLauncher from "./HomePromptLauncher";
 
 // 首页尽量走静态 + ISR：首屏秒开（CDN 缓存），后台定期更新
 export const dynamic = "force-static";
@@ -39,7 +38,10 @@ export default async function HomePage() {
             <h1 className="heroTitle">用 AI 对话，让创意成真</h1>
             <p className="heroDesc">描述需求、迭代功能、即时预览。一句话开始创作，把作品分享给更多人。</p>
 
-            <HomePromptLauncher />
+            <a className="heroStartBtn" href="/create" aria-label="开始创作小游戏">
+              开始创作
+              <span aria-hidden="true">→</span>
+            </a>
           </section>
         </section>
 

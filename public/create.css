@@ -1524,8 +1524,8 @@
     border-radius: 18px;
   }
   .createPanel.isChat {
-    height: min(760px, 78dvh);
-    min-height: 540px;
+    height: min(620px, 64dvh);
+    min-height: 430px;
   }
   .previewPanel {
     height: min(720px, 74dvh);
@@ -1553,7 +1553,7 @@
   }
 
   .chatList {
-    padding: 8px 10px;
+    padding: 7px 10px;
   }
   .chatMsg.isThinking {
     padding-right: 0;
@@ -1575,7 +1575,11 @@
   }
 
   .chatComposer {
-    padding: 10px;
+    padding: 12px;
+    border-top-color: rgba(59, 130, 246, 0.16);
+    background:
+      radial-gradient(360px 120px at 10% 0%, rgba(56, 189, 248, 0.12), transparent 65%),
+      rgba(255, 255, 255, 0.96);
   }
   .starterPromptLabel {
     font-size: 11px;
@@ -1586,6 +1590,26 @@
   .chatRow {
     grid-template-columns: minmax(0, 1fr);
     align-items: stretch;
+  }
+  .chatComposer .restTextarea,
+  .createBento .chatComposer .restTextarea {
+    min-height: 92px;
+    padding: 14px 15px;
+    border: 2px solid rgba(56, 189, 248, 0.38);
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 1);
+    box-shadow: 0 10px 24px rgba(14, 165, 233, 0.12), inset 0 0 0 1px rgba(255, 255, 255, 0.88);
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  .chatComposer .restTextarea::placeholder {
+    color: rgba(71, 85, 105, 0.62);
+  }
+  .chatComposer .restTextarea:focus,
+  .createBento .chatComposer .restTextarea:focus {
+    outline: none;
+    border-color: rgba(14, 165, 233, 0.74);
+    box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.16), 0 12px 28px rgba(14, 165, 233, 0.16);
   }
   .sendCol {
     grid-template-columns: 58px minmax(0, 1fr);
@@ -1644,8 +1668,8 @@
     text-overflow: ellipsis;
   }
   .createPanel.isChat {
-    height: min(780px, 80dvh);
-    min-height: 500px;
+    height: min(560px, 60dvh);
+    min-height: 390px;
   }
   .previewPanel {
     height: min(700px, 76dvh);
@@ -1690,13 +1714,14 @@
     grid-template-columns: minmax(0, 1fr) auto;
   }
   .createPanel.isChat {
-    min-height: 480px;
+    height: min(520px, 58dvh);
+    min-height: 360px;
   }
   .previewPanel {
     min-height: 430px;
   }
   .chatComposer .restTextarea {
-    min-height: 108px;
+    min-height: 86px;
   }
 }
 
