@@ -113,12 +113,13 @@
 }
 .createTopActionBtn {
   flex: 0 0 auto;
-  min-height: 40px;
+  height: 38px;
+  min-height: 38px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 0 16px;
+  padding: 0 14px;
   border-radius: 999px;
   border: 1px solid rgba(15, 23, 42, 0.12);
   background: rgba(255, 255, 255, 0.78);
@@ -173,7 +174,12 @@
 .createMenuBtn {
   list-style: none;
   cursor: pointer;
-  padding: 8px 12px;
+  height: 38px;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
   border-radius: 999px;
   border: 1px solid rgba(15, 23, 42, 0.12);
   background: rgba(255, 255, 255, 0.65);
@@ -254,6 +260,7 @@
 .createTopInline .restInput {
   min-width: 0;
   width: 100%;
+  height: 38px;
 }
 .createTopLabel {
   font-size: 12px;
@@ -1686,7 +1693,8 @@
   .createTopActionBtn,
   .createMenuBtn {
     width: 100%;
-    min-height: 40px;
+    height: 38px;
+    min-height: 38px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1723,7 +1731,8 @@
   .createTopRight .createPublishActionBtn {
     width: auto;
     min-width: 82px;
-    min-height: 40px;
+    height: 38px;
+    min-height: 38px;
     padding-inline: 14px;
   }
 }

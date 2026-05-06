@@ -1,4 +1,5 @@
 import { listGames } from "@/lib/db/queries";
+import { sortGamesByEngagement } from "@/lib/gameSorting";
 import HomeAccount from "../HomeAccount";
 
 export const dynamic = "force-static";
@@ -10,6 +11,7 @@ function toGameEntryHref(path: string) {
 
 export default async function WorksPage() {
   const games = await listGames();
+  const sortedGames = sortGamesByEngagement(games);
 
   return (
     <main className="homePage worksPage">
@@ -33,7 +35,7 @@ export default async function WorksPage() {
       <section className="worksGridWrap" aria-label="全部社区作品">
         {games.length ? (
           <section className="gameGrid worksGameGrid" aria-label="game list">
-            {games.map((g) => (
+            {sortedGames.map((g) => (
               <article key={g.id} className="gameItem" aria-label={g.title}>
                 <a className="gameLink" href={toGameEntryHref(g.path)} aria-label={`打开游戏：${g.title}`}>
                   <img className="gameThumb" src={g.coverUrl} alt={`${g.title}截图`} loading="lazy" decoding="async" />

@@ -1,4 +1,5 @@
 import { listGames } from "@/lib/db/queries";
+import { featuredGamesByEngagement } from "@/lib/gameSorting";
 import HomeAccount from "../HomeAccount";
 import HomePromptLauncher from "../HomePromptLauncher";
 
@@ -52,7 +53,7 @@ function toGameEntryHref(path: string) {
 
 export default async function HomePage() {
   const games = await listGames();
-  const showcasedGames = games.slice(0, 6);
+  const showcasedGames = featuredGamesByEngagement(games).slice(0, 6);
 
   return (
     <main className="homePage teachersPage">

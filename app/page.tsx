@@ -1,4 +1,5 @@
 import { listGames } from "@/lib/db/queries";
+import { featuredGamesByEngagement } from "@/lib/gameSorting";
 import HomeAccount from "./HomeAccount";
 
 // 首页尽量走静态 + ISR：首屏秒开（CDN 缓存），后台定期更新
@@ -12,6 +13,7 @@ function toGameEntryHref(path: string) {
 
 export default async function HomePage() {
   const games = await listGames();
+  const featuredGames = featuredGamesByEngagement(games);
 
   return (
     <main className="homePage simpleHomePage">
@@ -53,7 +55,7 @@ export default async function HomePage() {
             </a>
           </div>
           <section className="gameGrid homeWallGrid" aria-label="game list">
-            {games.map((g) => (
+            {featuredGames.map((g) => (
               <article key={g.id} className="gameItem" aria-label={g.title}>
                 <a className="gameLink" href={toGameEntryHref(g.path)} aria-label={`打开游戏：${g.title}`}>
                   <img className="gameThumb" src={g.coverUrl} alt={`${g.title}截图`} loading="lazy" decoding="async" />

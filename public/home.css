@@ -740,11 +740,16 @@
 
 .templateGrid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 18px;
 }
 
 .templateCard {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
   padding: 10px;
   border-radius: 18px;
   border: 1px solid var(--home-line);
@@ -754,7 +759,8 @@
 
 .templateThumb {
   position: relative;
-  aspect-ratio: 1 / 1.22;
+  width: 104px;
+  aspect-ratio: 1 / 1;
   overflow: hidden;
   border-radius: 14px;
   background: linear-gradient(180deg, #eff6ff, #fff);
@@ -779,9 +785,9 @@
 }
 
 .templateCard h3 {
-  margin: 12px 4px 3px;
-  text-align: center;
-  font-size: 16px;
+  margin: 0;
+  text-align: left;
+  font-size: 18px;
   line-height: 1.3;
 }
 
@@ -1789,8 +1795,13 @@
     padding: 28px 20px;
   }
 
+  .templateCard {
+    grid-template-columns: 96px minmax(0, 1fr);
+  }
+
   .templateThumb {
-    aspect-ratio: 1.6 / 1;
+    width: 96px;
+    aspect-ratio: 1 / 1;
   }
 
   .templateThumb img {
