@@ -2353,10 +2353,23 @@ function envAny(...keys: string[]) {
   return "";
 }
 
+function stripWrappingQuotes(value: string) {
+  return String(value || "").trim().replace(/^["']+|["']+$/g, "").trim();
+}
+
+function normalizeOpenAiBaseUrl(value: string, fallback: string) {
+  let base = stripWrappingQuotes(value) || stripWrappingQuotes(fallback);
+  base = base.replace(/\/+$/, "");
+  if (!base) return "";
+  if (!/^https?:\/\//i.test(base)) base = `https://${base.replace(/^\/+/, "")}`;
+  return base;
+}
+
 function joinOpenAiCompatibleUrl(baseUrl: string, apiPath: string) {
-  const path = String(apiPath || "/chat/completions").trim() || "/chat/completions";
+  const base = normalizeOpenAiBaseUrl(baseUrl, "");
+  const path = stripWrappingQuotes(apiPath || "/chat/completions") || "/chat/completions";
   if (/^https?:\/\//i.test(path)) return path.replace(/\/+$/, "");
-  return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+  return `${base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
 function tunePayloadForStep(
@@ -2532,7 +2545,7 @@ export async function POST(req: Request) {
   }
 
   if (provider === "deepseek") {
-    const baseUrl = (process.env.DEEPSEEK_API_BASE || "https://api.deepseek.com").replace(/\/+$/, "");
+    const baseUrl = normalizeOpenAiBaseUrl(process.env.DEEPSEEK_API_BASE || "", "https://api.deepseek.com");
     url = `${baseUrl}/v1/chat/completions`;
     const picked = (body as any)?.model;
     const envModel = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
@@ -2547,8 +2560,10 @@ export async function POST(req: Request) {
       else if (hasDeepSeek) provider = "deepseek";
       else return json(500, { ok: false, error: "MISSING_DASHSCOPE_API_KEY" });
     } else {
-      const baseUrl = (process.env.DASHSCOPE_BASE_URL || process.env.BAILIAN_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        .replace(/\/+$/, "");
+      const baseUrl = normalizeOpenAiBaseUrl(
+        process.env.DASHSCOPE_BASE_URL || process.env.BAILIAN_BASE_URL || "",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      );
       url = `${baseUrl}/chat/completions`;
       const picked = String((body as any)?.model || "").trim();
       // 百炼模型名：例如 qwen3.6-plus / qwen-plus 等
@@ -2562,8 +2577,10 @@ export async function POST(req: Request) {
       else if (hasDeepSeek) provider = "deepseek";
       else return json(500, { ok: false, error: "MISSING_TENCENT_TOKENHUB_API_KEY" });
     } else {
-      const baseUrl = (process.env.TENCENT_TOKENHUB_BASE_URL || process.env.TOKENHUB_BASE_URL || "https://tokenhub.tencentmaas.com/v1")
-        .replace(/\/+$/, "");
+      const baseUrl = normalizeOpenAiBaseUrl(
+        process.env.TENCENT_TOKENHUB_BASE_URL || process.env.TOKENHUB_BASE_URL || "",
+        "https://tokenhub.tencentmaas.com/v1",
+      );
       url = `${baseUrl}/chat/completions`;
       const picked = String((body as any)?.model || "").trim();
       model = (TENCENT_TOKENHUB_MODELS as readonly string[]).includes(picked)
@@ -2578,8 +2595,8 @@ export async function POST(req: Request) {
     if (!authKey) {
       return json(500, { ok: false, error: "MISSING_CHINAMOBILE_API_KEY" });
     } else {
-      const baseUrl = String(process.env.CHINAMOBILE_BASE_URL || "").trim() || "https://maas.gd.chinamobile.com:36007/ai/uifm/open/v1";
-      const apiPath = String(process.env.CHINAMOBILE_API_PATH || "").trim() || "/chat/completions";
+      const baseUrl = normalizeOpenAiBaseUrl(process.env.CHINAMOBILE_BASE_URL || "", "https://maas.gd.chinamobile.com:36007/ai/uifm/open/v1");
+      const apiPath = stripWrappingQuotes(process.env.CHINAMOBILE_API_PATH || "") || "/chat/completions";
       url = joinOpenAiCompatibleUrl(baseUrl, apiPath);
       const picked = String((body as any)?.model || "").trim();
       model = (CHINAMOBILE_MODELS as readonly string[]).includes(picked)
@@ -2589,7 +2606,7 @@ export async function POST(req: Request) {
   } else {
     authKey = process.env.OPENROUTER_API_KEY || "";
     if (!authKey) return json(500, { ok: false, error: "MISSING_OPENROUTER_API_KEY" });
-    const baseUrl = (process.env.OPENROUTER_API_BASE || "https://openrouter.ai/api/v1").replace(/\/+$/, "");
+    const baseUrl = normalizeOpenAiBaseUrl(process.env.OPENROUTER_API_BASE || "", "https://openrouter.ai/api/v1");
     url = `${baseUrl}/chat/completions`;
     const picked = String((body as any)?.model || "").trim();
     model = (OPENROUTER_MODELS as readonly string[]).includes(picked) ? picked : OPENROUTER_MODELS[0];
