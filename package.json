@@ -5,7 +5,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "template:generate": "node scripts/generate-game-template.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.10.4",

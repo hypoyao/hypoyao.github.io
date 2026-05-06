@@ -526,13 +526,16 @@ async function buildShellHtml(gameId: string) {
           return data;
         }
         async function copyShareLink() {
-          var url = window.location.href;
+          return await copyText(window.location.href);
+        }
+        async function copyText(text) {
+          var value = String(text || "");
           if (navigator.clipboard && navigator.clipboard.writeText) {
-            await navigator.clipboard.writeText(url);
+            await navigator.clipboard.writeText(value);
             return true;
           }
           var ta = document.createElement("textarea");
-          ta.value = url;
+          ta.value = value;
           ta.setAttribute("readonly", "readonly");
           ta.style.position = "fixed";
           ta.style.opacity = "0";
@@ -550,13 +553,26 @@ async function buildShellHtml(gameId: string) {
           if (shareIconBtn) shareIconBtn.setAttribute("disabled", "disabled");
           setShareHint("");
           try {
-            var shareData = { title: document.title || ${JSON.stringify(title || gameId)}, text: "来试玩这个小游戏吧～", url: window.location.href };
+            var appTitle = document.title || ${JSON.stringify(title || gameId)};
+            var shareUrl = window.location.href;
+            // 分享文案：按产品要求（含反引号包裹链接，便于复制到聊天）
+            var bt = String.fromCharCode(96);
+            var shareText = "快来看看我在奇点小匠一句话创建的闪应用：" + appTitle + " 👉 " + bt + shareUrl + bt;
+
+            // 1) 先复制文案（无论是否支持系统分享，都让用户一键可粘贴）
+            try {
+              await copyText(shareText);
+              setShareHint("分享文案已复制：" + shareText);
+            } catch (e) {
+              // 复制失败也要继续尝试系统分享
+              setShareHint(shareText);
+            }
+
+            // 2) 再尝试系统分享（移动端更顺手）
             if (navigator.share) {
-              await navigator.share(shareData);
-              setShareHint("已打开系统分享面板");
-            } else {
-              await copyShareLink();
-              setShareHint("链接已复制，快发给朋友吧");
+              // 系统分享里去掉反引号，避免某些平台显示怪异
+              var shareTextPlain = shareText.split(bt).join("");
+              await navigator.share({ title: appTitle, text: shareTextPlain, url: shareUrl });
             }
           } catch (e) {
             var msg = String((e && e.message) || e || "");
