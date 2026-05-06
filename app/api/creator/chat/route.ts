@@ -2528,88 +2528,88 @@ export async function POST(req: Request) {
   let url = "";
   let authKey = "";
   let model = "";
-  if (provider === "deepseek") {
-    authKey = process.env.DEEPSEEK_API_KEY || "";
-    if (!authKey) {
-      // DeepSeek 未配置时回退到当前默认优先级。
-      if (hasBailian) {
-        provider = "bailian";
-      } else if (hasTencentTokenHub) {
-        provider = "tencent";
-      } else if (hasOpenRouter) {
-        provider = "openrouter";
-      } else {
-        return json(500, { ok: false, error: "MISSING_DEEPSEEK_API_KEY" });
-      }
-    }
-  }
+  const requestedProvider = provider;
+  const pickedModel = String((body as any)?.model || "").trim();
+  const providerFallbackOrder: ModelProvider[] = Array.from(
+    new Set<ModelProvider>([requestedProvider, "bailian", "tencent", "chinamobile", "openrouter", "deepseek"]),
+  );
 
-  if (provider === "deepseek") {
-    const baseUrl = normalizeOpenAiBaseUrl(process.env.DEEPSEEK_API_BASE || "", "https://api.deepseek.com");
-    url = `${baseUrl}/v1/chat/completions`;
-    const picked = (body as any)?.model;
-    const envModel = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
-    model = (DEEPSEEK_DIRECT_MODELS as readonly string[]).includes(String(picked || "").trim()) ? String(picked).trim() : envModel;
-  } else if (provider === "bailian") {
-    // 阿里云百炼（DashScope）OpenAI 兼容接口：
-    // base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-    // chat completions: POST {base_url}/chat/completions
-    authKey = process.env.DASHSCOPE_API_KEY || process.env.BAILIAN_API_KEY || "";
-    if (!authKey) {
-      if (hasOpenRouter) provider = "openrouter";
-      else if (hasDeepSeek) provider = "deepseek";
-      else return json(500, { ok: false, error: "MISSING_DASHSCOPE_API_KEY" });
-    } else {
+  const tryConfigureEndpoint = (target: ModelProvider) => {
+    if (target === "bailian") {
+      const key = process.env.DASHSCOPE_API_KEY || process.env.BAILIAN_API_KEY || "";
+      if (!key) return false;
       const baseUrl = normalizeOpenAiBaseUrl(
         process.env.DASHSCOPE_BASE_URL || process.env.BAILIAN_BASE_URL || "",
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
       );
+      provider = target;
+      authKey = key;
       url = `${baseUrl}/chat/completions`;
-      const picked = String((body as any)?.model || "").trim();
-      // 百炼模型名：例如 qwen3.6-plus / qwen-plus 等
-      model = picked || process.env.BAILIAN_MODEL || process.env.DASHSCOPE_MODEL || DEFAULT_BAILIAN_MODEL;
+      model = pickedModel || process.env.BAILIAN_MODEL || process.env.DASHSCOPE_MODEL || DEFAULT_BAILIAN_MODEL;
+      return true;
     }
-  } else if (provider === "tencent") {
-    authKey = process.env.TENCENT_TOKENHUB_API_KEY || process.env.TOKENHUB_API_KEY || "";
-    if (!authKey) {
-      if (hasBailian) provider = "bailian";
-      else if (hasOpenRouter) provider = "openrouter";
-      else if (hasDeepSeek) provider = "deepseek";
-      else return json(500, { ok: false, error: "MISSING_TENCENT_TOKENHUB_API_KEY" });
-    } else {
+    if (target === "tencent") {
+      const key = process.env.TENCENT_TOKENHUB_API_KEY || process.env.TOKENHUB_API_KEY || "";
+      if (!key) return false;
       const baseUrl = normalizeOpenAiBaseUrl(
         process.env.TENCENT_TOKENHUB_BASE_URL || process.env.TOKENHUB_BASE_URL || "",
         "https://tokenhub.tencentmaas.com/v1",
       );
+      provider = target;
+      authKey = key;
       url = `${baseUrl}/chat/completions`;
-      const picked = String((body as any)?.model || "").trim();
-      model = (TENCENT_TOKENHUB_MODELS as readonly string[]).includes(picked)
-        ? picked
+      model = (TENCENT_TOKENHUB_MODELS as readonly string[]).includes(pickedModel)
+        ? pickedModel
         : process.env.TENCENT_TOKENHUB_MODEL || process.env.TOKENHUB_MODEL || "hy3-preview";
+      return true;
     }
-  } else if (provider === "chinamobile") {
-    // 中国移动 MaaS（OpenAI-compatible completions）
-    // 默认 base_url: https://maas.gd.chinamobile.com:36007/ai/uifm/open/v1
-    // 默认 path: /chat/completions；若控制台给的是完整 completions 地址，可用 CHINAMOBILE_API_PATH 覆盖。
-    authKey = String(process.env.CHINAMOBILE_TOKENHUB_API_KEY || "").trim();
-    if (!authKey) {
-      return json(500, { ok: false, error: "MISSING_CHINAMOBILE_API_KEY" });
-    } else {
+    if (target === "chinamobile") {
+      const key = String(process.env.CHINAMOBILE_TOKENHUB_API_KEY || "").trim();
+      if (!key) return false;
       const baseUrl = normalizeOpenAiBaseUrl(process.env.CHINAMOBILE_BASE_URL || "", "https://maas.gd.chinamobile.com:36007/ai/uifm/open/v1");
       const apiPath = stripWrappingQuotes(process.env.CHINAMOBILE_API_PATH || "") || "/chat/completions";
+      provider = target;
+      authKey = key;
       url = joinOpenAiCompatibleUrl(baseUrl, apiPath);
-      const picked = String((body as any)?.model || "").trim();
-      model = (CHINAMOBILE_MODELS as readonly string[]).includes(picked)
-        ? picked
+      model = (CHINAMOBILE_MODELS as readonly string[]).includes(pickedModel)
+        ? pickedModel
         : String(process.env.CHINAMOBILE_MODEL || "").trim() || "minimax-m25";
+      return true;
     }
-  } else {
-    authKey = process.env.OPENROUTER_API_KEY || "";
-    if (!authKey) return json(500, { ok: false, error: "MISSING_OPENROUTER_API_KEY" });
-    const baseUrl = normalizeOpenAiBaseUrl(process.env.OPENROUTER_API_BASE || "", "https://openrouter.ai/api/v1");
-    url = `${baseUrl}/chat/completions`;
-    const picked = String((body as any)?.model || "").trim();
-    model = (OPENROUTER_MODELS as readonly string[]).includes(picked) ? picked : OPENROUTER_MODELS[0];
+    if (target === "openrouter") {
+      const key = process.env.OPENROUTER_API_KEY || "";
+      if (!key) return false;
+      const baseUrl = normalizeOpenAiBaseUrl(process.env.OPENROUTER_API_BASE || "", "https://openrouter.ai/api/v1");
+      provider = target;
+      authKey = key;
+      url = `${baseUrl}/chat/completions`;
+      model = (OPENROUTER_MODELS as readonly string[]).includes(pickedModel) ? pickedModel : OPENROUTER_MODELS[0];
+      return true;
+    }
+    if (target === "deepseek") {
+      const key = process.env.DEEPSEEK_API_KEY || "";
+      if (!key) return false;
+      const baseUrl = normalizeOpenAiBaseUrl(process.env.DEEPSEEK_API_BASE || "", "https://api.deepseek.com");
+      provider = target;
+      authKey = key;
+      url = `${baseUrl}/v1/chat/completions`;
+      const envModel = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
+      model = (DEEPSEEK_DIRECT_MODELS as readonly string[]).includes(pickedModel) ? pickedModel : envModel;
+      return true;
+    }
+    return false;
+  };
+
+  for (const candidate of providerFallbackOrder) {
+    if (tryConfigureEndpoint(candidate)) break;
+  }
+  if (!url || !authKey || !model) {
+    return json(500, { ok: false, error: "MISSING_MODEL_PROVIDER_API_KEY" });
+  }
+  try {
+    new URL(url);
+  } catch {
+    return json(500, { ok: false, error: `INVALID_MODEL_ENDPOINT_URL:${provider}` });
   }
 
   // ===== 本地开发：仅对“受地区/风控影响更明显”的模型走线上 Vercel 中转 =====
