@@ -1,0 +1,274 @@
+.worksAdminPage {
+  min-height: 100vh;
+  padding: 32px min(5vw, 56px);
+  background:
+    radial-gradient(circle at 12% 8%, rgba(59, 130, 246, 0.12), transparent 30%),
+    linear-gradient(180deg, #f8fbff 0%, #eef5ff 100%);
+  color: #1f2937;
+}
+
+.worksAdmin {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+}
+
+.worksAdminHero,
+.worksAdminToolbar,
+.worksAdminItem,
+.worksAdminEmpty,
+.worksAdminError {
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 18px 40px rgba(37, 99, 235, 0.08);
+}
+
+.worksAdminHero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 28px;
+}
+
+.worksAdminHero p {
+  margin: 0 0 8px;
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.worksAdminHero h1 {
+  margin: 0;
+  color: #111827;
+  font-size: clamp(30px, 5vw, 52px);
+  line-height: 1.05;
+}
+
+.worksAdminHero span {
+  display: block;
+  margin-top: 10px;
+  color: #64748b;
+  font-weight: 800;
+  line-height: 1.6;
+}
+
+.worksAdminStats {
+  min-width: 170px;
+  padding: 18px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, #2563eb, #22c55e);
+  color: white;
+  text-align: right;
+}
+
+.worksAdminStats strong {
+  display: block;
+  font-size: 40px;
+  line-height: 1;
+}
+
+.worksAdminStats span {
+  margin-top: 8px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.worksAdminToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 18px;
+  padding: 14px;
+}
+
+.worksAdminTabs {
+  display: flex;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 18px;
+  background: #eef5ff;
+}
+
+.worksAdminTabs button,
+.worksAdminToggle {
+  border: 0;
+  border-radius: 14px;
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.worksAdminTabs button {
+  padding: 10px 16px;
+  color: #475569;
+  background: transparent;
+}
+
+.worksAdminTabs button.isActive {
+  color: #0f172a;
+  background: white;
+  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.12);
+}
+
+.worksAdminToolbar input {
+  width: min(360px, 100%);
+  height: 44px;
+  box-sizing: border-box;
+  padding: 0 16px;
+  border: 1px solid rgba(148, 163, 184, 0.36);
+  border-radius: 16px;
+  background: white;
+  color: #0f172a;
+  font: inherit;
+  font-weight: 800;
+  outline: none;
+}
+
+.worksAdminError {
+  margin-top: 14px;
+  padding: 14px 16px;
+  color: #b91c1c;
+  font-weight: 900;
+  background: #fff1f2;
+}
+
+.worksAdminList {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.worksAdminItem {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr) 96px;
+  align-items: center;
+  gap: 16px;
+  padding: 14px;
+}
+
+.worksAdminItem.isHidden {
+  opacity: 0.66;
+}
+
+.worksAdminItem img {
+  width: 112px;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 20px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: #f8fafc;
+}
+
+.worksAdminInfo {
+  min-width: 0;
+}
+
+.worksAdminInfo header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.worksAdminInfo h2 {
+  margin: 0;
+  color: #111827;
+  font-size: 21px;
+  line-height: 1.25;
+}
+
+.worksAdminInfo header span {
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: #2563eb;
+  background: #dbeafe;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.worksAdminItem.isHidden .worksAdminInfo header span {
+  color: #64748b;
+  background: #e2e8f0;
+}
+
+.worksAdminInfo p {
+  margin: 8px 0 0;
+  color: #475569;
+  font-weight: 800;
+  line-height: 1.55;
+}
+
+.worksAdminMeta,
+.worksAdminLinks {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.worksAdminLinks a {
+  color: #2563eb;
+  text-decoration: none;
+}
+
+.worksAdminLinks code {
+  color: #334155;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.worksAdminToggle {
+  height: 44px;
+  color: white;
+  background: linear-gradient(135deg, #2563eb, #16a34a);
+}
+
+.worksAdminItem.isShown .worksAdminToggle {
+  color: #334155;
+  background: #eef2f7;
+}
+
+.worksAdminToggle:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.worksAdminEmpty {
+  padding: 36px;
+  color: #64748b;
+  font-weight: 900;
+  text-align: center;
+}
+
+@media (max-width: 760px) {
+  .worksAdminPage {
+    padding: 18px 12px;
+  }
+
+  .worksAdminHero,
+  .worksAdminToolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .worksAdminStats {
+    text-align: left;
+  }
+
+  .worksAdminItem {
+    grid-template-columns: 88px minmax(0, 1fr);
+  }
+
+  .worksAdminItem img {
+    width: 88px;
+  }
+
+  .worksAdminToggle {
+    grid-column: 1 / -1;
+  }
+}

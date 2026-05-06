@@ -3,6 +3,7 @@ import { db } from "./index";
 import { creators } from "./schema";
 import { unstable_cache } from "next/cache";
 import { ensureGameEngagementTables } from "./ensureGameEngagementTables";
+import { ensureGamesCoverFields } from "./ensureGamesCoverFields";
 
 export type GameWithCreator = {
   id: string;
@@ -40,7 +41,7 @@ async function listGamesUncached(): Promise<GameWithCreator[]> {
       }>
     | null = null;
   try {
-    await ensureGameEngagementTables();
+    await Promise.all([ensureGameEngagementTables(), ensureGamesCoverFields()]);
     const res = await db.execute(sql`
       select
         g.id as game_id,
@@ -67,6 +68,7 @@ async function listGamesUncached(): Promise<GameWithCreator[]> {
         from game_like_votes
         group by game_id
       ) l on l.game_id = g.id
+      where coalesce(g.show_on_wall, true) = true
       order by g.updated_at desc, g.created_at desc
     `);
     rows = (Array.isArray((res as any).rows) ? (res as any).rows : []) as any;
@@ -101,7 +103,7 @@ const listGamesCached = unstable_cache(
   },
   ["listGames:v2"],
   // 缓存 1 分钟：兼顾首页秒开和浏览/点赞统计的可见时效。
-  { revalidate: 60 },
+  { revalidate: 60, tags: ["games:list"] },
 );
 
 export async function listGames(): Promise<GameWithCreator[]> {
@@ -119,6 +121,14 @@ export async function getCreatorByProfilePath(profilePath: string) {
 }
 
 export async function listGamesByCreator(creatorId: string): Promise<GameWithCreator[]> {
+  return listGamesByCreatorForViewer(creatorId, null);
+}
+
+export async function listGamesByCreatorForViewer(
+  creatorId: string,
+  viewerCreatorId?: string | null,
+  options?: { includeHidden?: boolean },
+): Promise<GameWithCreator[]> {
   let rows:
     | Array<{
         game_id: string;
@@ -136,7 +146,8 @@ export async function listGamesByCreator(creatorId: string): Promise<GameWithCre
       }>
     | null = null;
   try {
-    await ensureGameEngagementTables();
+    await Promise.all([ensureGameEngagementTables(), ensureGamesCoverFields()]);
+    const canSeeHidden = !!options?.includeHidden || (!!viewerCreatorId && viewerCreatorId === creatorId);
     const res = await db.execute(sql`
       select
         g.id as game_id,
@@ -164,6 +175,7 @@ export async function listGamesByCreator(creatorId: string): Promise<GameWithCre
         group by game_id
       ) l on l.game_id = g.id
       where g.creator_id = ${creatorId}
+        ${canSeeHidden ? sql`` : sql`and coalesce(g.show_on_wall, true) = true`}
       order by g.updated_at desc, g.created_at desc
     `);
     rows = (Array.isArray((res as any).rows) ? (res as any).rows : []) as any;

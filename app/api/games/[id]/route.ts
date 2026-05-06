@@ -3,6 +3,8 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { creators, games } from "@/lib/db/schema";
 import { ensureGamesCoverFields } from "@/lib/db/ensureGamesCoverFields";
+import { getCurrentCreatorId } from "@/lib/auth/currentCreator";
+import { isSuperAdminId } from "@/lib/auth/admin";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +28,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       coverUrl: games.coverUrl,
       path: games.path,
       creatorId: games.creatorId,
+      showOnWall: games.showOnWall,
       creatorName: creators.name,
       creatorAvatarUrl: creators.avatarUrl,
       creatorProfilePath: creators.profilePath,
@@ -35,6 +38,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     .where(eq(games.id, gid))
     .limit(1);
   if (!row) return NextResponse.json({ ok: false, error: "NOT_FOUND" }, { status: 404 });
+  const viewerCreatorId = await getCurrentCreatorId();
+  const canViewHidden = row.showOnWall !== false || row.creatorId === viewerCreatorId || isSuperAdminId(viewerCreatorId);
+  if (!canViewHidden) return NextResponse.json({ ok: false, error: "NOT_FOUND" }, { status: 404 });
 
   return NextResponse.json(
     {

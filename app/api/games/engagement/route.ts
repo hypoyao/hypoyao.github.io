@@ -21,7 +21,8 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const gameId = normalizeGameId(url.searchParams.get("gameId") || "");
   if (!gameId) return json(400, { ok: false, error: "MISSING_GAME_ID" });
-  if (!(await gameExists(gameId))) return json(404, { ok: false, error: "GAME_NOT_FOUND" });
+  const viewerCreatorId = await getCurrentCreatorId();
+  if (!(await gameExists(gameId, viewerCreatorId))) return json(404, { ok: false, error: "GAME_NOT_FOUND" });
 
   const actor = await creatorActorFromSessionOrGuest(await getSession(), req);
   const visitorId = actor.ownerKey;
@@ -41,11 +42,11 @@ export async function POST(req: Request) {
   const action = String(body?.action || "").trim();
   if (!gameId) return json(400, { ok: false, error: "MISSING_GAME_ID" });
   if (action !== "view" && action !== "toggle_like") return json(400, { ok: false, error: "INVALID_ACTION" });
-  if (!(await gameExists(gameId))) return json(404, { ok: false, error: "GAME_NOT_FOUND" });
+  const currentCreatorId = await getCurrentCreatorId();
+  if (!(await gameExists(gameId, currentCreatorId))) return json(404, { ok: false, error: "GAME_NOT_FOUND" });
 
   const actor = await creatorActorFromSessionOrGuest(await getSession(), req);
   const visitorId = actor.ownerKey;
-  const currentCreatorId = await getCurrentCreatorId();
   const creatorId = currentCreatorId || (await getOrCreateCreatorIdForActor(null, actor));
   const stats = action === "view" ? await recordGameView(gameId, visitorId, creatorId) : await toggleGameLike(gameId, visitorId);
   return json(200, { ok: true, gameId, ...stats });

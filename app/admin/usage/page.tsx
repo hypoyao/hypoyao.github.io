@@ -547,6 +547,7 @@ export default async function UsageAdminPage({ searchParams }: { searchParams?: 
             <p className="usageDesc">查看用户试玩、创作、发布和 AI 对话记录。查询均限制条数并依赖索引，避免拖慢线上主链路。</p>
           </div>
           <div className="usageActions">
+            <a href="/admin/works">作品墙</a>
             <a href="/admin/invites">邀请码</a>
             <a href="/">首页</a>
           </div>

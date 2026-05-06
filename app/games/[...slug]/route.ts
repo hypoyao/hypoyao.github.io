@@ -4,8 +4,13 @@ import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 import { ensureCreatorDraftTables } from "@/lib/db/ensureCreatorDraftTables";
 import { ensureGameFilesTables } from "@/lib/db/ensureGameFilesTables";
+import { ensureGamesCoverFields } from "@/lib/db/ensureGamesCoverFields";
 import { ensureCreatorUserMessagesTable } from "@/lib/db/ensureCreatorUserMessagesTable";
 import { getGameEngagement } from "@/lib/db/gameEngagement";
+import { getSession } from "@/lib/auth/session";
+import { getCurrentCreatorId } from "@/lib/auth/currentCreator";
+import { isSuperAdminId } from "@/lib/auth/admin";
+import { ownerKeyFromSessionOrGuest } from "@/lib/creator/creatorIndex";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -152,6 +157,57 @@ async function readGameText(gameId: string, rel: string) {
   const list = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
   const content = list?.[0]?.content;
   return typeof content === "string" ? content : "";
+}
+
+type GameAccess = {
+  published: { creatorId: string; showOnWall: boolean } | null;
+  canViewPublished: boolean;
+  canViewDraft: boolean;
+};
+
+async function resolveGameAccess(req: Request, gameId: string): Promise<GameAccess> {
+  const sess = await getSession();
+  const [viewerCreatorId, ownerKey] = await Promise.all([
+    getCurrentCreatorId(),
+    ownerKeyFromSessionOrGuest(sess, req).catch(() => ""),
+  ]);
+  const isAdmin = isSuperAdminId(viewerCreatorId);
+
+  await ensureGamesCoverFields();
+  const gameRows = await db.execute(sql`
+    select creator_id, coalesce(show_on_wall, true) as show_on_wall
+    from games
+    where id = ${gameId}
+    limit 1
+  `);
+  const gamesList = Array.isArray((gameRows as any).rows) ? (gameRows as any).rows : [];
+  const gameRow = gamesList[0] as any;
+  const published = gameRow
+    ? {
+        creatorId: String(gameRow.creator_id || "").trim(),
+        showOnWall: gameRow.show_on_wall !== false,
+      }
+    : null;
+  const canViewPublished =
+    !!published && (published.showOnWall || isAdmin || (!!viewerCreatorId && viewerCreatorId === published.creatorId));
+
+  let ownsDraft = false;
+  if (ownerKey) {
+    await ensureCreatorDraftTables();
+    const draftRows = await db.execute(sql`
+      select 1
+      from creator_draft_games
+      where id = ${gameId} and owner_key = ${ownerKey}
+      limit 1
+    `);
+    ownsDraft = Array.isArray((draftRows as any).rows) && (draftRows as any).rows.length > 0;
+  }
+
+  return {
+    published,
+    canViewPublished,
+    canViewDraft: isAdmin || ownsDraft,
+  };
 }
 
 async function buildShellHtml(gameId: string) {
@@ -621,7 +677,7 @@ async function buildShellHtml(gameId: string) {
 </html>`;
 }
 
-export async function GET(_req: Request, ctx: { params: Promise<{ slug: string[] }> }) {
+export async function GET(req: Request, ctx: { params: Promise<{ slug: string[] }> }) {
   const { slug } = await ctx.params;
   const parts = Array.isArray(slug) ? slug : [];
   const gameId = parts[0] || "";
@@ -647,6 +703,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ slug: string[]
   const relEmbed = isEmbed ? safeRel(rel.slice(EMBED_PREFIX.length)) : rel;
   if (isEmbed && !relEmbed) return new NextResponse("Not Found", { status: 404 });
 
+  const access = await resolveGameAccess(req, gameId);
+  if (access.published && !access.canViewPublished) return new NextResponse("Not Found", { status: 404 });
+  if (!access.published && !access.canViewDraft) return new NextResponse("Not Found", { status: 404 });
+
   // wrapper：只有 index.html（非 raw）返回两栏布局，其他资源仍然按原路径读取
   if (!isRaw && rel === "index.html") {
     const html = await buildShellHtml(gameId);
@@ -665,7 +725,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ slug: string[]
   const targetRel = isRaw ? relRaw : isEmbed ? relEmbed : rel;
   const shouldPublishedFirst = !isRaw;
 
-  if (shouldPublishedFirst) {
+  if (shouldPublishedFirst && access.published && access.canViewPublished) {
     await ensureGameFilesTables();
     const rows = await db.execute(sql`
       select content
@@ -694,16 +754,19 @@ export async function GET(_req: Request, ctx: { params: Promise<{ slug: string[]
   }
 
   // 1) creator 草稿：只给 create 预览（__raw）优先，或作为未发布游戏的兜底。
-  await ensureCreatorDraftTables();
-  const draftRows = await db.execute(sql`
-    select content
-    from creator_draft_files
-    where game_id = ${gameId} and path = ${targetRel}
-    limit 1
-  `);
-  const draftList = Array.isArray((draftRows as any).rows) ? (draftRows as any).rows : [];
-  const draftContent = draftList?.[0]?.content;
-  if (typeof draftContent === "string") {
+  let draftContent = "";
+  if (access.canViewDraft) {
+    await ensureCreatorDraftTables();
+    const draftRows = await db.execute(sql`
+      select content
+      from creator_draft_files
+      where game_id = ${gameId} and path = ${targetRel}
+      limit 1
+    `);
+    const draftList = Array.isArray((draftRows as any).rows) ? (draftRows as any).rows : [];
+    draftContent = typeof draftList?.[0]?.content === "string" ? draftList[0].content : "";
+  }
+  if (draftContent) {
     const contentOut =
       (isEmbed || isRaw) && targetRel.toLowerCase().endsWith(".html")
         ? isEmbed
@@ -721,7 +784,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ slug: string[]
   }
 
   // 如果草稿存在但还没有任何文件：对 index.html 给一个可用占位页面，避免预览 404
-  if (isRaw && targetRel === "index.html") {
+  if (isRaw && targetRel === "index.html" && access.canViewDraft) {
     const draftGame = await db.execute(sql`
       select 1
       from creator_draft_games
@@ -749,7 +812,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ slug: string[]
   }
 
   // 2) __raw 预览：草稿不存在时才回退到已发布版本。
-  if (isRaw) {
+  if (isRaw && access.published && access.canViewPublished) {
     await ensureGameFilesTables();
     const rows = await db.execute(sql`
       select content

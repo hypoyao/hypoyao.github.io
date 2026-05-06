@@ -12,9 +12,21 @@ function ensureState() {
   return g[ENSURE_GAMES_COVER_STATE_KEY] as { ensured: boolean; ensuring: Promise<void> | null };
 }
 
+async function ensureGamesCoverSchemaPatch() {
+  await db.execute(sql`alter table games add column if not exists source_draft_id text;`);
+  await db.execute(sql`alter table games add column if not exists show_on_wall boolean not null default true;`);
+  await db.execute(sql`alter table games add column if not exists cover_mime text;`);
+  await db.execute(sql`alter table games add column if not exists cover_data text;`);
+  await db.execute(sql`create index if not exists games_show_on_wall_idx on games(show_on_wall, updated_at desc);`);
+  await db.execute(sql`create index if not exists games_source_draft_idx on games(source_draft_id);`);
+}
+
 export async function ensureGamesCoverFields() {
   const state = ensureState();
-  if (state.ensured) return;
+  if (state.ensured) {
+    await ensureGamesCoverSchemaPatch();
+    return;
+  }
   if (state.ensuring) return state.ensuring;
   state.ensuring = (async () => {
     // games 表可能在某些环境尚未初始化：这里做一次幂等建表
@@ -26,6 +38,7 @@ export async function ensureGamesCoverFields() {
         short_desc text not null,
         rule_text text not null,
         cover_url text not null,
+        show_on_wall boolean not null default true,
         cover_mime text,
         cover_data text,
         path text not null unique,
@@ -34,10 +47,7 @@ export async function ensureGamesCoverFields() {
         updated_at timestamptz not null default now()
       );
     `);
-    await db.execute(sql`alter table games add column if not exists source_draft_id text;`);
-    await db.execute(sql`alter table games add column if not exists cover_mime text;`);
-    await db.execute(sql`alter table games add column if not exists cover_data text;`);
-    await db.execute(sql`create index if not exists games_source_draft_idx on games(source_draft_id);`);
+    await ensureGamesCoverSchemaPatch();
     state.ensured = true;
     state.ensuring = null;
   })();

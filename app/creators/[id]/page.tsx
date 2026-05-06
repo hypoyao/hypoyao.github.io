@@ -3,10 +3,11 @@ import Link from "next/link";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { creators as creatorsTable } from "@/lib/db/schema";
-import { getCreatorById, getCreatorByProfilePath, listGamesByCreator } from "@/lib/db/queries";
-import { getSession } from "@/lib/auth/session";
+import { getCreatorById, getCreatorByProfilePath, listGamesByCreatorForViewer } from "@/lib/db/queries";
 import { ensureCreatorsAuthFields } from "@/lib/db/ensureCreatorsAuthFields";
 import { safeProfilePathForCreatorId } from "@/lib/creatorProfilePath";
+import { getCurrentCreatorId } from "@/lib/auth/currentCreator";
+import { isSuperAdminId } from "@/lib/auth/admin";
 
 export const dynamic = "force-dynamic";
 
@@ -36,9 +37,10 @@ export default async function CreatorPage({ params }: { params: Promise<{ id: st
     notFound();
   }
 
-  const games = await listGamesByCreator(creator.id);
-  const sess = await getSession();
-  const isMe = !!sess?.phone && creator.phone && sess.phone === creator.phone;
+  const viewerCreatorId = await getCurrentCreatorId();
+  const isMe = !!viewerCreatorId && viewerCreatorId === creator.id;
+  const isAdmin = isSuperAdminId(viewerCreatorId);
+  const games = await listGamesByCreatorForViewer(creator.id, viewerCreatorId, { includeHidden: isMe || isAdmin });
 
   const gender = creator.gender ? `性别：${creator.gender}` : null;
   const age = typeof creator.age === "number" && creator.age > 0 ? `年龄：${creator.age} 岁` : null;

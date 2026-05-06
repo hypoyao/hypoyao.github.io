@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { ensureGamesCoverFields } from "@/lib/db/ensureGamesCoverFields";
 import { ensureGameEngagementTables } from "@/lib/db/ensureGameEngagementTables";
+import { isSuperAdminId } from "@/lib/auth/admin";
 
 export type GameEngagement = {
   playCount: number;
@@ -19,13 +20,18 @@ export async function ensureGameEngagementReady() {
   await ensureGameEngagementTables();
 }
 
-export async function gameExists(gameId: string) {
+export async function gameExists(gameId: string, viewerCreatorId?: string | null) {
   if (!gameId) return false;
   await ensureGamesCoverFields();
   const rows = await db.execute(sql`
     select 1
     from games
     where id = ${gameId}
+      ${
+        isSuperAdminId(viewerCreatorId)
+          ? sql``
+          : sql`and (coalesce(show_on_wall, true) = true or creator_id = ${String(viewerCreatorId || "").trim() || null})`
+      }
     limit 1
   `);
   const list = Array.isArray((rows as any).rows) ? (rows as any).rows : [];

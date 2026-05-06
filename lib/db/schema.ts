@@ -23,6 +23,7 @@ export const games = pgTable("games", {
   shortDesc: text("short_desc").notNull(),
   ruleText: text("rule_text").notNull(),
   coverUrl: text("cover_url").notNull(),
+  showOnWall: boolean("show_on_wall").notNull().default(true),
   // 自定义封面（可选）：存储图片数据；coverUrl 仍存相对路径（如 /assets/covers/<id>）
   coverMime: text("cover_mime"),
   coverData: text("cover_data"),
