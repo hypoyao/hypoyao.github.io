@@ -18,8 +18,10 @@ type ModelProvider = "openrouter" | "deepseek" | "bailian" | "tencent" | "chinam
 
 const TENCENT_TOKENHUB_MODELS = ["hy3-preview"] as const;
 const CHINAMOBILE_MODELS = ["minimax-m25"] as const;
-const DEFAULT_BAILIAN_MODEL = "qwen3.6-plus-2026-04-02";
-const BAILIAN_FALLBACK_MODEL = "qwen3-max-2026-01-23";
+// 默认模型（百炼）：按用户要求切到 qwen3-max-2026-01-23
+const DEFAULT_BAILIAN_MODEL = "qwen3-max-2026-01-23";
+// 备用模型（百炼）：当默认模型不稳定时回退
+const BAILIAN_FALLBACK_MODEL = "qwen3.6-plus-2026-04-02";
 // DeepSeek 官方 API（OpenAI 兼容）模型：V4 系列
 // deepseek-chat / deepseek-reasoner 将逐步下线（官方已声明未来弃用）
 const DEEPSEEK_DIRECT_MODELS = ["deepseek-v4-pro", "deepseek-v4-flash"] as const;
