@@ -6,6 +6,7 @@ import { getSession } from "@/lib/auth/session";
 import { ensureCreatorsAuthFields } from "@/lib/db/ensureCreatorsAuthFields";
 import { ensureGamesCoverFields } from "@/lib/db/ensureGamesCoverFields";
 import { isSuperAdminId } from "@/lib/auth/admin";
+import { pickDefaultCoverUrl } from "@/lib/covers/defaultCovers";
 
 type CreateGameBody = {
   id: string; // slug，如 'weiqi'
@@ -125,7 +126,9 @@ export async function POST(req: Request) {
   // - coverUrl 存相对路径
   // - 如带 coverDataUrl，则把 coverUrl 固定为 /assets/covers/<id> 并把数据存到 DB
   const rawCover = typeof body.coverUrl === "string" ? body.coverUrl.trim() : "";
-  let coverUrl = rawCover || existing?.coverUrl || `/assets/screenshots/${id}.png`;
+  // 用户没选封面：从默认封面库里选一个（稳定 hash）
+  let coverUrl = rawCover || existing?.coverUrl || pickDefaultCoverUrl(id);
+  if (!rawCover && coverUrl === `/assets/screenshots/${id}.png`) coverUrl = pickDefaultCoverUrl(id);
   coverUrl = coverUrl.slice(0, 1024);
   if (!isAllowedCoverUrl(coverUrl)) return json(400, { ok: false, error: "INVALID_COVER_URL" });
 

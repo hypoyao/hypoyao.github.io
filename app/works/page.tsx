@@ -1,6 +1,7 @@
 import { listGames } from "@/lib/db/queries";
 import { sortGamesByEngagement } from "@/lib/gameSorting";
 import HomeAccount from "../HomeAccount";
+import CoverImage from "../components/CoverImage";
 
 export const dynamic = "force-static";
 export const revalidate = 60;
@@ -38,7 +39,14 @@ export default async function WorksPage() {
             {sortedGames.map((g) => (
               <article key={g.id} className="gameItem" aria-label={g.title}>
                 <a className="gameLink" href={toGameEntryHref(g.path)} aria-label={`打开游戏：${g.title}`}>
-                  <img className="gameThumb" src={g.coverUrl} alt={`${g.title}截图`} loading="lazy" decoding="async" />
+                  <CoverImage
+                    className="gameThumb"
+                    src={g.coverUrl}
+                    fallbackKey={g.id}
+                    alt={`${g.title}截图`}
+                    loading="lazy"
+                    decoding="async"
+                  />
                   <div className="gameBody">
                     <div className="gameName">{g.title}</div>
                     <div className="gameDesc">{g.shortDesc}</div>

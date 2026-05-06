@@ -11,6 +11,7 @@ import { ensureGameFilesTables } from "@/lib/db/ensureGameFilesTables";
 import { ensureCreatorUserMessagesTable } from "@/lib/db/ensureCreatorUserMessagesTable";
 import { isSuperAdminId } from "@/lib/auth/admin";
 import { recordUsageEvent } from "@/lib/db/usageAnalytics";
+import { pickDefaultCoverUrl } from "@/lib/covers/defaultCovers";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -254,7 +255,15 @@ export async function POST(req: Request) {
   );
   const storedSourceDraftId = sourceDraftId || actualSourceDraftId || publishGameId;
 
-  let coverUrl = String(body?.coverUrl || "").trim() || existing?.coverUrl || `/assets/screenshots/${publishGameId}.png`;
+  const inputCoverUrl = String(body?.coverUrl || "").trim();
+  // 规则：
+  // 1) 用户显式填写/上传：使用用户封面
+  // 2) 否则：优先保留已有封面（更新场景）
+  // 3) 新发布或没有有效封面：从默认封面库里选一个（稳定 hash），不再默认指向 /assets/screenshots/<id>.png
+  let coverUrl = inputCoverUrl || existing?.coverUrl || "";
+  if (!coverUrl) coverUrl = pickDefaultCoverUrl(publishGameId);
+  // “未选择封面”的更新/发布：如果旧值还是占位截图，也替换成默认封面
+  if (!inputCoverUrl && coverUrl === `/assets/screenshots/${publishGameId}.png`) coverUrl = pickDefaultCoverUrl(publishGameId);
   coverUrl = coverUrl.slice(0, 1024);
   if (!isAllowedCoverUrl(coverUrl)) return json(400, { ok: false, error: "INVALID_COVER_URL" });
 

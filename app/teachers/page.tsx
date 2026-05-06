@@ -2,6 +2,7 @@ import { listGames } from "@/lib/db/queries";
 import { featuredGamesByEngagement } from "@/lib/gameSorting";
 import HomeAccount from "../HomeAccount";
 import HomePromptLauncher from "../HomePromptLauncher";
+import CoverImage from "../components/CoverImage";
 
 // 首页尽量走静态 + ISR：首屏秒开（CDN 缓存），后台定期更新
 export const dynamic = "force-static";
@@ -286,7 +287,14 @@ export default async function HomePage() {
             {showcasedGames.map((g) => (
               <article key={g.id} className="gameItem" aria-label={g.title}>
                 <a className="gameLink" href={toGameEntryHref(g.path)} aria-label={`打开游戏：${g.title}`}>
-                  <img className="gameThumb" src={g.coverUrl} alt={`${g.title}截图`} loading="lazy" decoding="async" />
+                  <CoverImage
+                    className="gameThumb"
+                    src={g.coverUrl}
+                    fallbackKey={g.id}
+                    alt={`${g.title}截图`}
+                    loading="lazy"
+                    decoding="async"
+                  />
                   <div className="gameBody">
                     <div className="gameName">{g.title}</div>
                     <div className="gameDesc">{g.shortDesc}</div>

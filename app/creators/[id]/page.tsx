@@ -8,6 +8,7 @@ import { ensureCreatorsAuthFields } from "@/lib/db/ensureCreatorsAuthFields";
 import { safeProfilePathForCreatorId } from "@/lib/creatorProfilePath";
 import { getCurrentCreatorId } from "@/lib/auth/currentCreator";
 import { isSuperAdminId } from "@/lib/auth/admin";
+import CoverImage from "@/app/components/CoverImage";
 
 export const dynamic = "force-dynamic";
 
@@ -149,7 +150,14 @@ export default async function CreatorPage({ params }: { params: Promise<{ id: st
               {games.map((g) => (
                 <article key={g.id} className="gameItem" aria-label={g.title}>
                   <a className="gameLink" href={toGameEntryHref(g.path)} aria-label={`打开游戏：${g.title}`}>
-                    <img className="gameThumb" src={g.coverUrl} alt={`${g.title}截图`} loading="lazy" decoding="async" />
+                    <CoverImage
+                      className="gameThumb"
+                      src={g.coverUrl}
+                      fallbackKey={g.id}
+                      alt={`${g.title}截图`}
+                      loading="lazy"
+                      decoding="async"
+                    />
                     <div className="gameBody">
                       <div className="gameName">{g.title}</div>
                       <div className="gameDesc">{g.shortDesc}</div>

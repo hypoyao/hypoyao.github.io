@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import CoverImage from "@/app/components/CoverImage";
 
 export type AdminWallGame = {
   id: string;
@@ -109,7 +110,7 @@ export default function WorksAdminUi({ initialGames }: { initialGames: AdminWall
           const busy = (isPending && pendingId === game.id) || pendingId === game.id;
           return (
             <article className={`worksAdminItem ${game.showOnWall ? "isShown" : "isHidden"}`} key={game.id}>
-              <img src={game.coverUrl || "/assets/covers/ttt.svg"} alt="" />
+              <CoverImage src={game.coverUrl} fallbackKey={game.id} alt={`${game.title || game.id}封面`} />
               <div className="worksAdminInfo">
                 <header>
                   <h2>{game.title || game.id}</h2>

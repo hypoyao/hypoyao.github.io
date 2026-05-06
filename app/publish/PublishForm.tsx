@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import { pickDefaultCoverUrl } from "@/lib/covers/defaultCovers";
 
 type Props = {
   defaultCreatorId: string;
@@ -42,7 +43,11 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, lockId, i
   const titleRef = useRef<HTMLInputElement | null>(null);
   const creatorRef = useRef<HTMLInputElement | null>(null);
 
-  const defaultCover = initial?.coverUrl || (id ? `/assets/screenshots/${id}.png` : "");
+  const defaultCover = useMemo(() => {
+    if (initial?.coverUrl) return initial.coverUrl;
+    const key = (idLocked ? initial?.id || id : id) || "";
+    return key ? pickDefaultCoverUrl(key) : pickDefaultCoverUrl("default");
+  }, [initial?.coverUrl, idLocked, initial?.id, id]);
   const effectiveId = idLocked ? initial?.id || id : id;
   const idMissing = !String(effectiveId || "").trim();
   const titleMissing = !String(title || "").trim();
@@ -286,9 +291,9 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, lockId, i
             </button>
             <input ref={coverFileRef} type="file" accept="image/*" onChange={onPickCoverFile} style={{ display: "none" }} disabled={submitting} />
           </div>
-          {coverUrl ? (
+          {(coverUrl || defaultCover) ? (
             <img
-              src={coverUrl}
+              src={coverUrl || defaultCover}
               alt="封面预览"
               style={{
                 width: 160,
