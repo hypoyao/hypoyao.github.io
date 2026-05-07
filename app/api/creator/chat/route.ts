@@ -368,6 +368,18 @@ const CODEGEN_CSS_PROMPT = `
 4) 样式优先保证清晰布局、大按钮、稳定响应式，不要为了炫技写过长或过度复杂的 CSS。
 5) 严禁依赖外部资源、远程字体或注入脚本。
 `.trim();
+const CODEGEN_CSS_CONTRACT_PROMPT = `
+你是“前端小游戏样式生成器”。你会收到蓝图 JSON、需求契约和 DOM 合同，但不会收到最终 index.html 原文。
+你的任务是只输出 style.css 纯文本，并严格按 DOM 合同里的 id/class 写样式。
+
+【硬性要求】
+1) 只输出 style.css 的纯 CSS 文本，不要输出 JSON，不要解释，不要 markdown 说明。
+2) 如果你一定要使用代码块，也只能输出一个 \`\`\`css ... \`\`\` 代码块，里面只放 CSS。
+3) 不要输出 index.html 或 game.js。
+4) 只能围绕 DOM 合同里的 id/class/tag 设计样式；不要发明 JS 才能创建的关键选择器。
+5) 优先保证清晰布局、大按钮、稳定响应式，不要为了炫技写过长 CSS。
+6) 严禁依赖外部资源、远程字体或注入脚本。
+`.trim();
 const CODEGEN_GAMEJS_PROMPT = `
 你是“前端小游戏逻辑生成器”。你会收到蓝图 JSON、已经生成好的 index.html 和 style.css。
 你的任务是只输出 game.js 纯文本，实现核心玩法逻辑。
@@ -378,6 +390,20 @@ const CODEGEN_GAMEJS_PROMPT = `
 3) 不要输出 index.html 或 style.css。
 4) 逻辑优先保证可运行、可重开、状态清楚，再考虑额外特效。
 5) 不要依赖外部库；尽量暴露稳定的 window.gameHooks（如 start/restart/setAutoStart/showCurrentSentence）。
+`.trim();
+const CODEGEN_GAMEJS_CONTRACT_PROMPT = `
+你是“前端小游戏逻辑生成器”。你会收到蓝图 JSON、需求契约和 DOM 合同，但不会收到最终 index.html 原文。
+你的任务是只输出 game.js 纯文本，实现核心玩法逻辑，并严格使用 DOM 合同中的元素 id。
+
+【硬性要求】
+1) 只输出 game.js 的纯 JavaScript 文本，不要输出 JSON，不要解释，不要 markdown 说明。
+2) 如果你一定要使用代码块，也只能输出一个 \`\`\`js ... \`\`\` 代码块，里面只放 JS。
+3) 不要输出 index.html 或 style.css。
+4) 只能通过 DOM 合同里列出的 id 获取元素；不要引用合同外的按钮/容器 id。
+5) 必须包含：状态对象、DOM 获取、init/start/restart、事件绑定、明确入口调用。
+6) 逻辑优先保证可运行、可重开、状态清楚，再考虑额外特效。
+7) 不要依赖外部库；尽量暴露稳定的 window.gameHooks（如 start/restart）。
+8) 最后一行不能是半句；代码必须完整闭合，并能通过基础 JS 语法检查。
 `.trim();
 
 const CODEGEN_GAMEJS_SKELETON_PROMPT = `
@@ -718,7 +744,18 @@ async function runSandboxSelfCheck(indexHtml: string, jsCode: string): Promise<S
     constructor(tagName: string, id = "", classes: string[] = []) {
       this.id = id;
       this.tagName = String(tagName || "div").toUpperCase();
-      this.style = new Proxy<Record<string, any>>({}, {
+      const styleTarget: Record<string, any> = {};
+      styleTarget.setProperty = (name: string, value: any) => {
+        styleTarget[String(name || "")] = String(value ?? "");
+      };
+      styleTarget.getPropertyValue = (name: string) => String(styleTarget[String(name || "")] ?? "");
+      styleTarget.removeProperty = (name: string) => {
+        const key = String(name || "");
+        const old = String(styleTarget[key] ?? "");
+        delete styleTarget[key];
+        return old;
+      };
+      this.style = new Proxy<Record<string, any>>(styleTarget, {
         get(target, prop: string) {
           return prop in target ? target[prop] : "";
         },
@@ -1382,7 +1419,7 @@ function normalizePlannerTasks(tasks: any) {
   return out;
 }
 
-type TemplateProfile = {
+type GenreProfile = {
   id: string;
   label: string;
   hint: string;
@@ -1392,8 +1429,10 @@ type RequirementContract = {
   topic: string;
   gameplay: string;
   platform: string;
-  templateId: string;
-  templateLabel: string;
+  genreId: string;
+  genreLabel: string;
+  templateId?: string;
+  templateLabel?: string;
   theme: string;
   keyUi: string[];
   mustHave: string[];
@@ -1401,12 +1440,12 @@ type RequirementContract = {
   complexity: "simple" | "complex";
 };
 
-function pickTemplateProfile(text: string): TemplateProfile {
+function pickGenreProfile(text: string): GenreProfile {
   const t = String(text || "").toLowerCase();
   if (/(英语|英文|单词|词汇|拼写|口语|听力|跟读|quiz|word|vocab|spell|memory card)/i.test(t)) {
     return {
       id: "quiz_words",
-      label: "问答闯关模板",
+      label: "问答闯关类型",
       hint:
         "优先采用“题目卡片 + 选项按钮/输入区 + 进度条 + 连对/生命值”的成熟结构。每回合只做一件事，反馈要立刻、清楚、鼓励式。",
     };
@@ -1414,7 +1453,7 @@ function pickTemplateProfile(text: string): TemplateProfile {
   if (/(打地鼠|whack|点击目标|反应|手速|点点点|敲)/i.test(t)) {
     return {
       id: "whack_reaction",
-      label: "反应点击模板",
+      label: "反应点击类型",
       hint:
         "优先采用“目标出现 -> 点击得分 -> 倒计时结束”的成熟结构。目标数量、出现节奏、得分反馈要清晰，按钮和点击区域要偏大，适合触屏。",
     };
@@ -1422,7 +1461,7 @@ function pickTemplateProfile(text: string): TemplateProfile {
   if (/(跑酷|躲避|避开|障碍|小球|跳跃|runner|dodge|接物|吃豆|snake|贪吃蛇)/i.test(t)) {
     return {
       id: "dodge_runner",
-      label: "动作躲避模板",
+      label: "动作躲避类型",
       hint:
         "优先采用“开始页 -> 游戏中 -> 结束页”的连续动作结构。核心循环要简单：移动、碰撞、得分、重开；先保证手感和碰撞反馈，再考虑花哨效果。",
     };
@@ -1430,7 +1469,7 @@ function pickTemplateProfile(text: string): TemplateProfile {
   if (/(井字棋|五子棋|象棋|国际象棋|棋|对战|回合制|落子)/i.test(t)) {
     return {
       id: "board_turn_based",
-      label: "棋盘回合模板",
+      label: "棋盘回合类型",
       hint:
         "优先采用“棋盘格 + 当前回合提示 + 合法落子 + 胜负检测”的成熟结构。规则显示清楚，状态切换稳定，回合与重开逻辑优先保证正确。",
     };
@@ -1438,29 +1477,17 @@ function pickTemplateProfile(text: string): TemplateProfile {
   if (/(记忆|翻牌|配对|match|memory|消消乐|连连看)/i.test(t)) {
     return {
       id: "memory_match",
-      label: "配对记忆模板",
+      label: "配对记忆类型",
       hint:
         "优先采用“翻开两张 -> 判定匹配 -> 全部完成过关”的成熟结构。动画轻一点，翻牌锁定逻辑清楚，避免一次放太多特殊规则。",
     };
   }
   return {
     id: "generic_arcade",
-    label: "通用轻量模板",
+    label: "通用轻量类型",
     hint:
       "优先采用一个主玩法循环、一个核心操作、一个明确结束条件的轻量结构。先做出可玩的闭环，不要同时堆太多系统。",
   };
-}
-
-function buildTemplateHintBlock(seedPrompt: string, latestPrompt: string, answers: any) {
-  const summary = [seedPrompt, latestPrompt, JSON.stringify(answers || {})].filter(Boolean).join("\n");
-  const profile = pickTemplateProfile(summary);
-  return (
-    `【优先模板】\n` +
-    `- 模板ID：${profile.id}\n` +
-    `- 模板名称：${profile.label}\n` +
-    `- 模板提示：${profile.hint}\n` +
-    `- 规则：优先复用这类成熟结构，不要每次从零发明页面层级、状态切换和输入系统；但如果与用户要求冲突，以用户要求为准。\n`
-  );
 }
 
 function normalizeChecklistItems(items: string[]) {
@@ -1524,11 +1551,11 @@ function inferRequirementKeyUi(design: any) {
   return normalizeChecklistItems(ids);
 }
 
-function shouldUseTwoStepGameJs(profile: TemplateProfile, contract: RequirementContract, seedPrompt: string, latestPrompt: string) {
+function shouldUseTwoStepGameJs(profile: GenreProfile, contract: RequirementContract, seedPrompt: string, latestPrompt: string) {
   if (contract.complexity === "complex") return true;
   const text = [seedPrompt, latestPrompt, contract.gameplay, ...contract.mustHave].join("\n");
-  if (/(录音|麦克风|tts|朗读|评分|进度|存档|恢复|状态|screen|hook|gamehooks)/i.test(text)) return true;
-  return ["quiz_words", "board_turn_based"].includes(profile.id);
+  if (/(录音|麦克风|mediarecorder|tts|朗读|跟读|语音|发音评分|口语|85分|下一句|当前句子|学习进度|存档|恢复|localstorage|ai\s*对战|人机|多人|联机)/i.test(text)) return true;
+  return ["board_turn_based"].includes(profile.id);
 }
 
 function buildRequirementContract(
@@ -1538,25 +1565,28 @@ function buildRequirementContract(
   design: any,
 ): RequirementContract {
   const summary = [seedPrompt, latestPrompt, JSON.stringify(answers || {}), JSON.stringify(design || {})].filter(Boolean).join("\n");
-  const profile = pickTemplateProfile(summary);
+  const profile = pickGenreProfile(summary);
   const gameplay =
     String((design as any)?.blueprint?.coreLoop || "").trim() ||
     String((design as any)?.meta?.shortDesc || "").trim() ||
     String(seedPrompt || latestPrompt || "").trim();
   const mustHave = inferRequirementMustHaves(seedPrompt, latestPrompt, design);
   const forbidden = inferRequirementForbidden(seedPrompt, latestPrompt, design);
+  // “有分数/得分反馈”是大多数小游戏的基础能力，不应因此升级到慢速两步 JS。
+  // 只有跨设备能力、学习进度、语音/录音、强状态流或回合制对战，才走复杂链。
+  const complexityText = [seedPrompt, latestPrompt, gameplay, mustHave.join("\n")].join("\n");
   const complexity: "simple" | "complex" =
-    /(录音|麦克风|tts|朗读|评分|进度|存档|恢复|状态|screen|hook|gamehooks|下一句|关卡|回合)/i.test(
-      [seedPrompt, latestPrompt, gameplay, mustHave.join("\n")].join("\n"),
-    ) || ["quiz_words", "board_turn_based"].includes(profile.id)
+    /(录音|麦克风|mediarecorder|tts|朗读|跟读|语音|发音评分|口语|85分|下一句|当前句子|学习进度|存档|恢复|localstorage|ai\s*对战|人机|多人|联机|回合制|落子|棋盘|井字棋|五子棋)/i.test(
+      complexityText,
+    ) || ["board_turn_based"].includes(profile.id)
       ? "complex"
       : "simple";
   return {
     topic: String((design as any)?.meta?.title || seedPrompt || latestPrompt || "我的小游戏").trim(),
     gameplay,
     platform: String((design as any)?.config?.platform || "both").trim() || "both",
-    templateId: profile.id,
-    templateLabel: profile.label,
+    genreId: profile.id,
+    genreLabel: profile.label,
     theme: String((design as any)?.config?.style?.theme || "卡通").trim() || "卡通",
     keyUi: inferRequirementKeyUi(design),
     mustHave,
@@ -1575,8 +1605,6 @@ function formatRequirementContractBlock(contract: RequirementContract | null | u
         topic: c.topic,
         gameplay: c.gameplay,
         platform: c.platform,
-        templateId: c.templateId,
-        templateLabel: c.templateLabel,
         theme: c.theme,
         keyUi: c.keyUi,
         complexity: c.complexity,
@@ -1586,6 +1614,53 @@ function formatRequirementContractBlock(contract: RequirementContract | null | u
     )}\n\n` +
     `【must-have 清单】\n${c.mustHave.map((x) => `- ${x}`).join("\n") || "- （无）"}\n\n` +
     `【禁忌项】\n${c.forbidden.map((x) => `- ${x}`).join("\n") || "- （无）"}\n\n`
+  );
+}
+
+function buildParallelCodegenContractBlock(contract: RequirementContract | null | undefined, design: any, seedPrompt: string, latestPrompt: string) {
+  const text = [seedPrompt, latestPrompt, contract?.topic, contract?.gameplay, ...(contract?.mustHave || [])].join("\n");
+  const dom = design?.protocol?.dom && typeof design.protocol.dom === "object" ? design.protocol.dom : {};
+  const ids = new Set<string>();
+  const add = (v: any) => {
+    const s = String(v || "").trim();
+    if (s) ids.add(s);
+  };
+  add(dom.rootId || "gameRoot");
+  add(dom.playAreaId || dom.canvasId || "playArea");
+  add(dom.statusTextId || "statusText");
+  add(dom.scoreTextId || "scoreText");
+  add(dom.timerTextId || "timerText");
+  add(dom.progressTextId || "progressText");
+  add(dom.btnStartId || "btnStart");
+  add(dom.btnRestartId || "btnRestart");
+  for (const id of Array.isArray(dom.hudIds) ? dom.hudIds : []) add(id);
+  if (/(左右|方向键|移动|躲避|跑酷|飞行|滑动|横向|left|right|arrow)/i.test(text)) {
+    add(dom.btnLeftId || "btnLeft");
+    add(dom.btnRightId || "btnRight");
+  }
+  if (/(跳|跳跃|弹跳|空格|向上|上冲|jump|space)/i.test(text)) add(dom.btnJumpId || "btnJump");
+  if (/(技能|冲刺|发射|推|攻击|道具|action|skill)/i.test(text)) add(dom.btnActionId || "btnAction");
+  if (/(暂停|pause)/i.test(text)) add(dom.btnPauseId || "btnPause");
+
+  const stateVars = Array.isArray(design?.protocol?.globalState?.vars)
+    ? design.protocol.globalState.vars
+        .map((x: any) => String(x?.name || "").trim())
+        .filter(Boolean)
+        .slice(0, 12)
+    : [];
+  const events = Array.isArray(design?.protocol?.events)
+    ? design.protocol.events.map((x: any) => String(x || "").trim()).filter(Boolean).slice(0, 12)
+    : [];
+
+  return (
+    `【并行代码生成合同（HTML/CSS/JS 必须共同遵守）】\n` +
+    `- 固定 DOM id：${Array.from(ids).join(", ")}\n` +
+    `- 推荐 class：screen, panel, hud, controls, primary-btn, secondary-btn, hidden, active\n` +
+    `- HTML 必须创建以上 DOM id；CSS 只能围绕这些 id/class 设计；JS 只能引用这些 id。\n` +
+    `- 入口要求：game.js 必须绑定 btnStart/btnRestart；如合同包含 btnLeft/btnRight/btnJump/btnAction/btnPause，也必须绑定对应交互或键盘/触屏替代。\n` +
+    `- 状态变量参考：${stateVars.join(", ") || "score, timeLeft, state, running"}\n` +
+    `- 事件参考：${events.join(", ") || "startGame, restartGame, update, render"}\n` +
+    `- 如果蓝图和本合同冲突，以本合同为准，避免三文件互相对不上。\n\n`
   );
 }
 
@@ -1665,6 +1740,31 @@ type IncrementalEditProfile = {
   hint: string;
 };
 
+type CodePath = "index.html" | "style.css" | "game.js";
+type RepairLevel = "L0" | "L1" | "L2" | "L3";
+type RepairStrategy = "ops_patch" | "single_file_patch" | "single_file_regen" | "multi_file_regen" | "blueprint_regen";
+type RepairDecision = {
+  level: RepairLevel;
+  strategy: RepairStrategy;
+  fileTargets: CodePath[];
+  primaryPath: CodePath;
+  scores: {
+    designChange: number;
+    surfaceBug: number;
+    coupling: number;
+    explicitScope: number;
+  };
+  reason: string;
+  hint: string;
+};
+
+function looksLikeBugComplaint(userIntent = "") {
+  const intent = String(userIntent || "");
+  return /(^\s*修复[:：]|bug|报错|错误|异常|崩溃|无法|不能|不显示|不生效|没反应|无反应|白屏|卡住|卡死|闪退|console|控制台|失败|失效|点不到|无法玩|不能玩|没有(?:重新开始|重开|开始|关闭|消失|显示|更新|反应|生效)|没有.*(?:重新开始|重开|关闭|消失|反应|生效)|点.*(?:没反应|无效|不生效)|点击.*(?:没有|不能|无法|不))/i.test(
+    intent,
+  );
+}
+
 function classifyIncrementalEdit(text: string): IncrementalEditProfile | null {
   const t = String(text || "").trim();
   if (!t) return null;
@@ -1674,7 +1774,7 @@ function classifyIncrementalEdit(text: string): IncrementalEditProfile | null {
     /(从头|重做|重新做|整个游戏|完全重写|做一个新|换成另一个游戏|新增一个模式|加入排行榜系统|联机|多人|存档|关卡编辑器)/i.test(t);
   if (giantFeatureSignals || t.length > 160) return null;
 
-  if (/(bug|报错|错误|异常|崩溃|无法|不显示|不生效|没反应|白屏|卡住|修复|修一下|修一修)/i.test(t)) {
+  if (looksLikeBugComplaint(t)) {
     return {
       kind: "bugfix",
       confidence: 0.95,
@@ -1731,16 +1831,6 @@ function classifyIncrementalEdit(text: string): IncrementalEditProfile | null {
     };
   }
   return null;
-}
-
-function looksLikeIncrementalEdit(text: string) {
-  return !!classifyIncrementalEdit(text);
-}
-
-function isSentenceLikeEditIntent(text: string) {
-  return /(sentence|sentences|句子|当前句子|当前文本|台词|文案|题目|题干|字幕|提示语|显示句子|显示文本)/i.test(
-    String(text || ""),
-  );
 }
 
 function looksLikePureCopyOrVisibilityEdit(userIntent = "") {
@@ -1920,36 +2010,6 @@ function validateStructureContracts(indexHtml: string, jsCode: string) {
   return errs;
 }
 
-function pickPrimaryDirectRefinePath(
-  kind: IncrementalEditProfile["kind"],
-  hasSplit: boolean,
-  userIntent = "",
-) {
-  const intent = String(userIntent || "");
-  if (!hasSplit) return "index.html";
-  if (kind === "visual") return "style.css";
-  if (kind === "layout") return "style.css";
-  if (kind === "behavior") return "game.js";
-  if (kind === "content") {
-    if (isSentenceLikeEditIntent(intent)) return "game.js";
-    return "index.html";
-  }
-  if (kind === "bugfix") return "game.js";
-  return "game.js";
-}
-
-function pickPrimaryFixPath(userIntent = "", hasSplit = true) {
-  const intent = String(userIntent || "");
-  if (!hasSplit) return "index.html";
-  if (/(颜色|字体|圆角|阴影|背景|主题色|样式|美化|动画|动效|布局|位置|居中|右上角|左上角)/i.test(intent)) {
-    return "style.css";
-  }
-  if (/(按钮|标题|文案|文字|提示语|显示|隐藏|不显示|页面|弹层|浮层|遮罩|html|dom)/i.test(intent)) {
-    return "index.html";
-  }
-  return "game.js";
-}
-
 function looksLikeStateFlowBug(userIntent = "") {
   return /(自动开始|直接开始|开始页|当前句子|当前文本|句子|进度|状态|流程|切换|screen|下一句|下一关|同步|初始化|init|start|restart|hook|gamehooks|没反应|点击无效|事件绑定|按钮没反应|页面切换)/i.test(
     String(userIntent || ""),
@@ -1963,12 +2023,26 @@ function looksLikeDomJsCouplingBug(userIntent = "") {
   return domLike && jsLike;
 }
 
+function looksLikeDismissableOverlayBug(userIntent = "") {
+  const intent = String(userIntent || "");
+  const overlayLike = /(弹窗|弹层|浮层|遮罩|提示|说明|引导|教程|overlay|modal|popup|toast|dialog)/i.test(intent);
+  const stuckLike = /(没有消|没消|不消|未消|消不掉|没有关|关不掉|无法关闭|不能关闭|一直|挡住|遮住|盖住|挡着|遮挡|导致无法|无法玩|不能玩|点不到|不能点击|卡住|卡死)/i.test(
+    intent,
+  );
+  return overlayLike && stuckLike;
+}
+
 function looksLikeNewFeatureOrUi(userIntent = "") {
   const intent = String(userIntent || "");
   // “新增功能/新增 UI”通常会牵涉 index + css + js 的联动
   return /(新增|加入|添加|增加|支持|实现|做成|加上|扩展|升级).*(功能|特性|模式|系统|界面|UI|按钮|面板|弹窗|菜单|排行榜|榜单|存档|进度|音效|音乐|皮肤|主题)/i.test(
     intent,
   );
+}
+
+function shouldEscalateIncrementalEditToBlueprint(profile: IncrementalEditProfile | null | undefined, userIntent = "") {
+  if (!profile) return false;
+  return decideRepairScope(userIntent, true, profile).level === "L3";
 }
 
 function pickExplicitOnlyTarget(userIntent = ""): Array<"index.html" | "style.css" | "game.js"> | null {
@@ -1979,86 +2053,135 @@ function pickExplicitOnlyTarget(userIntent = ""): Array<"index.html" | "style.cs
   return null;
 }
 
-function pickFixTargetPaths(userIntent = "", hasSplit = true) {
+function toCodePaths(paths: string[], fallback: CodePath[] = ["game.js"]) {
+  const sorted = sortCodePaths(paths) as CodePath[];
+  return sorted.length ? sorted : fallback;
+}
+
+function looksLikeSimpleGameActionBug(userIntent = "") {
   const intent = String(userIntent || "");
-  if (!hasSplit) return ["index.html"];
+  return /(?:点击|按|点).*(?:开始|再来一次|再玩一次|重新开始|重开|继续|下一关|下一句|暂停|返回|关闭).*(?:没有|不能|无法|没反应|无效|不生效|失败)|(?:开始|再来一次|再玩一次|重新开始|重开|继续|下一关|下一句|暂停|返回|关闭)(?:按钮)?.*(?:没有|不能|无法|没反应|无效|不生效|失败)/i.test(
+    intent,
+  );
+}
+
+function scoreRepairIntent(userIntent = "", profile?: IncrementalEditProfile | null) {
+  const intent = String(userIntent || "");
+  const scores = {
+    designChange: 0,
+    surfaceBug: 0,
+    coupling: 0,
+    explicitScope: 0,
+  };
+
+  if (pickExplicitOnlyTarget(intent)) scores.explicitScope += 3;
+
+  if (/(重做|重新生成|重新做|重写|换玩法|改玩法|改规则|新增玩法|新增模式|整个游戏|完全不对|不是这个游戏|另一个游戏|重新设计)/i.test(intent)) {
+    scores.designChange += 5;
+  }
+  if (/(新增|加入|添加|增加|支持|实现|做成|加上|扩展|升级).*(ai|人机|多人|联机|关卡|存档|排行榜|榜单|成就|商店|装备|地图|剧情|boss|任务|模式|系统|技能|道具|敌人|怪物|音效|音乐|皮肤)/i.test(intent)) {
+    scores.designChange += 4;
+  } else if (looksLikeNewFeatureOrUi(intent)) {
+    scores.designChange += 2;
+  }
+  if (profile?.kind === "feature") scores.designChange += looksLikeNewFeatureOrUi(intent) ? 2 : 1;
+
+  if (looksLikeBugComplaint(intent)) scores.surfaceBug += 3;
+  if (/(按钮|开始|再来一次|再玩一次|重新开始|重开|倒计时|分数|得分|碰撞|跳跃|移动|弹窗|遮罩|提示)/i.test(intent) && looksLikeBugComplaint(intent)) {
+    scores.surfaceBug += 2;
+  }
+  if (looksLikeDismissableOverlayBug(intent) || looksLikeSimpleGameActionBug(intent)) scores.surfaceBug += 2;
+
+  if (looksLikeDomJsCouplingBug(intent)) scores.coupling += 3;
+  if (/(dom|id|选择器|事件绑定|绑定|html|js|脚本)/i.test(intent)) scores.coupling += 2;
+  if (/(页面切换|显示隐藏|开始页|结束页|screen|状态同步|流程切换|当前句子|下一句|下一关|进度|初始化)/i.test(intent)) {
+    scores.coupling += 2;
+  }
+  if (looksLikeStateFlowBug(intent)) scores.coupling += 1;
+
+  return scores;
+}
+
+function decideRepairScope(userIntent = "", hasSplit = true, profile?: IncrementalEditProfile | null): RepairDecision {
+  const intent = String(userIntent || "");
+  const scores = scoreRepairIntent(intent, profile);
   const explicit = pickExplicitOnlyTarget(intent);
-  if (explicit) return explicit;
-  const visualLike = /(颜色|字体|圆角|阴影|背景|主题色|样式|美化|动画|动效|布局|位置|居中|右上角|左上角)/i.test(intent);
-  const htmlLike = /(按钮|标题|文案|文字|提示语|显示|隐藏|不显示|页面|弹层|浮层|遮罩|html|dom)/i.test(intent);
-  const stateFlowLike = looksLikeStateFlowBug(intent);
-  const newFeatureOrUi = looksLikeNewFeatureOrUi(intent);
+  const explicitTargets = explicit ? toCodePaths(explicit) : null;
 
-  // 新增功能/新增 UI：默认把三文件都纳入（除非上面 explicit 指定只改某一个文件）
-  if (newFeatureOrUi) return ["index.html", "style.css", "game.js"];
-  if (visualLike && !htmlLike && !stateFlowLike) return ["style.css"];
-  if (stateFlowLike) {
-    if (visualLike) return ["style.css", "game.js"];
-    if (htmlLike || /(页面|按钮|显示|隐藏|screen|dom)/i.test(intent)) return ["index.html", "game.js"];
-    return ["game.js"];
-  }
-  if (htmlLike) return looksLikePureCopyOrVisibilityEdit(intent) ? ["index.html"] : ["index.html", "game.js"];
-  return ["game.js"];
-}
+  const make = (
+    level: RepairLevel,
+    strategy: RepairStrategy,
+    fileTargets: string[],
+    reason: string,
+    hint = profile?.hint || "保持原有主题、玩法和视觉风格，只改这次需求直接相关的部分。",
+  ): RepairDecision => {
+    const targets = hasSplit ? toCodePaths(fileTargets) : (["index.html"] as CodePath[]);
+    return {
+      level,
+      strategy,
+      fileTargets: targets,
+      primaryPath: targets[0] || "game.js",
+      scores,
+      reason,
+      hint,
+    };
+  };
 
-function chooseFixStrategy(userIntent = "", hasSplit = true): "single_file_patch" | "single_file_regen" | "multi_file_regen" {
-  const intent = String(userIntent || "");
-  const targets = pickFixTargetPaths(userIntent, hasSplit);
-  if (targets.length > 1) return "multi_file_regen";
-  const only = targets[0];
-  if (only === "style.css" && looksLikeIsolatedStyleEdit(intent)) return "single_file_patch";
-  if (only === "index.html" && looksLikePureCopyOrVisibilityEdit(intent)) return "single_file_patch";
-  if (looksLikeStateFlowBug(intent) || looksLikeDomJsCouplingBug(intent) || looksLikeNewFeatureOrUi(intent)) {
-    return "single_file_regen";
+  if (!hasSplit) {
+    return make("L1", "single_file_regen", ["index.html"], "当前是单文件游戏，只能在 index.html 内完成修复。");
   }
-  return only === "game.js" ? "single_file_regen" : "single_file_patch";
-}
 
-function chooseDirectPatchStrategy(
-  kind: IncrementalEditProfile["kind"],
-  directPaths: string[],
-  userIntent = "",
-): "ops_patch" | "single_file_patch" | "single_file_regen" | "multi_file_regen" {
-  const intent = String(userIntent || "");
-  const stateFlowLike = looksLikeStateFlowBug(intent);
-  const couplingLike = looksLikeDomJsCouplingBug(intent);
-  if (directPaths.length > 1) return "multi_file_regen";
-  const only = directPaths[0] || "game.js";
-  if (kind === "bugfix" || kind === "feature") return "single_file_regen";
-  if (kind === "behavior") return "single_file_regen";
-  if (stateFlowLike || couplingLike) return "single_file_regen";
-  if (kind === "layout") return only === "style.css" ? "single_file_patch" : "single_file_regen";
-  if (kind === "visual") return only === "style.css" && looksLikeIsolatedStyleEdit(intent) ? "single_file_patch" : "single_file_regen";
-  if (kind === "content") {
-    if (only === "index.html" && looksLikePureCopyOrVisibilityEdit(intent)) return "ops_patch";
-    if (only === "style.css" && looksLikeIsolatedStyleEdit(intent)) return "single_file_patch";
-    return "single_file_regen";
+  // L3：用户明确要求改玩法/重做/换规则，才升级蓝图。普通 bug 不走这条重链。
+  if (scores.designChange >= 5) {
+    return make("L3", "blueprint_regen", ["index.html", "style.css", "game.js"], "用户要求改变玩法/规则/整体设计，需要先更新蓝图再重生成。");
   }
-  return only === "index.html" && looksLikePureCopyOrVisibilityEdit(intent) ? "ops_patch" : "single_file_regen";
-}
 
-function pickDirectRefinePaths(kind: IncrementalEditProfile["kind"], hasSplit: boolean, userIntent = "") {
-  const intent = String(userIntent || "");
-  if (!hasSplit) return ["index.html"];
-  if (kind === "visual") return looksLikeIsolatedStyleEdit(intent) ? ["style.css"] : ["index.html", "style.css"];
-  if (kind === "layout") return ["index.html", "style.css"];
-  if (kind === "content") {
-    if (looksLikePureCopyOrVisibilityEdit(intent)) return ["index.html"];
-    if (isSentenceLikeEditIntent(intent) && !looksLikeStateFlowBug(intent)) return ["game.js"];
-    return ["index.html", "game.js"];
+  // L0：纯文案、显隐、孤立样式，允许最小 ops/单文件补丁。
+  if (looksLikePureCopyOrVisibilityEdit(intent) && scores.coupling <= 1 && scores.surfaceBug === 0) {
+    const targets = explicitTargets || (["index.html"] as CodePath[]);
+    return make("L0", targets[0] === "index.html" ? "ops_patch" : "single_file_patch", targets, "纯文案/显隐调整，走最小补丁。");
   }
-  if (kind === "behavior") {
-    if (/(按钮|点击|顺序|摆放|位置|显示|隐藏|ai|玩家|对战|bot|opponent)/i.test(intent)) {
-      if (/(顺序|摆放|位置|布局|居中|左右|上下|底部|顶部)/i.test(intent)) return ["index.html", "style.css", "game.js"];
-      return ["index.html", "game.js"];
-    }
-    if (/(自动开始|直接开始|跳过开始|去掉开始页|开始页|开始按钮|不用点击开始|按进度显示|当前句子|当前文本|句子|进度|状态|初始化|start|restart)/i.test(intent)) {
-      return ["index.html", "game.js"];
-    }
-    return ["game.js"];
+  if (looksLikeIsolatedStyleEdit(intent) && scores.coupling <= 1 && scores.surfaceBug === 0) {
+    const targets = explicitTargets || (["style.css"] as CodePath[]);
+    return make("L0", "single_file_patch", targets, "孤立视觉样式调整，只改样式文件。");
   }
-  if (kind === "bugfix") return ["index.html", "style.css", "game.js"];
-  return ["index.html", "style.css", "game.js"];
+
+  // L1：按钮没反应、弹窗不消失、再来一次失效等，通常是 game.js 局部行为问题。
+  if (looksLikeDismissableOverlayBug(intent) || looksLikeSimpleGameActionBug(intent)) {
+    const targets = explicitTargets || (["game.js"] as CodePath[]);
+    return make("L1", "single_file_regen", targets, "局部交互 bug，优先单文件重生成主逻辑，避免重做玩法。");
+  }
+  if (scores.surfaceBug > 0 && scores.coupling < 3) {
+    const targets = explicitTargets || (/(样式|颜色|位置|布局|遮挡|大小|圆角|背景)/i.test(intent) ? ["style.css"] : ["game.js"]);
+    return make("L1", targets[0] === "style.css" ? "single_file_patch" : "single_file_regen", targets, "局部 bug 修复，先限制在单文件内处理。");
+  }
+
+  // L2：新增小功能、DOM/JS 耦合、状态流切换，直接重生成相关文件，不 patch on patch。
+  if (profile?.kind === "feature" || scores.designChange >= 3 || looksLikeNewFeatureOrUi(intent)) {
+    return make("L2", "multi_file_regen", explicitTargets || ["index.html", "style.css", "game.js"], "新增小功能需要联动结构、样式和逻辑，但不改变原有主题。");
+  }
+  if (scores.coupling >= 3 || looksLikeDomJsCouplingBug(intent)) {
+    const needsStyle = /(样式|颜色|布局|位置|动效|动画|背景|圆角|阴影|视觉)/i.test(intent);
+    return make("L2", "multi_file_regen", explicitTargets || (needsStyle ? ["index.html", "style.css", "game.js"] : ["index.html", "game.js"]), "涉及 DOM 与 JS/状态流耦合，直接重生成相关文件。");
+  }
+  if (profile?.kind === "layout") {
+    return make("L2", "multi_file_regen", explicitTargets || ["index.html", "style.css"], "布局调整需要同步页面结构和样式。");
+  }
+  if (profile?.kind === "behavior") {
+    const targets = explicitTargets || (/(按钮|点击|显示|隐藏|开始页|结束页|页面|screen|dom)/i.test(intent) ? ["index.html", "game.js"] : ["game.js"]);
+    return make(targets.length > 1 ? "L2" : "L1", targets.length > 1 ? "multi_file_regen" : "single_file_regen", targets, "行为调整优先保持现有玩法，只重生成相关文件。");
+  }
+  if (profile?.kind === "visual") {
+    const targets = explicitTargets || ["style.css"];
+    return make("L1", "single_file_patch", targets, "视觉优化只改样式，不重写玩法。");
+  }
+  if (profile?.kind === "content") {
+    const targets = explicitTargets || ["index.html"];
+    return make("L1", targets.length > 1 ? "multi_file_regen" : "single_file_patch", targets, "内容调整优先单文件补丁。");
+  }
+
+  const fallbackTargets = explicitTargets || ["game.js"];
+  return make("L1", fallbackTargets.length > 1 ? "multi_file_regen" : "single_file_regen", fallbackTargets, "未命中重链条件，默认按局部修复处理。");
 }
 
 function extractQuotedText(text: string) {
@@ -2851,8 +2974,7 @@ export async function POST(req: Request) {
 
         // ===== 自动路由：模型根据用户输入决定走生成还是修复、稳定还是质量 =====
         const lastUserText = String(messages.filter((m) => m.role === "user").slice(-1)[0]?.content || "").trim();
-        const looksLikeBug =
-          /(^\s*修复[:：]|bug|报错|错误|异常|崩溃|无法|不显示|不生效|没反应|卡住|卡死|白屏|闪退|console|控制台)/i.test(lastUserText);
+        const looksLikeBug = looksLikeBugComplaint(lastUserText);
         const wantsQuality =
           /(更精致|更好看|更像|高质量|质量模式|产品级|动效|动画|UI|视觉|排版|美化|duolingo|仿)/i.test(lastUserText);
         const mode = modeRaw === "fix" || modeRaw === "generate" ? modeRaw : looksLikeBug ? "fix" : "generate";
@@ -2860,7 +2982,7 @@ export async function POST(req: Request) {
           qualityRaw === "quality" || qualityRaw === "stable" ? qualityRaw : wantsQuality ? "quality" : "stable";
         const routeEditProfile = classifyIncrementalEdit(lastUserText);
         const forceBlueprintRegenForFix =
-          mode === "fix" && !!routeEditProfile && (routeEditProfile.kind === "bugfix" || routeEditProfile.kind === "feature");
+          mode === "fix" && shouldEscalateIncrementalEditToBlueprint(routeEditProfile, lastUserText);
         sendProgress({
           mode: mode === "fix" ? "fix" : "create",
           stepId: "route",
@@ -3184,8 +3306,14 @@ export async function POST(req: Request) {
             path,
             content: path === "index.html" ? indexHtml : path === "style.css" ? styleCss : gameJs,
           }));
-          const fixTargetPaths = pickFixTargetPaths(lastUser, true);
-          const fixStrategy = chooseFixStrategy(lastUser, true);
+          const fixDecision = decideRepairScope(lastUser, true, { kind: "bugfix", confidence: 0.95, hint: "" });
+          const fixTargetPaths = fixDecision.fileTargets;
+          const fixStrategy: "single_file_patch" | "single_file_regen" | "multi_file_regen" =
+            fixDecision.strategy === "multi_file_regen" || fixDecision.strategy === "blueprint_regen"
+              ? "multi_file_regen"
+              : fixDecision.strategy === "single_file_regen"
+                ? "single_file_regen"
+                : "single_file_patch";
           const fixSingleFilePlainFallback = async (
             targetPath: "index.html" | "style.css" | "game.js",
             workingFiles = currentFixFilesRaw,
@@ -3266,7 +3394,7 @@ export async function POST(req: Request) {
             }
             return sortCodePaths(Array.from(targets));
           };
-          const primaryFixPath = (fixTargetPaths[0] || pickPrimaryFixPath(lastUser, true)) as "index.html" | "style.css" | "game.js";
+          const primaryFixPath = fixDecision.primaryPath;
 
           sendStatus(`（${step}/${totalSteps}）修复 bug：优先修主文件 ${primaryFixPath}…`);
           sendProgress({
@@ -3276,7 +3404,9 @@ export async function POST(req: Request) {
             status: "running",
             strategy: fixStrategy,
             fileTargets: fixTargetPaths,
-            detail: `优先处理 ${primaryFixPath}`,
+            level: fixDecision.level,
+            scores: fixDecision.scores,
+            detail: `${fixDecision.reason} 优先处理 ${primaryFixPath}`,
           });
           let obj: any = null;
           if (fixStrategy === "single_file_patch") {
@@ -3611,14 +3741,14 @@ export async function POST(req: Request) {
             };
 
             // 只有在“确实已有生成历史/蓝图状态”的情况下，才允许走 direct_refine（小改动）。
-            // 否则新建游戏（seed 模板已写入 index/style/game，但 meta 里没有 stage/lastGood/design）会被误判成小改动。
+            // 否则新建游戏（初始占位文件已写入 index/style/game，但 meta 里没有 stage/lastGood/design）会被误判成小改动。
             const hasGenState =
               !!String(genState.stage || "").trim() ||
               !!(genState as any).lastGood ||
               !!(genState as any).design ||
               !!(genState as any).requirementContract;
             const forceBlueprintRegenerate =
-              !!directEditProfile && (directEditProfile.kind === "feature" || directEditProfile.kind === "bugfix");
+              shouldEscalateIncrementalEditToBlueprint(directEditProfile, userIntent);
             const preserveExistingStyle = forceBlueprintRegenerate && hasExistingGame && !isStarterDraft;
             const styleConsistencyBlock = preserveExistingStyle
               ? buildStyleConsistencyBlock(indexExisting, styleExisting, (genState as any)?.design || readMeta)
@@ -3678,9 +3808,11 @@ export async function POST(req: Request) {
                 return;
               }
 
-              const directPaths = pickDirectRefinePaths(editProfile.kind, hasCompleteSplitGame, userIntent);
-              const primaryDirectPath = pickPrimaryDirectRefinePath(editProfile.kind, hasCompleteSplitGame, userIntent);
-              const directPatchStrategy = chooseDirectPatchStrategy(editProfile.kind, directPaths, userIntent);
+              const directDecision = decideRepairScope(userIntent, hasCompleteSplitGame, editProfile);
+              const directPaths = directDecision.fileTargets;
+              const primaryDirectPath = directDecision.primaryPath;
+              const directPatchStrategy: "ops_patch" | "single_file_patch" | "single_file_regen" | "multi_file_regen" =
+                directDecision.strategy === "blueprint_regen" ? "multi_file_regen" : directDecision.strategy;
               sendProgress({
                 mode: "patch",
                 stepId: "direct_refine_strategy",
@@ -3688,10 +3820,12 @@ export async function POST(req: Request) {
                 status: "running",
                 strategy: directPatchStrategy,
                 fileTargets: directPaths,
-                detail: editProfile.hint,
+                level: directDecision.level,
+                scores: directDecision.scores,
+                detail: directDecision.reason,
               });
               const currentFiles = currentFilesRaw
-                .filter((f) => directPaths.includes(f.path))
+                .filter((f) => directPaths.includes(f.path as CodePath))
                 .map((f) => ({ path: f.path, content: trimRefineFile(f.path, f.content) }));
               const refineTaskHint =
                 editProfile.kind === "content"
@@ -4310,7 +4444,6 @@ export async function POST(req: Request) {
               (genState as any)?.requirementContract && typeof (genState as any).requirementContract === "object"
                 ? ((genState as any).requirementContract as RequirementContract)
                 : null;
-            const templateHint = buildTemplateHintBlock(seedPrompt, userIntent, answers);
             logStep("generation.enter", {
               stage,
               hasDesign: !!design,
@@ -4413,7 +4546,6 @@ export async function POST(req: Request) {
                       `【用户补充/本轮输入】\n${userIntent}\n\n` +
                       `【已选答案（可能为空）】\n${JSON.stringify(answers, null, 2)}\n\n` +
                       styleConsistencyBlock +
-                      `${templateHint}\n` +
                       (activeConfig ? `【已有 config（如有）】\n${JSON.stringify(activeConfig, null, 2)}\n\n` : "") +
                       `请输出蓝图分段文本协议（meta/config/protocol/blueprint/assetsPlan），不要输出 JSON。`,
                   },
@@ -4517,7 +4649,6 @@ export async function POST(req: Request) {
                       `【用户新增需求/本轮输入】\n${userIntent}\n\n` +
                       styleConsistencyBlock +
                       `请在保持上面“原有风格约束”的前提下更新蓝图，禁止改成另一种视觉语言。\n\n` +
-                      `${templateHint}\n` +
                       `请输出更新后的蓝图分段文本协议（meta/config/protocol/blueprint/assetsPlan），不要输出 JSON。`,
                   },
                 ],
@@ -4601,8 +4732,8 @@ export async function POST(req: Request) {
             const requirementContractBlock = formatRequirementContractBlock(requirementContract);
             const gameJsTwoStep = shouldUseTwoStepGameJs(
               {
-                id: String(requirementContract?.templateId || "generic_arcade"),
-                label: String(requirementContract?.templateLabel || "通用轻量模板"),
+                id: String(requirementContract?.genreId || requirementContract?.templateId || "generic_arcade"),
+                label: String(requirementContract?.genreLabel || requirementContract?.templateLabel || "通用轻量类型"),
                 hint: "",
               },
               requirementContract || buildRequirementContract(seedPrompt, userIntent, answers, design),
@@ -4659,6 +4790,238 @@ export async function POST(req: Request) {
               return;
             };
 
+            const tryParallelCodegenStep = async () => {
+              const shouldTryParallelCodegen =
+                mode === "generate" &&
+                quality !== "quality" &&
+                !forceBlueprintRegenerate &&
+                !preserveExistingStyle &&
+                !gameJsTwoStep &&
+                process.env.CREATOR_PARALLEL_CODEGEN !== "0";
+              if (!shouldTryParallelCodegen) {
+                logStep("parallel_codegen.skipped", {
+                  quality,
+                  forceBlueprintRegenerate,
+                  preserveExistingStyle,
+                  gameJsTwoStep,
+                });
+                return false;
+              }
+
+              const parallelContractBlock = buildParallelCodegenContractBlock(requirementContract, design, seedPrompt, userIntent);
+              const sharedContext =
+                `【用户最早的主题】\n${seedPrompt}\n\n` +
+                `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
+                requirementContractBlock +
+                parallelContractBlock;
+
+              sendStatus(`（3/4）并行生成 HTML / CSS / JS（保守试跑）…`);
+              sendMeta({ provider, model, phase: "parallel_codegen" });
+              sendProgress({
+                mode: "create",
+                stepId: "parallel_codegen",
+                stepLabel: "并行代码生成",
+                status: "running",
+                fileTargets: ["index.html", "style.css", "game.js"],
+                detail: "基于同一份 DOM 合同并行生成三文件；不通过会自动切回稳定串行链",
+              });
+
+              const makePayload = (systemPrompt: string, userContent: string) => {
+                const payload: any = {
+                  model,
+                  messages: [
+                    { role: "system", content: `${baseSystemPrompt}\n\n${systemPrompt}` },
+                    { role: "user", content: userContent },
+                  ],
+                  temperature: 0.2,
+                  max_tokens: 8000,
+                };
+                if (provider === "openrouter" && payloadBase.provider) payload.provider = payloadBase.provider;
+                return payload;
+              };
+
+              const runPlainFile = async (
+                path: "index.html" | "style.css" | "game.js",
+                systemPrompt: string,
+                userContent: string,
+                languageHints: string[],
+                stepTag: string,
+              ) => {
+                sendProgress({
+                  mode: "create",
+                  stepId: `parallel_${path.replace(".", "_")}`,
+                  stepLabel: `${path} 并行生成`,
+                  status: "running",
+                  fileTargets: [path],
+                  detail: `${path} 生成中`,
+                });
+                const rawText = await callModelOnce(makePayload(systemPrompt, userContent), 180_000, stepTag, true);
+                logStep(`parallel_codegen.${path}.raw`, rawText);
+                const content = extractPlainCodeText(rawText, languageHints);
+                if (!content.trim()) throw new Error(`${path.toUpperCase()}_EMPTY`);
+                sendProgress({
+                  mode: "create",
+                  stepId: `parallel_${path.replace(".", "_")}`,
+                  stepLabel: `${path} 并行生成`,
+                  status: "done",
+                  fileTargets: [path],
+                  detail: `${path} 已生成，等待集成验收`,
+                });
+                return { path, content };
+              };
+
+              const htmlUser =
+                sharedContext +
+                `请只输出 index.html 纯文本，不要输出 JSON。HTML 必须创建“并行代码生成合同”里的 DOM id，并引用 ./style.css 与 ./game.js。`;
+              const cssUser =
+                sharedContext +
+                `请只输出 style.css 纯文本，不要输出 JSON。CSS 必须按“并行代码生成合同”里的 id/class 写样式。`;
+              const jsUser =
+                sharedContext +
+                `请只输出完整 game.js 纯文本，不要输出 JSON。JS 必须只引用“并行代码生成合同”里的 DOM id，并完整绑定开始/重开/操作事件。`;
+
+              const settled = await Promise.allSettled([
+                runPlainFile("index.html", CODEGEN_HTML_PROMPT, htmlUser, ["html"], "并行：页面结构 HTML"),
+                runPlainFile("style.css", CODEGEN_CSS_CONTRACT_PROMPT, cssUser, ["css"], "并行：页面样式 CSS"),
+                runPlainFile("game.js", CODEGEN_GAMEJS_CONTRACT_PROMPT, jsUser, ["js", "javascript"], "并行：核心逻辑 JS"),
+              ]);
+
+              const rejected = settled.find((x): x is PromiseRejectedResult => x.status === "rejected");
+              if (rejected) {
+                const err = String(rejected.reason?.message || rejected.reason || "");
+                logStep("parallel_codegen.failed", err);
+                sendProgress({
+                  mode: "create",
+                  stepId: "parallel_codegen",
+                  stepLabel: "并行代码生成",
+                  status: "failed",
+                  fileTargets: ["index.html", "style.css", "game.js"],
+                  error: err.slice(0, 180),
+                  detail: "并行试跑失败，切换到稳定串行链",
+                });
+                return false;
+              }
+
+              const parallelFiles = settled
+                .filter((x): x is PromiseFulfilledResult<{ path: "index.html" | "style.css" | "game.js"; content: string }> => x.status === "fulfilled")
+                .map((x) => x.value);
+              const byPath = new Map(parallelFiles.map((f) => [f.path, f.content]));
+              const finalFiles: Array<{ path: string; content: string }> = [
+                { path: "index.html", content: byPath.get("index.html") || "" },
+                { path: "style.css", content: byPath.get("style.css") || "" },
+                { path: "game.js", content: byPath.get("game.js") || "" },
+              ];
+              const missing = finalFiles.filter((f) => !f.content.trim()).map((f) => f.path);
+              if (missing.length) {
+                logStep("parallel_codegen.missing_files", missing);
+                sendProgress({
+                  mode: "create",
+                  stepId: "parallel_codegen",
+                  stepLabel: "并行代码生成",
+                  status: "failed",
+                  fileTargets: ["index.html", "style.css", "game.js"],
+                  error: `MISSING_${missing.join("_")}`,
+                  detail: "并行结果缺文件，切换到稳定串行链",
+                });
+                return false;
+              }
+
+              sendProgress({
+                mode: "create",
+                stepId: "parallel_validate",
+                stepLabel: "并行结果验收",
+                status: "running",
+                fileTargets: ["index.html", "style.css", "game.js"],
+                detail: "执行语法、DOM 合同与沙盒自检",
+              });
+              const acceptance = await validateAcceptanceSimple(finalFiles);
+              logStep("parallel_codegen.acceptance", {
+                ok: acceptance.blockers.length === 0,
+                errors: acceptance.blockers,
+                warnings: acceptance.warnings,
+                files: finalFiles,
+              });
+              if (acceptance.blockers.length) {
+                sendProgress({
+                  mode: "create",
+                  stepId: "parallel_validate",
+                  stepLabel: "并行结果验收",
+                  status: "failed",
+                  fileTargets: ["index.html", "style.css", "game.js"],
+                  error: acceptance.blockers.join(" | ").slice(0, 240),
+                  detail: "并行结果未通过强验收，切换到稳定串行链",
+                });
+                return false;
+              }
+
+              const writeResult = await writeDraftFilesDetailed(finalFiles);
+              logStep("parallel_codegen.persist", writeResult);
+              if (!writeResult.ok) {
+                sendProgress({
+                  mode: "create",
+                  stepId: "parallel_codegen",
+                  stepLabel: "并行代码生成",
+                  status: "failed",
+                  fileTargets: ["index.html", "style.css", "game.js"],
+                  error: "PARALLEL_PERSIST_FAILED",
+                  detail: "并行结果写库失败，切换到稳定串行链",
+                });
+                return false;
+              }
+
+              const metaNow = await lockMetaTitle(
+                applyFirstSuccessTiming({
+                  ...safeMeta((design as any)?.meta || readMeta || {}),
+                  _gen: {
+                    ...(genState || {}),
+                    v: 1,
+                    stage: "code_done",
+                    ...(activeConfig ? { config: activeConfig } : {}),
+                    ...(requirementContract ? { requirementContract } : {}),
+                    parallelCodegen: {
+                      enabled: true,
+                      strategy: "contract_parallel_v1",
+                      at: Date.now(),
+                    },
+                    clarify: undefined,
+                    persist: {
+                      step: "parallel_codegen",
+                      ok: true,
+                      expected: ["index.html", "style.css", "game.js"],
+                      written: writeResult.written,
+                      failed: [],
+                      updatedAt: Date.now(),
+                    },
+                    updatedAt: Date.now(),
+                  },
+                }),
+                String((design as any)?.meta?.title || requirementContract?.topic || ""),
+                "parallel_codegen",
+              );
+              await writeMeta(metaNow);
+              await setLastGood(metaNow, finalFiles, "after_parallel_codegen");
+              sendProgress({
+                mode: "create",
+                stepId: "parallel_validate",
+                stepLabel: "并行结果验收",
+                status: "done",
+                fileTargets: ["index.html", "style.css", "game.js"],
+                detail: "并行三文件已通过验收并写回草稿",
+              });
+              const metaFinal = (await readMetaObj()) || metaNow;
+              const assistantText = `已并行生成可运行版本：${String((metaFinal as any)?.title || (design as any)?.meta?.title || "").trim() || "未命名作品"}。`;
+              const finalObj = {
+                assistant: assistantText,
+                meta: metaFinal,
+                files: [...finalFiles, { path: "meta.json", content: JSON.stringify(metaFinal, null, 2) }],
+              };
+              parseCreatorJson(JSON.stringify(finalObj));
+              send("final", { ok: true, content: JSON.stringify(finalObj), repaired: false });
+              clearInterval(heartbeat);
+              controller.close();
+              return true;
+            };
+
             const parseFilesObject = async (
               rawText: string,
               schemaHint: string,
@@ -4694,7 +5057,6 @@ export async function POST(req: Request) {
                       `【蓝图 JSON（必须严格遵守）】\n${JSON.stringify(design || { config: activeConfig }, null, 2)}\n\n` +
                       requirementContractBlock +
                       styleConsistencyBlock +
-                      `${templateHint}\n` +
                       `请只输出 index.html 纯文本，不要输出 JSON。`,
                   },
                 ],
@@ -4777,7 +5139,6 @@ export async function POST(req: Request) {
                       requirementContractBlock +
                       styleConsistencyBlock +
                       `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }], null, 2)}\n\n` +
-                      `${templateHint}\n` +
                       `请只输出 style.css 纯文本，不要输出 JSON。`,
                   },
                 ],
@@ -4860,7 +5221,6 @@ export async function POST(req: Request) {
                         requirementContractBlock +
                         styleConsistencyBlock +
                         `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }, { path: "style.css", content: css }], null, 2)}\n\n` +
-                        `${templateHint}\n` +
                         `请输出完整的 game.js 纯文本，不要输出 JSON。`,
                     },
                   ],
@@ -4910,7 +5270,6 @@ export async function POST(req: Request) {
                         requirementContractBlock +
                         styleConsistencyBlock +
                         `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }, { path: "style.css", content: css }], null, 2)}\n\n` +
-                        `${templateHint}\n` +
                         `请先输出一个结构完整、函数齐全、带启动入口的 game.js 骨架纯文本，不要输出 JSON。`,
                     },
                   ],
@@ -4977,7 +5336,6 @@ export async function POST(req: Request) {
                         styleConsistencyBlock +
                         `【当前页面结构】\n${JSON.stringify([{ path: "index.html", content: html }, { path: "style.css", content: css }], null, 2)}\n\n` +
                         `【当前 game.js 骨架】\n${skeletonJs}\n\n` +
-                        `${templateHint}\n` +
                         `请基于这份骨架和上面的 must-have checklist 补全完整的 game.js 纯文本，不要输出 JSON。`,
                     },
                   ],
@@ -5082,6 +5440,9 @@ export async function POST(req: Request) {
               });
               return { jsContent };
             };
+
+            const parallelDone = await tryParallelCodegenStep();
+            if (parallelDone) return;
 
             const htmlStep = await generateHtmlStep();
             if (!htmlStep) return;
