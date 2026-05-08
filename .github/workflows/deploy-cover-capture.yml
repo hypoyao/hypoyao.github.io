@@ -51,7 +51,7 @@ jobs:
           test -n "$TENCENT_USER"
           ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes \
             "$TENCENT_USER@$TENCENT_HOST" \
-            'mkdir -p /var/www/miaodian-cover-capture/current'
+            'sudo mkdir -p /var/www/miaodian-cover-capture/current && sudo chown -R "$(whoami):$(id -gn)" /var/www/miaodian-cover-capture'
           rsync -az --delete \
             --exclude='node_modules/' \
             -e "ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes" \
@@ -69,6 +69,7 @@ jobs:
             'bash -s' <<'REMOTE'
           set -euo pipefail
           cd /var/www/miaodian-cover-capture/current
+          DEPLOY_USER="$(whoami)"
 
           if [ ! -f .env ]; then
             cat > .env <<'ENVFILE'
@@ -84,14 +85,14 @@ jobs:
           sudo systemctl stop aiprograms || true
           sudo systemctl disable aiprograms || true
 
-          sudo tee /etc/systemd/system/miaodian-cover-capture.service >/dev/null <<'SERVICE'
+          sudo tee /etc/systemd/system/miaodian-cover-capture.service >/dev/null <<SERVICE
           [Unit]
           Description=Miaodian Cover Capture Service
           After=network.target
 
           [Service]
           Type=simple
-          User=ubuntu
+          User=${DEPLOY_USER}
           WorkingDirectory=/var/www/miaodian-cover-capture/current
           Environment=NODE_ENV=production
           EnvironmentFile=/var/www/miaodian-cover-capture/current/.env
