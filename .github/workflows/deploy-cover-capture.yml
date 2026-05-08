@@ -49,12 +49,12 @@ jobs:
           set -euo pipefail
           test -n "$TENCENT_HOST"
           test -n "$TENCENT_USER"
-          ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes \
+          ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$TENCENT_USER@$TENCENT_HOST" \
             'sudo mkdir -p /var/www/miaodian-cover-capture/current && sudo chown -R "$(whoami):$(id -gn)" /var/www/miaodian-cover-capture'
           rsync -az --delete \
             --exclude='node_modules/' \
-            -e "ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes" \
+            -e "ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=20" \
             services/miaodian-cover-capture/ \
             "$TENCENT_USER@$TENCENT_HOST:/var/www/miaodian-cover-capture/current/"
 
@@ -64,7 +64,7 @@ jobs:
           TENCENT_USER: ${{ secrets.TENCENT_USER }}
         run: |
           set -euo pipefail
-          ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes \
+          ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$TENCENT_USER@$TENCENT_HOST" \
             'bash -s' <<'REMOTE'
           set -euo pipefail
@@ -94,7 +94,7 @@ jobs:
           TENCENT_USER: ${{ secrets.TENCENT_USER }}
         run: |
           set -euo pipefail
-          ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes \
+          ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$TENCENT_USER@$TENCENT_HOST" \
             'cd /var/www/miaodian-cover-capture/current && timeout 600s npm install --omit=dev'
 
@@ -104,9 +104,9 @@ jobs:
           TENCENT_USER: ${{ secrets.TENCENT_USER }}
         run: |
           set -euo pipefail
-          ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes \
+          ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$TENCENT_USER@$TENCENT_HOST" \
-            'cd /var/www/miaodian-cover-capture/current && DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a CI=1 timeout 1200s npx playwright install --with-deps chromium'
+            'cd /var/www/miaodian-cover-capture/current && PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=120000 DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a CI=1 timeout 1200s npx playwright install --with-deps chromium'
 
       - name: Start systemd service
         env:
@@ -114,7 +114,7 @@ jobs:
           TENCENT_USER: ${{ secrets.TENCENT_USER }}
         run: |
           set -euo pipefail
-          ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes \
+          ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$TENCENT_USER@$TENCENT_HOST" \
             'bash -s' <<'REMOTE'
           set -euo pipefail
@@ -152,7 +152,7 @@ jobs:
           TENCENT_USER: ${{ secrets.TENCENT_USER }}
         run: |
           set -euo pipefail
-          ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes \
+          ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$TENCENT_USER@$TENCENT_HOST" \
             'for i in 1 2 3 4 5; do curl -fsS http://127.0.0.1:3000/health && exit 0; sleep 2; done; exit 1'
 
