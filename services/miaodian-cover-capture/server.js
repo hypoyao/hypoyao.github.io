@@ -85,9 +85,17 @@ function enqueue(task) {
 async function dismissCloudBaseNotice(page) {
   await page.waitForTimeout(1300);
 
-  const clicked = await page.evaluate(() => {
+  const confirmTextPattern = new RegExp("\\u786e\\u5b9a\\u8bbf\\u95ee");
+
+  const clickedByLocator = await page
+    .getByRole("button", { name: confirmTextPattern })
+    .click({ timeout: 3000 })
+    .then(() => true)
+    .catch(() => false);
+
+  const clicked = clickedByLocator || await page.evaluate(() => {
     const keyword = "\u786e\u5b9a\u8bbf\u95ee";
-    const nodes = Array.from(document.querySelectorAll("button,a,div,span"));
+    const nodes = Array.from(document.querySelectorAll("button,a,[role='button'],[onclick]"));
     const target = nodes.find((node) => {
       const text = String(node.textContent || "").replace(/\s+/g, "");
 
