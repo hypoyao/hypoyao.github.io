@@ -7,11 +7,13 @@ const DEFAULT_ALLOWED_HOSTS = [
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "127.0.0.1";
 const CAPTURE_SECRET = process.env.COVER_CAPTURE_SECRET || "";
-const ALLOWED_HOSTS = String(process.env.ALLOWED_PREVIEW_HOSTS || "")
-  .split(",")
-  .map((item) => item.trim())
-  .filter(Boolean)
-  .concat(DEFAULT_ALLOWED_HOSTS);
+const ALLOWED_HOSTS = Array.from(new Set(
+  String(process.env.ALLOWED_PREVIEW_HOSTS || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .concat(DEFAULT_ALLOWED_HOSTS)
+));
 
 let browserPromise = null;
 let queue = Promise.resolve();
