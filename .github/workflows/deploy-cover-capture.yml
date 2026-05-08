@@ -72,11 +72,11 @@ jobs:
           DEPLOY_USER="$(whoami)"
 
           if [ ! -f .env ]; then
-            cat > .env <<'ENVFILE'
-          PORT=3000
-          HOST=127.0.0.1
-          ALLOWED_PREVIEW_HOSTS=cloud1-d7guxi87wac162e06-1377286614.ap-shanghai.app.tcloudbase.com
-          ENVFILE
+            printf '%s\n' \
+              'PORT=3000' \
+              'HOST=127.0.0.1' \
+              'ALLOWED_PREVIEW_HOSTS=cloud1-d7guxi87wac162e06-1377286614.ap-shanghai.app.tcloudbase.com' \
+              > .env
           fi
 
           npm install --omit=dev
@@ -85,25 +85,25 @@ jobs:
           sudo systemctl stop aiprograms || true
           sudo systemctl disable aiprograms || true
 
-          sudo tee /etc/systemd/system/miaodian-cover-capture.service >/dev/null <<SERVICE
-          [Unit]
-          Description=Miaodian Cover Capture Service
-          After=network.target
-
-          [Service]
-          Type=simple
-          User=${DEPLOY_USER}
-          WorkingDirectory=/var/www/miaodian-cover-capture/current
-          Environment=NODE_ENV=production
-          EnvironmentFile=/var/www/miaodian-cover-capture/current/.env
-          ExecStart=/usr/bin/env node server.js
-          Restart=always
-          RestartSec=3
-          NoNewPrivileges=true
-
-          [Install]
-          WantedBy=multi-user.target
-          SERVICE
+          printf '%s\n' \
+            '[Unit]' \
+            'Description=Miaodian Cover Capture Service' \
+            'After=network.target' \
+            '' \
+            '[Service]' \
+            'Type=simple' \
+            "User=${DEPLOY_USER}" \
+            'WorkingDirectory=/var/www/miaodian-cover-capture/current' \
+            'Environment=NODE_ENV=production' \
+            'EnvironmentFile=/var/www/miaodian-cover-capture/current/.env' \
+            'ExecStart=/usr/bin/env node server.js' \
+            'Restart=always' \
+            'RestartSec=3' \
+            'NoNewPrivileges=true' \
+            '' \
+            '[Install]' \
+            'WantedBy=multi-user.target' \
+            | sudo tee /etc/systemd/system/miaodian-cover-capture.service >/dev/null
 
           sudo systemctl daemon-reload
           sudo systemctl enable miaodian-cover-capture
