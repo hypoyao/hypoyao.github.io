@@ -86,7 +86,9 @@ function nowId() {
 
 const CREATOR_STORE_VER = 1;
 const CREATOR_LAST_KEY = "creatorStudio:last";
-const DEFAULT_PROVIDER = "bailian";
+const DEFAULT_PROVIDER = "openrouter";
+// 默认模型（OpenRouter）：腾讯混元 Hy3 Preview 免费模型
+const DEFAULT_OPENROUTER_MODEL = "tencent/hy3-preview:free";
 // 默认模型（百炼）：qwen3.6-plus-2026-04-02
 const DEFAULT_BAILIAN_MODEL = "qwen3.6-plus-2026-04-02";
 // 备用模型（百炼）：当默认模型不稳定时回退
@@ -551,7 +553,7 @@ export default function CreateStudio({
   // 这里先用稳定默认值，等客户端挂载后再从 localStorage 恢复。
   const [provider, setProvider] = useState<"deepseek" | "openrouter" | "bailian" | "tencent" | "chinamobile">(DEFAULT_PROVIDER);
   // 默认模型只影响首次进入或无本地缓存的用户；已有选择仍会在客户端挂载后恢复。
-  const [model, setModel] = useState<string>(DEFAULT_BAILIAN_MODEL);
+  const [model, setModel] = useState<string>(DEFAULT_OPENROUTER_MODEL);
   const [hydrated, setHydrated] = useState(false);
   const [currentModelLabel, setCurrentModelLabel] = useState<string>("");
   const [processCurrent, setProcessCurrent] = useState<ProcessRun | null>(null);
@@ -628,13 +630,13 @@ export default function CreateStudio({
 
   const openrouterModels = useMemo(
     () => [
+      { id: DEFAULT_OPENROUTER_MODEL, name: "tencent/hy3-preview:free（默认，腾讯 Hy3 Preview 免费）" },
       { id: "nvidia/nemotron-3-super-120b-a12b:free", name: "nvidia/nemotron-3-super-120b-a12b:free（OpenRouter）" },
       { id: "qwen/qwen3.6-plus", name: "qwen/qwen3.6-plus（Qwen3.6 Plus）" },
       { id: "qwen/qwen-2.5-72b-instruct:free", name: "qwen/qwen-2.5-72b-instruct:free" },
       { id: "deepseek/deepseek-v3.2", name: "deepseek/deepseek-v3.2" },
       { id: "deepseek/deepseek-v4-pro", name: "deepseek/deepseek-v4-pro（思考：最高）" },
       { id: "deepseek/deepseek-v4-flash", name: "deepseek/deepseek-v4-flash（思考：最高，较快）" },
-      { id: "tencent/hy3-preview:free", name: "tencent/hy3-preview:free（腾讯 Hy3 Preview 免费）" },
       { id: "z-ai/glm-5.1", name: "z-ai/glm-5.1（GLM 5.1）" },
       { id: "google/gemini-2.5-flash", name: "google/gemini-2.5-flash" },
       { id: "google/gemini-2.5-flash-lite", name: "google/gemini-2.5-flash-lite" },
@@ -677,7 +679,7 @@ export default function CreateStudio({
   useEffect(() => {
     if (provider === "openrouter") {
       const ok = openrouterModels.some((x) => x.id === model);
-      if (!ok) setModel("nvidia/nemotron-3-super-120b-a12b:free");
+      if (!ok) setModel(DEFAULT_OPENROUTER_MODEL);
     } else if (provider === "bailian") {
       const ok = bailianModels.some((x) => x.id === model);
       if (!ok) setModel(DEFAULT_BAILIAN_MODEL);
@@ -706,6 +708,15 @@ export default function CreateStudio({
     try {
       const p = window.localStorage.getItem("creatorStudio:modelProvider");
       const m = window.localStorage.getItem("creatorStudio:modelName");
+      const storedLooksLikeOldDefault =
+        (!p && !m) ||
+        (p === "bailian" && (!m || m === DEFAULT_BAILIAN_MODEL)) ||
+        (p === "openrouter" && m === "nvidia/nemotron-3-super-120b-a12b:free");
+      if (storedLooksLikeOldDefault) {
+        setProvider(DEFAULT_PROVIDER);
+        setModel(DEFAULT_OPENROUTER_MODEL);
+        return;
+      }
       if (p === "deepseek" || p === "openrouter" || p === "bailian" || p === "tencent" || p === "chinamobile") setProvider(p as any);
       if (m) setModel(m);
     } catch {
@@ -2651,7 +2662,7 @@ export default function CreateStudio({
                       const p = (e.target.value || "openrouter") as any;
                       if (p !== "deepseek" && p !== "openrouter" && p !== "bailian" && p !== "tencent" && p !== "chinamobile") return;
                       setProvider(p);
-                      if (p === "openrouter") setModel("nvidia/nemotron-3-super-120b-a12b:free");
+                      if (p === "openrouter") setModel(DEFAULT_OPENROUTER_MODEL);
                       else if (p === "bailian") setModel(DEFAULT_BAILIAN_MODEL);
                       else if (p === "tencent") setModel("hy3-preview");
                       else if (p === "chinamobile") setModel("minimax-m25");

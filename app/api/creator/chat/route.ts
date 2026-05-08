@@ -18,6 +18,8 @@ type ModelProvider = "openrouter" | "deepseek" | "bailian" | "tencent" | "chinam
 
 const TENCENT_TOKENHUB_MODELS = ["hy3-preview"] as const;
 const CHINAMOBILE_MODELS = ["minimax-m25"] as const;
+// 默认模型（OpenRouter）：腾讯混元 Hy3 Preview 免费模型
+const DEFAULT_OPENROUTER_MODEL = "tencent/hy3-preview:free";
 // 默认模型（百炼）：qwen3.6-plus-2026-04-02
 const DEFAULT_BAILIAN_MODEL = "qwen3.6-plus-2026-04-02";
 // 备用模型（百炼）：当默认模型不稳定时回退
@@ -32,7 +34,8 @@ function isDeepSeekV4OpenRouterModel(m: string) {
 }
 
 const OPENROUTER_MODELS = [
-  // 默认：免费模型（用户要求）
+  // 默认：OpenRouter 上的腾讯混元免费模型
+  DEFAULT_OPENROUTER_MODEL,
   "nvidia/nemotron-3-super-120b-a12b:free",
   "qwen/qwen3.6-plus",
   "qwen/qwen-2.5-72b-instruct:free",
@@ -40,8 +43,6 @@ const OPENROUTER_MODELS = [
   // DeepSeek V4（支持 reasoning 参数；这里会自动开“最高思考强度”）
   "deepseek/deepseek-v4-pro",
   "deepseek/deepseek-v4-flash",
-  // Tencent（OpenRouter）
-  "tencent/hy3-preview:free",
   // ZhipuAI GLM（OpenRouter）
   "z-ai/glm-5.1",
   // Architect / Refine（优先不用 Claude：地区/链路更容易失败）
@@ -2635,20 +2636,20 @@ export async function POST(req: Request) {
   messages = trimmed.reverse();
   if (!messages.length) return json(400, { ok: false, error: "MISSING_MESSAGES" });
 
-  // 默认优先百炼新版：如果用户没指定 provider/model，则和 create 页默认选择保持一致。
+  // 默认优先 OpenRouter 混元免费模型：如果用户没指定 provider/model，则和 create 页默认选择保持一致。
   const providerRaw = String((body as any)?.provider || "").trim().toLowerCase();
   const hasOpenRouter = !!(process.env.OPENROUTER_API_KEY || "");
   const hasDeepSeek = !!(process.env.DEEPSEEK_API_KEY || "");
   const hasBailian = !!(process.env.DASHSCOPE_API_KEY || process.env.BAILIAN_API_KEY || "");
   const hasTencentTokenHub = !!(process.env.TENCENT_TOKENHUB_API_KEY || process.env.TOKENHUB_API_KEY || "");
   const hasChinaMobile = !!String(process.env.CHINAMOBILE_TOKENHUB_API_KEY || "").trim();
-  let provider: ModelProvider = "bailian";
+  let provider: ModelProvider = "openrouter";
   if (providerRaw === "deepseek") provider = "deepseek";
   else if (providerRaw === "openrouter") provider = "openrouter";
   else if (providerRaw === "bailian" || providerRaw === "dashscope") provider = "bailian";
   else if (providerRaw === "tencent" || providerRaw === "tokenhub" || providerRaw === "hunyuan") provider = "tencent";
   else if (providerRaw === "chinamobile" || providerRaw === "china-mobile" || providerRaw === "cmcc" || providerRaw === "mobile") provider = "chinamobile";
-  else provider = hasBailian ? "bailian" : hasTencentTokenHub ? "tencent" : hasChinaMobile ? "chinamobile" : hasOpenRouter ? "openrouter" : "deepseek";
+  else provider = hasOpenRouter ? "openrouter" : hasBailian ? "bailian" : hasTencentTokenHub ? "tencent" : hasChinaMobile ? "chinamobile" : "deepseek";
 
   let url = "";
   let authKey = "";
@@ -3683,7 +3684,7 @@ export async function POST(req: Request) {
             // 选择模型：始终优先使用前端“彩蛋”中用户选择的 provider/model（请求 body 传入的 model）。
             const mvpModel =
               String(model || "").trim() ||
-              (provider === "bailian" ? DEFAULT_BAILIAN_MODEL : hasOpenRouter ? "qwen/qwen3.6-plus" : model);
+              (provider === "bailian" ? DEFAULT_BAILIAN_MODEL : hasOpenRouter ? DEFAULT_OPENROUTER_MODEL : model);
             const refineModel = mvpModel;
 
             const userMsgs = messages.filter((m) => m.role === "user").slice(-2);
