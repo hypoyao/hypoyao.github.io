@@ -7,6 +7,7 @@ const DEFAULT_ALLOWED_HOSTS = [
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "127.0.0.1";
 const CAPTURE_SECRET = process.env.COVER_CAPTURE_SECRET || "";
+const CAPTURE_DEVICE_SCALE_FACTOR = clampNumber(process.env.CAPTURE_DEVICE_SCALE_FACTOR, 1, 1, 2);
 const ALLOWED_HOSTS = Array.from(new Set(
   String(process.env.ALLOWED_PREVIEW_HOSTS || "")
     .split(",")
@@ -137,7 +138,7 @@ async function capturePreview(options) {
   const waitMs = clampNumber(options.waitMs, 2000, 300, 6000);
   const page = await browser.newPage({
     viewport: { width, height },
-    deviceScaleFactor: 2,
+    deviceScaleFactor: CAPTURE_DEVICE_SCALE_FACTOR,
   });
 
   try {
@@ -183,6 +184,7 @@ app.get("/health", (req, res) => {
     ok: true,
     service: "miaodian-cover-capture",
     authEnabled: !!CAPTURE_SECRET,
+    deviceScaleFactor: CAPTURE_DEVICE_SCALE_FACTOR,
     allowedHosts: ALLOWED_HOSTS,
   });
 });
@@ -206,6 +208,7 @@ app.post("/capture", async (req, res) => {
     res.setHeader("Content-Type", "image/png");
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Capture-Duration-Ms", String(Date.now() - startedAt));
+    res.setHeader("X-Capture-Dpr", String(CAPTURE_DEVICE_SCALE_FACTOR));
     res.send(png);
   } catch (error) {
     const statusCode = error.statusCode || 400;
