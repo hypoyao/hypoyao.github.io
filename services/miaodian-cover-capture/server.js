@@ -82,6 +82,44 @@ function enqueue(task) {
   return run;
 }
 
+async function dismissCloudBaseNotice(page) {
+  await page.waitForTimeout(1300);
+
+  const clicked = await page.evaluate(() => {
+    const keyword = "\u786e\u5b9a\u8bbf\u95ee";
+    const nodes = Array.from(document.querySelectorAll("button,a,div,span"));
+    const target = nodes.find((node) => {
+      const text = String(node.textContent || "").replace(/\s+/g, "");
+
+      if (!text.includes(keyword)) {
+        return false;
+      }
+
+      const style = window.getComputedStyle(node);
+      const disabled =
+        node.disabled ||
+        node.getAttribute("aria-disabled") === "true" ||
+        /\bdisabled\b/i.test(String(node.className || ""));
+
+      return style.display !== "none" && style.visibility !== "hidden" && !disabled;
+    });
+
+    if (!target) {
+      return false;
+    }
+
+    target.click();
+    return true;
+  }).catch(() => false);
+
+  if (!clicked) {
+    return;
+  }
+
+  await page.waitForLoadState("domcontentloaded", { timeout: 6000 }).catch(() => {});
+  await page.waitForLoadState("networkidle", { timeout: 6000 }).catch(() => {});
+}
+
 async function capturePreview(options) {
   const browser = await getBrowser();
   const width = clampNumber(options.width, 900, 320, 1400);
@@ -98,6 +136,7 @@ async function capturePreview(options) {
       timeout: 20000,
     });
     await page.waitForLoadState("networkidle", { timeout: 4000 }).catch(() => {});
+    await dismissCloudBaseNotice(page);
     await Promise.race([
       page.waitForFunction(
         () => window.__MIAODIAN_COVER_READY__ === true,
