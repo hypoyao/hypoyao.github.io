@@ -298,6 +298,7 @@ function inferStepFromPhase(phase: string): { id: string; label: string; mode?: 
   if (p === "clarify") return { id: "clarify", label: "需求澄清", mode: "clarify" };
   if (p === "blueprint") return { id: "blueprint", label: "蓝图", mode: "create" };
   if (p === "json_repair") return { id: "repair", label: "结构修复" };
+  if (p === "parallel_codegen") return { id: "parallel_codegen", label: "并行代码生成", mode: "create" };
   if (p === "codegen_html") return { id: "html", label: "页面结构", mode: "create" };
   if (p === "codegen_css") return { id: "css", label: "页面样式", mode: "create" };
   if (p === "codegen_game_js") return { id: "game_js", label: "核心逻辑", mode: "create" };
@@ -387,24 +388,45 @@ function expectedProcessSteps(mode: ProcessMode, currentSteps: ProcessStep[]) {
   }
   if (mode === "create") {
     const hasTwoStepJs = currentSteps.some((s) => s.id === "game_js_skeleton" || s.id === "game_js_complete");
+    const hasParallelCodegen = currentSteps.some((s) => s.id === "parallel_codegen" || s.id === "parallel_validate" || s.id.startsWith("parallel_"));
+    const hasSerialCodegen = currentSteps.some((s) =>
+      ["html", "css", "game_js", "game_js_skeleton", "game_js_complete", "validate"].includes(s.id),
+    );
     const blueprintSteps = hasStep("blueprint_update")
       ? [{ id: "blueprint_update", label: "蓝图（增量）" }]
       : [{ id: "blueprint", label: "蓝图" }];
-    const jsSteps = hasTwoStepJs
+    const parallelSteps = hasParallelCodegen
       ? [
-          { id: "game_js_skeleton", label: "核心逻辑骨架" },
-          { id: "game_js_complete", label: "核心逻辑补全" },
+          { id: "parallel_codegen", label: "并行代码生成" },
+          { id: "parallel_index_html", label: "index.html 并行生成" },
+          { id: "parallel_style_css", label: "style.css 并行生成" },
+          { id: "parallel_game_js", label: "game.js 并行生成" },
+          { id: "parallel_validate", label: "并行结果验收" },
         ]
-      : [{ id: "game_js", label: "核心逻辑" }];
+      : [];
+    const jsSteps =
+      hasTwoStepJs
+        ? [
+            { id: "game_js_skeleton", label: "核心逻辑骨架" },
+            { id: "game_js_complete", label: "核心逻辑补全" },
+          ]
+        : [{ id: "game_js", label: "核心逻辑" }];
+    const serialSteps =
+      !hasParallelCodegen || hasSerialCodegen
+        ? [
+            { id: "html", label: "页面结构" },
+            { id: "css", label: "页面样式" },
+            ...jsSteps,
+            { id: "validate", label: "验收与落库" },
+          ]
+        : [];
     return [
       ...openingSteps,
       ...(hasStep("fix_upgrade_blueprint_regen") ? [{ id: "fix_upgrade_blueprint_regen", label: "升级为蓝图重生成" }] : []),
       ...blueprintSteps,
       { id: "requirement_contract", label: "需求契约" },
-      { id: "html", label: "页面结构" },
-      { id: "css", label: "页面样式" },
-      ...jsSteps,
-      { id: "validate", label: "验收与落库" },
+      ...parallelSteps,
+      ...serialSteps,
     ];
   }
   return [{ id: "prepare", label: "准备流程" }];
@@ -1699,8 +1721,8 @@ export default function CreateStudio({
                   applyProgressUpdate(
                     {
                       mode: inferred?.mode,
-                      stepId: inferred?.id || "status",
-                      stepLabel: inferred?.label || "处理中",
+                      stepId: inferred?.id,
+                      stepLabel: inferred?.label,
                       status: "running",
                       detail: summarizeStatusText(statusRaw),
                       summary: summarizeStatusText(statusRaw),
