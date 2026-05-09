@@ -3,6 +3,8 @@ const { chromium } = require("playwright");
 
 const DEFAULT_ALLOWED_HOSTS = [
   "cloud1-d7guxi87wac162e06-1377286614.ap-shanghai.app.tcloudbase.com",
+  "miaodian-craft-d2g5nc8n096ef23c5.service.tcloudbase.com",
+  "miaodian-craft-d2g5nc8n096ef23c5-1430296103.ap-shanghai.app.tcloudbase.com",
 ];
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "127.0.0.1";

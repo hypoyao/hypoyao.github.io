@@ -78,7 +78,7 @@ jobs:
           printf '%s\n' \
             'PORT=3000' \
             'HOST=127.0.0.1' \
-            'ALLOWED_PREVIEW_HOSTS=cloud1-d7guxi87wac162e06-1377286614.ap-shanghai.app.tcloudbase.com' \
+            'ALLOWED_PREVIEW_HOSTS=cloud1-d7guxi87wac162e06-1377286614.ap-shanghai.app.tcloudbase.com,miaodian-craft-d2g5nc8n096ef23c5.service.tcloudbase.com,miaodian-craft-d2g5nc8n096ef23c5-1430296103.ap-shanghai.app.tcloudbase.com' \
             > .env
           if [ -n "$EXISTING_SECRET" ]; then
             printf '%s\n' "$EXISTING_SECRET" >> .env
