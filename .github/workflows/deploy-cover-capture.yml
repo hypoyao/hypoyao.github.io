@@ -1,0 +1,164 @@
+name: Deploy Miaodian Cover Capture
+
+on:
+  push:
+    branches: ["master"]
+    paths:
+      - "services/miaodian-cover-capture/**"
+      - ".github/workflows/deploy-cover-capture.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tencent-lighthouse-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install deploy tools
+        run: sudo apt-get update && sudo apt-get install -y rsync openssh-client
+
+      - name: Configure SSH
+        env:
+          TENCENT_HOST: ${{ secrets.TENCENT_HOST }}
+          TENCENT_SSH_KEY: ${{ secrets.TENCENT_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$TENCENT_HOST"
+          test -n "$TENCENT_SSH_KEY"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$TENCENT_SSH_KEY" > ~/.ssh/tencent_deploy_key
+          chmod 600 ~/.ssh/tencent_deploy_key
+          ssh-keyscan -H "$TENCENT_HOST" >> ~/.ssh/known_hosts
+
+      - name: Sync capture service
+        env:
+          TENCENT_HOST: ${{ secrets.TENCENT_HOST }}
+          TENCENT_USER: ${{ secrets.TENCENT_USER }}
+        run: |
+          set -euo pipefail
+          test -n "$TENCENT_HOST"
+          test -n "$TENCENT_USER"
+          ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            "$TENCENT_USER@$TENCENT_HOST" \
+            'sudo mkdir -p /var/www/miaodian-cover-capture/current && sudo chown -R "$(whoami):$(id -gn)" /var/www/miaodian-cover-capture'
+          rsync -az --delete \
+            --exclude='node_modules/' \
+            -e "ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=20" \
+            services/miaodian-cover-capture/ \
+            "$TENCENT_USER@$TENCENT_HOST:/var/www/miaodian-cover-capture/current/"
+
+      - name: Prepare remote service
+        env:
+          TENCENT_HOST: ${{ secrets.TENCENT_HOST }}
+          TENCENT_USER: ${{ secrets.TENCENT_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            "$TENCENT_USER@$TENCENT_HOST" \
+            'bash -s' <<'REMOTE'
+          set -euo pipefail
+          cd /var/www/miaodian-cover-capture/current
+
+          EXISTING_SECRET=""
+          if [ -f .env ]; then
+            EXISTING_SECRET="$(grep -m1 '^COVER_CAPTURE_SECRET=' .env || true)"
+          fi
+
+          printf '%s\n' \
+            'PORT=3000' \
+            'HOST=127.0.0.1' \
+            'ALLOWED_PREVIEW_HOSTS=cloud1-d7guxi87wac162e06-1377286614.ap-shanghai.app.tcloudbase.com,miaodian-craft-d2g5nc8n096ef23c5.service.tcloudbase.com,miaodian-craft-d2g5nc8n096ef23c5-1430296103.ap-shanghai.app.tcloudbase.com' \
+            > .env
+          if [ -n "$EXISTING_SECRET" ]; then
+            printf '%s\n' "$EXISTING_SECRET" >> .env
+          fi
+
+          sudo systemctl stop aiprograms || true
+          sudo systemctl disable aiprograms || true
+          REMOTE
+
+      - name: Install Node dependencies
+        env:
+          TENCENT_HOST: ${{ secrets.TENCENT_HOST }}
+          TENCENT_USER: ${{ secrets.TENCENT_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            "$TENCENT_USER@$TENCENT_HOST" \
+            'cd /var/www/miaodian-cover-capture/current && timeout 600s npm install --omit=dev'
+
+      - name: Install Playwright Chromium
+        env:
+          TENCENT_HOST: ${{ secrets.TENCENT_HOST }}
+          TENCENT_USER: ${{ secrets.TENCENT_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            "$TENCENT_USER@$TENCENT_HOST" \
+            'cd /var/www/miaodian-cover-capture/current && PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=120000 DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a CI=1 timeout 1200s npx playwright install --with-deps chromium'
+
+      - name: Start systemd service
+        env:
+          TENCENT_HOST: ${{ secrets.TENCENT_HOST }}
+          TENCENT_USER: ${{ secrets.TENCENT_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            "$TENCENT_USER@$TENCENT_HOST" \
+            'bash -s' <<'REMOTE'
+          set -euo pipefail
+          cd /var/www/miaodian-cover-capture/current
+          DEPLOY_USER="$(whoami)"
+
+          printf '%s\n' \
+            '[Unit]' \
+            'Description=Miaodian Cover Capture Service' \
+            'After=network.target' \
+            '' \
+            '[Service]' \
+            'Type=simple' \
+            "User=${DEPLOY_USER}" \
+            'WorkingDirectory=/var/www/miaodian-cover-capture/current' \
+            'Environment=NODE_ENV=production' \
+            'EnvironmentFile=/var/www/miaodian-cover-capture/current/.env' \
+            'ExecStart=/usr/bin/env node server.js' \
+            'Restart=always' \
+            'RestartSec=3' \
+            'NoNewPrivileges=true' \
+            '' \
+            '[Install]' \
+            'WantedBy=multi-user.target' \
+            | sudo tee /etc/systemd/system/miaodian-cover-capture.service >/dev/null
+
+          sudo systemctl daemon-reload
+          sudo systemctl enable miaodian-cover-capture
+          sudo systemctl restart miaodian-cover-capture
+          REMOTE
+
+      - name: Verify remote health
+        env:
+          TENCENT_HOST: ${{ secrets.TENCENT_HOST }}
+          TENCENT_USER: ${{ secrets.TENCENT_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/tencent_deploy_key -o IdentitiesOnly=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            "$TENCENT_USER@$TENCENT_HOST" \
+            'for i in 1 2 3 4 5; do curl -fsS http://127.0.0.1:3000/health && exit 0; sleep 2; done; exit 1'
+
+      - name: Verify public health
+        env:
+          TENCENT_HOST: ${{ secrets.TENCENT_HOST }}
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 5 --retry-delay 2 "http://$TENCENT_HOST/health"

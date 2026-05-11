@@ -1,0 +1,13 @@
+{
+  "name": "miaodian-cover-capture",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Screenshot service for Miaodian game covers.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.3",
+    "playwright": "1.44.1"
+  }
+}
