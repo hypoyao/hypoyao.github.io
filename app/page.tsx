@@ -95,7 +95,7 @@ export default async function HomePage() {
           <p>欢迎扫码添加微信，告诉我你的使用场景和想做的互动内容。</p>
         </div>
         <div className="contactQrCard">
-          <img src="/assets/screenshots/二维码.png" alt="奇点小匠微信二维码" loading="lazy" />
+          <img src="/assets/screenshots/qrcode.png" alt="奇点小匠微信二维码" loading="lazy" />
           <strong>扫码添加微信</strong>
           <small>内测反馈 / 教育合作 / 使用咨询</small>
         </div>
