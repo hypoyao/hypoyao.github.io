@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { stashLaunchPrompt } from "@/lib/creator/launchPrompt";
+import MiniProgramLaunchButton from "./MiniProgramLaunchButton";
 
 const EXAMPLE_PROMPTS = [
   {
@@ -26,10 +27,24 @@ function toCreateUrl(prompt: string) {
   return `/create?auto=1&promptKey=${encodeURIComponent(key)}`;
 }
 
+function isDesktopViewport() {
+  if (typeof window === "undefined") return false;
+  const ua = window.navigator.userAgent || "";
+  const mobile = /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(ua);
+  return !mobile && window.matchMedia("(min-width: 760px)").matches;
+}
+
 export default function HomePromptLauncher() {
   const [input, setInput] = useState("");
+  const [modalPrompt, setModalPrompt] = useState("");
+  const [modalOpenKey, setModalOpenKey] = useState(0);
 
   function goWithPrompt(prompt: string) {
+    if (isDesktopViewport()) {
+      setModalPrompt(String(prompt || ""));
+      setModalOpenKey((x) => x + 1);
+      return;
+    }
     window.location.href = toCreateUrl(prompt);
   }
 
@@ -53,6 +68,11 @@ export default function HomePromptLauncher() {
           立即生成
         </button>
       </form>
+      {modalOpenKey > 0 ? (
+        <MiniProgramLaunchButton className="miniProgramHiddenTrigger" prompt={modalPrompt} autoOpenKey={modalOpenKey}>
+          立即生成
+        </MiniProgramLaunchButton>
+      ) : null}
 
       <div className="heroChips" aria-label="prompt templates">
         {EXAMPLE_PROMPTS.map((item) => (

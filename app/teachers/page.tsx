@@ -3,6 +3,7 @@ import { featuredGamesByEngagement } from "@/lib/gameSorting";
 import HomeAccount from "../HomeAccount";
 import HomePromptLauncher from "../HomePromptLauncher";
 import CoverImage from "../components/CoverImage";
+import MiniProgramLaunchButton from "../MiniProgramLaunchButton";
 
 // 首页尽量走静态 + ISR：首屏秒开（CDN 缓存），后台定期更新
 export const dynamic = "force-static";
@@ -323,9 +324,9 @@ export default async function HomePage() {
           <p>内测期间免费使用。从一句话开始，把教学想法变成可玩、可分享的作品。</p>
         </div>
         <div className="finalActions">
-          <a className="primaryCta" href="/create">
+          <MiniProgramLaunchButton className="primaryCta">
             免费开始内测
-          </a>
+          </MiniProgramLaunchButton>
           <a className="secondaryCta" href="#examples">
             查看示例
           </a>
