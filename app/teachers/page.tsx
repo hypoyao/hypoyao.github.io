@@ -60,8 +60,8 @@ export default async function HomePage() {
   return (
     <main className="homePage teachersPage">
       <nav className="homeNav" aria-label="首页导航">
-        <a className="homeLogo" href="/" aria-label="奇点小匠首页">
-          <span>奇点小匠</span>
+        <a className="homeLogo" href="/" aria-label="妙点小匠首页">
+          <span>妙点小匠</span>
         </a>
         <div className="homeNavLinks">
           <a href="/">
@@ -108,7 +108,7 @@ export default async function HomePage() {
           <div className="productShell">
             <aside className="productSidebar">
               <div className="productMiniLogo">
-                <b>奇点小匠</b>
+                <b>妙点小匠</b>
               </div>
               {["首页", "我的作品", "模板中心", "分享与发布", "数据统计", "设置中心"].map((x, i) => (
                 <div key={x} className={`sideItem ${i === 0 ? "active" : ""}`}>
@@ -239,7 +239,7 @@ export default async function HomePage() {
       <section id="help" className="homeSection">
         <div className="sectionHeading">
           <span />
-          <h2>为什么选择奇点小匠</h2>
+          <h2>为什么选择妙点小匠</h2>
           <span />
         </div>
         <div className="advantageGrid">
@@ -340,7 +340,7 @@ export default async function HomePage() {
           <p>欢迎扫码添加微信，告诉我你的使用场景和想做的互动内容。</p>
         </div>
         <div className="contactQrCard">
-          <img src="/assets/screenshots/qrcode.png" alt="奇点小匠微信二维码" loading="lazy" />
+          <img src="/assets/screenshots/qrcode.png" alt="妙点小匠微信二维码" loading="lazy" />
           <strong>扫码添加微信</strong>
           <small>内测反馈 / 教育合作 / 使用咨询</small>
         </div>

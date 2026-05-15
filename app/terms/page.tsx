@@ -3,8 +3,8 @@ import LegalPage from "../legal/LegalPage";
 import { getLegalConfig } from "@/lib/legal";
 
 export const metadata: Metadata = {
-  title: "服务条款 - 奇点小匠",
-  description: "奇点小匠服务条款，说明使用、发布、分享和相关服务规则。",
+  title: "服务条款 - 妙点小匠",
+  description: "妙点小匠服务条款，说明使用、发布、分享和相关服务规则。",
 };
 
 export default function TermsPage() {
@@ -13,7 +13,7 @@ export default function TermsPage() {
   return (
     <LegalPage
       title="服务条款"
-      summary="本服务条款用于说明你在使用奇点小匠创建、编辑、发布、分享小应用时需要遵守的规则，以及我们和你各自的权利与责任。"
+      summary="本服务条款用于说明你在使用妙点小匠创建、编辑、发布、分享小应用时需要遵守的规则，以及我们和你各自的权利与责任。"
       sections={[
         {
           title: "1. 接受条款",

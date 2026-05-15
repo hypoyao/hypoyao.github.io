@@ -20,7 +20,7 @@ export default async function HomePage() {
         <header className="header">
           <div className="homeHeaderRow">
             <div className="homeBrand">
-              <h2 className="sectionTitle homeBrandTitle">奇点小匠</h2>
+              <h2 className="sectionTitle homeBrandTitle">妙点小匠</h2>
             </div>
             <div className="homeHeaderActions">
               <HomeAccount />

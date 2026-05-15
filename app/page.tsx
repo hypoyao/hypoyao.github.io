@@ -17,7 +17,7 @@ function toGameEntryHref(path: string) {
 const appDetails = [
   {
     title: "AI 对话生成小应用",
-    desc: "用户通过自然语言描述场景、角色、按钮、交互目标和画面风格，奇点小匠会生成可在线预览的 H5 小应用。",
+    desc: "用户通过自然语言描述场景、角色、按钮、交互目标和画面风格，妙点小匠会生成可在线预览的 H5 小应用。",
   },
   {
     title: "在线预览与继续修改",
@@ -34,7 +34,7 @@ const appDetails = [
 ];
 
 const serviceItems = [
-  ["应用名称", "奇点小匠"],
+  ["应用名称", "妙点小匠"],
   ["服务类型", "AI 互动小应用与教学互动素材创作工具"],
   ["主要用户", "青少年创作者、学生、老师、学校与教育机构"],
   ["核心服务", "需求输入、AI 生成、在线预览、对话修改、作品发布、社区展示、数据统计"],
@@ -50,8 +50,8 @@ export default async function HomePage() {
   return (
     <main className="homePage simpleHomePage">
       <nav className="homeNav" aria-label="首页导航">
-        <a className="homeLogo" href="/" aria-label="奇点小匠首页">
-          <span>奇点小匠</span>
+        <a className="homeLogo" href="/" aria-label="妙点小匠首页">
+          <span>妙点小匠</span>
         </a>
         <div className="homeNavLinks">
           <a className="isActive" href="/">
@@ -69,10 +69,10 @@ export default async function HomePage() {
       <section className="card homeCard homeNew simpleHomeContent">
         <section className="homeHeroGrid" aria-label="hero">
           <section className="heroPanel" aria-label="main call to action">
-            <div className="homeAppBadge">奇点小匠应用官网</div>
-            <h1 className="heroTitle">奇点小匠：用 AI 对话生成互动小应用</h1>
+            <div className="homeAppBadge">妙点小匠应用官网</div>
+            <h1 className="heroTitle">妙点小匠：用 AI 对话生成互动小应用</h1>
             <p className="heroDesc">
-              奇点小匠是一款面向青少年、学生、老师和教育机构的 AI 创作应用。用户只需要描述玩法、角色、按钮、胜负条件和画面风格，
+              妙点小匠是一款面向青少年、学生、老师和教育机构的 AI 创作应用。用户只需要描述玩法、角色、按钮、胜负条件和画面风格，
               就可以生成可预览、可修改、可发布分享的 H5 小应用和教学互动素材。
             </p>
 
@@ -143,7 +143,7 @@ export default async function HomePage() {
           </div>
           <div className="serviceInfoPanel">
             <div className="serviceInfoCopy">
-              <h3>奇点小匠提供什么服务？</h3>
+              <h3>妙点小匠提供什么服务？</h3>
               <p>
                 平台提供 AI 生成小应用、作品编辑、在线预览、发布分享、社区展示、试玩数据与点赞互动等服务。
                 当前主要用于创意表达、学习练习、课堂互动、活动宣传和青少年编程启蒙场景。
@@ -176,7 +176,7 @@ export default async function HomePage() {
           <p>欢迎扫码添加微信，告诉我你的使用场景和想做的互动内容。</p>
         </div>
         <div className="contactQrCard">
-          <img src="/assets/screenshots/qrcode.png" alt="奇点小匠微信二维码" loading="lazy" />
+          <img src="/assets/screenshots/qrcode.png" alt="妙点小匠微信二维码" loading="lazy" />
           <strong>扫码添加微信</strong>
           <small>内测反馈 / 教育合作 / 使用咨询</small>
         </div>

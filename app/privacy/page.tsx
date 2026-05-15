@@ -3,8 +3,8 @@ import LegalPage from "../legal/LegalPage";
 import { getLegalConfig } from "@/lib/legal";
 
 export const metadata: Metadata = {
-  title: "隐私政策 - 奇点小匠",
-  description: "奇点小匠隐私政策，说明我们如何收集、使用、分享和保护你的信息。",
+  title: "隐私政策 - 妙点小匠",
+  description: "妙点小匠隐私政策，说明我们如何收集、使用、分享和保护你的信息。",
 };
 
 export default function PrivacyPage() {
@@ -13,7 +13,7 @@ export default function PrivacyPage() {
   return (
     <LegalPage
       title="隐私政策"
-      summary="本隐私政策说明你在使用奇点小匠创建、编辑、发布和分享小应用时，我们会收集哪些信息、如何使用这些信息，以及你可以如何管理自己的数据。"
+      summary="本隐私政策说明你在使用妙点小匠创建、编辑、发布和分享小应用时，我们会收集哪些信息、如何使用这些信息，以及你可以如何管理自己的数据。"
       sections={[
         {
           title: "1. 适用范围",

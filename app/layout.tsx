@@ -4,9 +4,9 @@ import { SpeedInsights } from "@vercel/speed-insights/next";
 import { getLegalConfig } from "@/lib/legal";
 
 export const metadata: Metadata = {
-  title: "奇点小匠",
+  title: "妙点小匠",
   description:
-    "奇点小匠是一款 AI 互动小应用创作工具，提供自然语言生成 H5 小应用、在线预览修改、发布分享、社区展示和教学互动素材创作服务。",
+    "妙点小匠是一款 AI 互动小应用创作工具，提供自然语言生成 H5 小应用、在线预览修改、发布分享、社区展示和教学互动素材创作服务。",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

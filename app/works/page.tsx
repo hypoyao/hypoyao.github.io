@@ -17,8 +17,8 @@ export default async function WorksPage() {
   return (
     <main className="homePage worksPage">
       <nav className="homeNav" aria-label="作品页导航">
-        <a className="homeLogo" href="/" aria-label="奇点小匠首页">
-          <span>奇点小匠</span>
+        <a className="homeLogo" href="/" aria-label="妙点小匠首页">
+          <span>妙点小匠</span>
         </a>
         <div className="homeNavLinks">
           <a href="/">首页</a>

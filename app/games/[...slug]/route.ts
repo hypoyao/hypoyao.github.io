@@ -557,7 +557,7 @@ async function buildShellHtml(gameId: string) {
             var shareUrl = window.location.href;
             // 分享文案：按产品要求（含反引号包裹链接，便于复制到聊天）
             var bt = String.fromCharCode(96);
-            var shareText = "快来看看我在奇点小匠一句话创建的闪应用：" + appTitle + " 👉 " + bt + shareUrl + bt;
+            var shareText = "快来看看我在妙点小匠一句话创建的闪应用：" + appTitle + " 👉 " + bt + shareUrl + bt;
 
             // 1) 先复制文案（无论是否支持系统分享，都让用户一键可粘贴）
             try {
