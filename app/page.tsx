@@ -43,7 +43,8 @@ const serviceItems = [
 
 export default async function HomePage() {
   const games = await listGames();
-  const featuredGames = featuredGamesByEngagement(games);
+  // 首页作品墙保持三行以内，避免审核信息和服务说明被长列表挤到太深的位置。
+  const featuredGames = featuredGamesByEngagement(games).slice(0, 9);
   const legal = getLegalConfig();
 
   return (
@@ -78,6 +79,45 @@ export default async function HomePage() {
             <MiniProgramLaunchButton className="heroStartBtn" arrow>
               开始创作
             </MiniProgramLaunchButton>
+          </section>
+        </section>
+
+        <section className="homeSection" aria-label="all works">
+          <div className="sectionHead">
+            <h2 className="sectionTitle">精选作品</h2>
+            <a className="sectionMoreLink" href="/works">
+              全部作品
+            </a>
+          </div>
+          <section className="gameGrid homeWallGrid" aria-label="game list">
+            {featuredGames.map((g) => (
+              <article key={g.id} className="gameItem" aria-label={g.title}>
+                <a className="gameLink" href={toGameEntryHref(g.path)} aria-label={`打开作品：${g.title}`}>
+                  <CoverImage
+                    className="gameThumb"
+                    src={g.coverUrl}
+                    fallbackKey={g.id}
+                    alt={`${g.title}截图`}
+                    loading="lazy"
+                    decoding="async"
+                  />
+                  <div className="gameBody">
+                    <div className="gameName">{g.title}</div>
+                    <div className="gameDesc">{g.shortDesc}</div>
+                    {g.playCount >= 3 || g.likeCount >= 1 ? (
+                      <div className="gameStatRow" aria-label="作品数据">
+                        {g.playCount >= 3 ? <span className="gameStatChip">玩过 {g.playCount}</span> : null}
+                        {g.likeCount >= 1 ? <span className="gameStatChip">点赞 {g.likeCount}</span> : null}
+                      </div>
+                    ) : null}
+                    <div className="gameMetaRow">
+                      <img className="gameMetaAvatar" src={g.creator.avatarUrl} alt={`${g.creator.name}头像`} />
+                      <span className="gameMeta">创作者：{g.creator.name}</span>
+                    </div>
+                  </div>
+                </a>
+              </article>
+            ))}
           </section>
         </section>
 
@@ -126,45 +166,6 @@ export default async function HomePage() {
               </div>
             </dl>
           </div>
-        </section>
-
-        <section className="homeSection" aria-label="all works">
-          <div className="sectionHead">
-            <h2 className="sectionTitle">精选作品</h2>
-            <a className="sectionMoreLink" href="/works">
-              全部作品
-            </a>
-          </div>
-          <section className="gameGrid homeWallGrid" aria-label="game list">
-            {featuredGames.map((g) => (
-              <article key={g.id} className="gameItem" aria-label={g.title}>
-                <a className="gameLink" href={toGameEntryHref(g.path)} aria-label={`打开游戏：${g.title}`}>
-                  <CoverImage
-                    className="gameThumb"
-                    src={g.coverUrl}
-                    fallbackKey={g.id}
-                    alt={`${g.title}截图`}
-                    loading="lazy"
-                    decoding="async"
-                  />
-                  <div className="gameBody">
-                    <div className="gameName">{g.title}</div>
-                    <div className="gameDesc">{g.shortDesc}</div>
-                    {g.playCount >= 3 || g.likeCount >= 1 ? (
-                      <div className="gameStatRow" aria-label="游戏数据">
-                        {g.playCount >= 3 ? <span className="gameStatChip">玩过 {g.playCount}</span> : null}
-                        {g.likeCount >= 1 ? <span className="gameStatChip">点赞 {g.likeCount}</span> : null}
-                      </div>
-                    ) : null}
-                    <div className="gameMetaRow">
-                      <img className="gameMetaAvatar" src={g.creator.avatarUrl} alt={`${g.creator.name}头像`} />
-                      <span className="gameMeta">创作者：{g.creator.name}</span>
-                    </div>
-                  </div>
-                </a>
-              </article>
-            ))}
-          </section>
         </section>
       </section>
 

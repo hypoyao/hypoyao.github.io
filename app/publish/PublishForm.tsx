@@ -223,7 +223,7 @@ export default function PublishForm({ defaultCreatorId, sourceDraftId, lockId, i
           />
           {idLocked ? (
             <div style={{ fontSize: 12, color: "rgba(100,116,139,0.95)" }}>
-              {immutable ? "这是同一个已发布作品，id 不会改变。" : "发布后仍沿用当前游戏 id，只是状态从草稿变为已发布。"}
+              {immutable ? "这是同一个已发布作品，id 不会改变。" : "发布后仍沿用当前作品 id，只是状态从草稿变为已发布。"}
             </div>
           ) : null}
         </label>

@@ -181,7 +181,7 @@ const DEBUG_PROMPT = `
 // 需求澄清（第一步）：严禁生成代码，先给出 3 个可选方向 + 3-5 个关键反问。
 // 输出必须是 json_object，便于服务端持久化为“中间变量”。
 const CLARIFY_PROMPT = `
-你现在是“青少年友好”的小游戏需求小助手（面向小学/初中）。
+你现在是“青少年友好”的互动小应用需求小助手（面向小学/初中）。
 
 【铁律】
 1) 当用户的需求还不够明确时，严禁直接生成任何代码（包括 HTML/CSS/JS）。
@@ -189,7 +189,7 @@ const CLARIFY_PROMPT = `
 3) 你必须给出 3 个可选方案（A/B/C），让用户一键选方向。
 4) 你最多问 3-5 个问题（后端会限制轮次），问题要围绕：怎么玩、在哪玩、怎么操作、画风。
 5) 绝对不要出现“状态机/渲染方案/胜负判定/物理参数”等专业词。
-6) 你提出的方案和问题必须紧扣“用户最早的主题/目标”（例如：学英语口语、背单词、练听力等），不能跑题成通用小游戏。
+6) 你提出的方案和问题必须紧扣“用户最早的主题/目标”（例如：学英语口语、背单词、练听力等），不能跑题成通用小应用。
 7) 你可以参考【参考案例类型库】来保持方向一致；如果你不确定应该参考哪种类型，就一定要问用户选 A-F（选择题形式）。
 8) A/B/C 只能是同一主题下的“玩法/操作/难度/画风变体”，严禁替换核心主题、主角、学科或学习目标。
 9) 如果用户说的是“打地鼠小猫”，三个方案都必须仍然是打地鼠/小猫相关；如果是“英语口语”，三个方案都必须仍然是英语口语相关。
@@ -225,7 +225,7 @@ Schema：
 // 蓝图阶段（新）：一次输出“同源蓝图 + 协议/命名 + config”的分段文本协议，但严禁输出任何代码。
 // 目标：避免蓝图阶段因为严格 JSON 而跑飞；后端负责把文本协议解析成内部 design 对象。
 const BLUEPRINT_PROMPT = `
-你现在是“青少年友好”的小游戏设计师（面向小学/初中）。你要先做设计蓝图，再写代码（代码在下一步做）。
+你现在是“青少年友好”的互动小应用设计师（面向小学/初中）。你要先做设计蓝图，再写代码（代码在下一步做）。
 
 【铁律】
 1) 严禁输出任何代码（HTML/CSS/JS）。
@@ -239,7 +239,7 @@ const BLUEPRINT_PROMPT = `
 不要输出 JSON，不要输出 markdown 标题，不要写“下面是蓝图”之类说明。
 
 ===SECTION:meta===
-title=从用户需求关键词提炼出的稳定短标题（不要写“我的小游戏”这种泛标题）
+title=从用户需求关键词提炼出的稳定短标题（不要写“我的小应用”这种泛标题）
 shortDesc=...
 rules=...
 creatorName=...
@@ -279,7 +279,7 @@ sprites=元素1,元素2,元素3
 
 // 蓝图增量更新：基于“已有蓝图 design”，做最小改动更新并保持协议命名稳定。
 const BLUEPRINT_UPDATE_PROMPT = `
-你现在是“小游戏设计师（蓝图增量更新模式）”。我会给你：
+你现在是“互动小应用设计师（蓝图增量更新模式）”。我会给你：
 1) 当前已存在的蓝图 design（包含 meta/config/protocol/blueprint/assetsPlan）
 2) 用户新增需求
 
@@ -346,7 +346,7 @@ function pushDesignHistory(metaObj: any, prevDesign: any, note: string) {
 
 
 const CODEGEN_HTML_PROMPT = `
-你是“前端小游戏页面生成器”。你会收到一份已经确认好的蓝图 JSON（其中包含 meta/config/protocol/blueprint/assetsPlan）。
+你是“前端互动小应用页面生成器”。你会收到一份已经确认好的蓝图 JSON（其中包含 meta/config/protocol/blueprint/assetsPlan）。
 你的任务是先生成稳定的页面结构，只输出 index.html 纯文本。
 
 【硬性要求】
@@ -359,7 +359,7 @@ const CODEGEN_HTML_PROMPT = `
 `.trim();
 
 const CODEGEN_CSS_PROMPT = `
-你是“前端小游戏样式生成器”。你会收到蓝图 JSON 和已经生成好的 index.html。
+你是“前端互动小应用样式生成器”。你会收到蓝图 JSON 和已经生成好的 index.html。
 你的任务是只输出 style.css 纯文本，为当前页面结构补上稳定、清晰、适合儿童使用的布局与视觉样式。
 
 【硬性要求】
@@ -370,7 +370,7 @@ const CODEGEN_CSS_PROMPT = `
 5) 严禁依赖外部资源、远程字体或注入脚本。
 `.trim();
 const CODEGEN_CSS_CONTRACT_PROMPT = `
-你是“前端小游戏样式生成器”。你会收到蓝图 JSON、需求契约和 DOM 合同，但不会收到最终 index.html 原文。
+你是“前端互动小应用样式生成器”。你会收到蓝图 JSON、需求契约和 DOM 合同，但不会收到最终 index.html 原文。
 你的任务是只输出 style.css 纯文本，并严格按 DOM 合同里的 id/class 写样式。
 
 【硬性要求】
@@ -382,7 +382,7 @@ const CODEGEN_CSS_CONTRACT_PROMPT = `
 6) 严禁依赖外部资源、远程字体或注入脚本。
 `.trim();
 const CODEGEN_GAMEJS_PROMPT = `
-你是“前端小游戏逻辑生成器”。你会收到蓝图 JSON、已经生成好的 index.html 和 style.css。
+你是“前端互动小应用逻辑生成器”。你会收到蓝图 JSON、已经生成好的 index.html 和 style.css。
 你的任务是只输出 game.js 纯文本，实现核心玩法逻辑。
 
 【硬性要求】
@@ -393,7 +393,7 @@ const CODEGEN_GAMEJS_PROMPT = `
 5) 不要依赖外部库；尽量暴露稳定的 window.gameHooks（如 start/restart/setAutoStart/showCurrentSentence）。
 `.trim();
 const CODEGEN_GAMEJS_CONTRACT_PROMPT = `
-你是“前端小游戏逻辑生成器”。你会收到蓝图 JSON、需求契约和 DOM 合同，但不会收到最终 index.html 原文。
+你是“前端互动小应用逻辑生成器”。你会收到蓝图 JSON、需求契约和 DOM 合同，但不会收到最终 index.html 原文。
 你的任务是只输出 game.js 纯文本，实现核心玩法逻辑，并严格使用 DOM 合同中的元素 id。
 
 【硬性要求】
@@ -408,7 +408,7 @@ const CODEGEN_GAMEJS_CONTRACT_PROMPT = `
 `.trim();
 
 const CODEGEN_GAMEJS_SKELETON_PROMPT = `
-你是“前端小游戏逻辑骨架生成器”。你会收到蓝图 JSON、已经生成好的 index.html 和 style.css。
+你是“前端互动小应用逻辑骨架生成器”。你会收到蓝图 JSON、已经生成好的 index.html 和 style.css。
 你的任务是先输出一个结构完整、能通过基础语法检查的 game.js 骨架版本。
 
 【硬性要求】
@@ -425,7 +425,7 @@ const CODEGEN_GAMEJS_SKELETON_PROMPT = `
 `.trim();
 
 const CODEGEN_GAMEJS_COMPLETE_PROMPT = `
-你是“前端小游戏逻辑补全器”。你会收到蓝图 JSON、index.html、style.css，以及一份已经闭合完整的 game.js 骨架。
+你是“前端互动小应用逻辑补全器”。你会收到蓝图 JSON、index.html、style.css，以及一份已经闭合完整的 game.js 骨架。
 你的任务是在保留现有结构的前提下，把 game.js 补成完整可运行版本。
 
 【硬性要求】
@@ -1237,7 +1237,7 @@ function parseBlueprintSectionProtocol(
   const title =
     pick(metaKv, "title", "gameTitle", "name", "gameName", "titleText") ||
     String((fallbackMeta as any)?.title || "").trim() ||
-    "我的小游戏";
+    "我的小应用";
 
   const meta = safeMeta({
     title,
@@ -1330,14 +1330,14 @@ function normalizeGameTitle(raw: string) {
 function isPlaceholderGameTitle(raw: string) {
   const title = normalizeGameTitle(raw);
   if (/^g-\d{8}-[a-z0-9]+$/i.test(title)) return true;
-  return !title || /^(我的小游戏|未命名作品|未命名游戏|小游戏|游戏)$/i.test(title);
+  return !title || /^(我的小游戏|我的小应用|未命名作品|未命名游戏|未命名应用|小游戏|小应用|游戏|应用)$/i.test(title);
 }
 
 function deriveGameTitleFromPrompt(prompt: string) {
   const text = String(prompt || "").replace(/\r/g, "").trim();
   if (!text) return "";
-  const m1 = text.match(/(?:我想|想)?做(?:一个|个|一款)?\s*([^\n，。,.]{2,24}?)(?:小游戏|游戏|h5)/);
-  const m2 = text.match(/([^\n，。,.]{2,24}?)(?:小游戏|游戏)/);
+  const m1 = text.match(/(?:我想|想)?做(?:一个|个|一款)?\s*([^\n，。,.]{2,24}?)(?:小游戏|小应用|游戏|h5)/);
+  const m2 = text.match(/([^\n，。,.]{2,24}?)(?:小游戏|小应用|游戏)/);
   let picked = String(m1?.[1] || m2?.[1] || "").trim();
   if (!picked) {
     picked =
@@ -1352,7 +1352,7 @@ function deriveGameTitleFromPrompt(prompt: string) {
   if (!/(挑战|闯关|冒险|练习|训练|课堂|大作战|之旅|派对|工坊|乐园|任务|冲刺|计划|游戏)$/u.test(picked)) {
     if (/(口语|英语|单词|词汇|听力|跟读)/.test(picked)) picked += "挑战";
     else if (/(数学|口算|算术|加减|乘除)/.test(picked)) picked += "训练营";
-    else picked += "游戏";
+    else picked += "挑战";
   }
   return normalizeGameTitle(picked);
 }
@@ -1380,7 +1380,7 @@ function applyLockedGameTitle(metaObj: any, options: { preferredTitle?: string; 
     lockedTitle ||
     normalizeGameTitle(options.preferredTitle || "") ||
     deriveGameTitleFromPrompt(options.fallbackPrompt || "") ||
-    "我的小游戏";
+    "我的小应用";
   const titleSource = String(gen.titleSource || options.source || (lockedTitle ? "existing" : "blueprint")).trim() || "blueprint";
   return {
     ...base,
@@ -1573,7 +1573,7 @@ function buildRequirementContract(
     String(seedPrompt || latestPrompt || "").trim();
   const mustHave = inferRequirementMustHaves(seedPrompt, latestPrompt, design);
   const forbidden = inferRequirementForbidden(seedPrompt, latestPrompt, design);
-  // “有分数/得分反馈”是大多数小游戏的基础能力，不应因此升级到慢速两步 JS。
+  // “有分数/得分反馈”是大多数互动作品的基础能力，不应因此升级到慢速两步 JS。
   // 只有跨设备能力、学习进度、语音/录音、强状态流或回合制对战，才走复杂链。
   const complexityText = [seedPrompt, latestPrompt, gameplay, mustHave.join("\n")].join("\n");
   const complexity: "simple" | "complex" =
@@ -1583,7 +1583,7 @@ function buildRequirementContract(
       ? "complex"
       : "simple";
   return {
-    topic: String((design as any)?.meta?.title || seedPrompt || latestPrompt || "我的小游戏").trim(),
+    topic: String((design as any)?.meta?.title || seedPrompt || latestPrompt || "我的小应用").trim(),
     gameplay,
     platform: String((design as any)?.config?.platform || "both").trim() || "both",
     genreId: profile.id,
@@ -1867,7 +1867,11 @@ function looksLikeStarterDraft(indexHtml: string, styleCss: string, gameJs: stri
   const css = String(styleCss || "");
   const js = String(gameJs || "");
   if (!html.trim() || !css.trim() || !js.trim()) return false;
-  const htmlSignals = [/<title>我的小游戏<\/title>/, /在左侧对话生成\/修改这个游戏。/, /<div id=['"]app['"]/].every((re) => re.test(html));
+  const htmlSignals = [
+    /<title>我的(?:小游戏|小应用)<\/title>/,
+    /在左侧对话生成\/修改这个(?:游戏|应用)。/,
+    /<div id=['"]app['"]/,
+  ].every((re) => re.test(html));
   const cssSignals = [/linear-gradient\(180deg,#f8fafc,#eef2ff\)/, /#app\{padding:14px/].every((re) => re.test(css));
   const jsSignals = [/准备就绪\s*✅/, /document\.getElementById\(['"]app['"]\)/].every((re) => re.test(js));
   return htmlSignals && cssSignals && jsSignals;
@@ -2414,7 +2418,7 @@ function createDraftStore(gameId: string, options?: { enabled?: boolean }) {
 function coderPrompt(blueprint: any, filePath: string, isQuality: boolean) {
   const bp = JSON.stringify(blueprint || {}, null, 2);
   return `
-你是“程序员（Coder）”。你将根据架构师给出的蓝图，为小游戏生成指定文件的最终内容。
+你是“程序员（Coder）”。你将根据架构师给出的蓝图，为互动小应用生成指定文件的最终内容。
 
 【通用要求】
 1) 只输出合法 JSON，不要输出 Markdown/解释文字。
@@ -4105,10 +4109,10 @@ export async function POST(req: Request) {
             if (!seedPromptFromMeta && !firstNonCommandUser && userIntent.startsWith("@")) {
               const finalObj = {
                 assistant:
-                  "我还不知道你想做什么小游戏。请先用一句话告诉我主题，例如：\n" +
-                  "- 做一个学英语口语的小游戏（跟读/闯关）\n" +
-                  "- 做一个背单词闯关小游戏\n" +
-                  "- 做一个数学口算小游戏\n",
+                  "我还不知道你想做什么小应用。请先用一句话告诉我主题，例如：\n" +
+                  "- 做一个学英语口语的小应用（跟读/闯关）\n" +
+                  "- 做一个背单词闯关小应用\n" +
+                  "- 做一个数学口算小应用\n",
                 meta: readMeta,
                 files: [] as any[],
               };

@@ -44,8 +44,8 @@ export default async function PublishPage({
       <main className="wrap">
         <section className="card homeCard createBento">
           <header className="header">
-            <h1>发布游戏</h1>
-            <p className="desc">需要先登录后才能发布游戏到首页。</p>
+            <h1>发布小应用</h1>
+            <p className="desc">需要先登录后才能发布作品到首页。</p>
           </header>
           <div className="actions">
             <a className="btn" href="/login">

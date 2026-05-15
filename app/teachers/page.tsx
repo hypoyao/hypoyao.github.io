@@ -89,7 +89,7 @@ export default async function HomePage() {
             教学<span>互动素材</span>和<span>小应用</span>
           </h1>
           <p>
-            面向老师、学校与教育机构，也适合学生自由创作。内测期间开放免费使用，输入一个想法，即可生成课堂互动、知识闯关、练习游戏与分享作品。
+            面向老师、学校与教育机构，也适合学生自由创作。内测期间开放免费使用，输入一个想法，即可生成课堂互动、知识闯关、练习互动与分享作品。
           </p>
           <div className="heroBetaBanner" role="note">
             <strong>内测福利</strong>
@@ -126,7 +126,7 @@ export default async function HomePage() {
                 <img src="/assets/avatars/user.svg" alt="" />
               </div>
               <div className="productTabs">
-                {["全部", "课堂互动", "知识闯关", "练习游戏", "活动页面"].map((x, i) => (
+                {["全部", "课堂互动", "知识闯关", "练习互动", "活动页面"].map((x, i) => (
                   <span key={x} className={i === 0 ? "active" : ""}>
                     {x}
                   </span>
@@ -287,7 +287,7 @@ export default async function HomePage() {
           <section className="gameGrid" aria-label="game list">
             {showcasedGames.map((g) => (
               <article key={g.id} className="gameItem" aria-label={g.title}>
-                <a className="gameLink" href={toGameEntryHref(g.path)} aria-label={`打开游戏：${g.title}`}>
+                <a className="gameLink" href={toGameEntryHref(g.path)} aria-label={`打开作品：${g.title}`}>
                   <CoverImage
                     className="gameThumb"
                     src={g.coverUrl}
@@ -300,7 +300,7 @@ export default async function HomePage() {
                     <div className="gameName">{g.title}</div>
                     <div className="gameDesc">{g.shortDesc}</div>
                     {g.playCount >= 3 || g.likeCount >= 1 ? (
-                      <div className="gameStatRow" aria-label="游戏数据">
+                      <div className="gameStatRow" aria-label="作品数据">
                         {g.playCount >= 3 ? <span className="gameStatChip">玩过 {g.playCount}</span> : null}
                         {g.likeCount >= 1 ? <span className="gameStatChip">点赞 {g.likeCount}</span> : null}
                       </div>

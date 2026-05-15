@@ -38,7 +38,7 @@ export default async function WorksPage() {
           <section className="gameGrid worksGameGrid" aria-label="game list">
             {sortedGames.map((g) => (
               <article key={g.id} className="gameItem" aria-label={g.title}>
-                <a className="gameLink" href={toGameEntryHref(g.path)} aria-label={`打开游戏：${g.title}`}>
+                <a className="gameLink" href={toGameEntryHref(g.path)} aria-label={`打开作品：${g.title}`}>
                   <CoverImage
                     className="gameThumb"
                     src={g.coverUrl}
@@ -51,7 +51,7 @@ export default async function WorksPage() {
                     <div className="gameName">{g.title}</div>
                     <div className="gameDesc">{g.shortDesc}</div>
                     {g.playCount >= 3 || g.likeCount >= 1 ? (
-                      <div className="gameStatRow" aria-label="游戏数据">
+                      <div className="gameStatRow" aria-label="作品数据">
                         {g.playCount >= 3 ? <span className="gameStatChip">玩过 {g.playCount}</span> : null}
                         {g.likeCount >= 1 ? <span className="gameStatChip">点赞 {g.likeCount}</span> : null}
                       </div>

@@ -975,8 +975,8 @@ export default function CreateStudio({
     } else {
       const ok =
         type === "new"
-          ? window.confirm("确定新建一个游戏吗？\n\n当前游戏不会丢失，你可以在“我的游戏”里再切回来。")
-          : window.confirm("确定删除当前游戏吗？\n\n删除后无法恢复。");
+          ? window.confirm("确定新建一个小应用吗？\n\n当前作品不会丢失，你可以在“我的应用”里再切回来。")
+          : window.confirm("确定删除当前作品吗？\n\n删除后无法恢复。");
       if (!ok) return;
     }
     if (opMenuRef.current) opMenuRef.current.open = false;
@@ -2232,7 +2232,7 @@ export default function CreateStudio({
       <div className="createTopBar" aria-label="tools">
         <div className="createTopLeft">
           <label className="createTopInline">
-            <span className="createTopLabel">我的游戏</span>
+            <span className="createTopLabel">我的应用</span>
             <select
               className="restInput"
               value={gameId}
@@ -2247,11 +2247,11 @@ export default function CreateStudio({
                 if (gid) updatePreviewUrl(`${entryOf(gid)}?t=${encodeURIComponent(nowId())}`, { enable: true });
               }}
               disabled={uiBusy}
-              aria-label="选择历史游戏"
+              aria-label="选择历史作品"
               style={{ padding: "8px 10px", fontSize: 13, fontWeight: 900 }}
             >
-              <option value="__new__">＋ 新建游戏</option>
-              {projects.length ? null : <option value="">（暂无历史游戏）</option>}
+              <option value="__new__">＋ 新建应用</option>
+              {projects.length ? null : <option value="">（暂无历史作品）</option>}
               {projects.map((p) => (
                 <option key={p.gameId} value={p.gameId}>
                   {(p.title && p.title.trim()) ? p.title.trim() : p.gameId}

@@ -331,7 +331,7 @@ async function buildShellHtml(gameId: string) {
   const safeLikeCount = String(likeCount || 0);
   const engagementHtml = isPublished
     ? `<div class="engageRow">
-        <div class="engageStats" aria-label="游戏数据">
+        <div class="engageStats" aria-label="作品数据">
           <span class="engageBadge">玩过 <strong id="playCount">${safePlayCount}</strong></span>
           <span class="engageBadge">点赞 <strong id="likeCount">${safeLikeCount}</strong></span>
         </div>
@@ -410,13 +410,13 @@ async function buildShellHtml(gameId: string) {
 </head>
 <body>
   <main class="wrap">
-    <section class="gameCard" aria-label="game">
+    <section class="gameCard" aria-label="作品预览">
       <div class="bar">
         <div class="barTitle">${safeTitle}</div>
         <div class="barActions">
           ${
             isPublished
-              ? `<button id="shareIconBtn" class="shareIconBtn" type="button" title="分享游戏" aria-label="分享游戏">
+              ? `<button id="shareIconBtn" class="shareIconBtn" type="button" title="分享作品" aria-label="分享作品">
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <circle cx="18" cy="5.5" r="2.5" stroke="currentColor" stroke-width="2"/>
               <circle cx="6" cy="12" r="2.5" stroke="currentColor" stroke-width="2"/>
@@ -428,7 +428,7 @@ async function buildShellHtml(gameId: string) {
           </button>`
               : ""
           }
-          <a href="${escHtml(rawIndex)}" target="_blank" rel="noopener noreferrer" title="在新标签页打开游戏" aria-label="在新标签页打开游戏">
+          <a href="${escHtml(rawIndex)}" target="_blank" rel="noopener noreferrer" title="在新标签页打开作品" aria-label="在新标签页打开作品">
             <!-- 更接近“在新窗口打开”的标准图标：方框 + 右上角外开箭头 -->
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path
