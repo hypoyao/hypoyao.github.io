@@ -303,7 +303,12 @@ function firstPromptFromPromptMd(content: string) {
 
 function isSeedPromptPlaceholder(text: string) {
   const compact = String(text || "").replace(/\s+/g, "").trim();
-  return compact === "我想做一个什么小游戏呢？" || compact === "我想做一个什么小游戏呢";
+  return (
+    compact === "我想做一个什么小游戏呢？" ||
+    compact === "我想做一个什么小游戏呢" ||
+    compact === "我想做一个什么小应用呢？" ||
+    compact === "我想做一个什么小应用呢"
+  );
 }
 
 export async function GET(req: Request) {

@@ -60,7 +60,7 @@ export default function HomePromptLauncher() {
           className="heroInput"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="帮我生成一个小学英语单词闯关小游戏"
+          placeholder="帮我生成一个小学英语单词闯关小应用"
           autoComplete="off"
           name="prompt"
         />

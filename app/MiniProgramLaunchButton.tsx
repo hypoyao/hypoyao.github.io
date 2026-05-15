@@ -55,7 +55,7 @@ export default function MiniProgramLaunchButton({
 
   return (
     <>
-      <a className={className} href={toCreateUrl(prompt)} aria-label="开始创作小游戏" onClick={onClick}>
+      <a className={className} href={toCreateUrl(prompt)} aria-label="开始创作小应用" onClick={onClick}>
         {children}
         {arrow ? <span aria-hidden="true">→</span> : null}
       </a>

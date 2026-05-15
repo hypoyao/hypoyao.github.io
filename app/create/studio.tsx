@@ -106,7 +106,12 @@ function hasRenderableMessageContent(content: unknown) {
 
 function isSeedPromptPlaceholder(content: unknown) {
   const compact = String(content || "").replace(/\s+/g, "").trim();
-  return compact === "我想做一个什么小游戏呢？" || compact === "我想做一个什么小游戏呢";
+  return (
+    compact === "我想做一个什么小游戏呢？" ||
+    compact === "我想做一个什么小游戏呢" ||
+    compact === "我想做一个什么小应用呢？" ||
+    compact === "我想做一个什么小应用呢"
+  );
 }
 
 function isDisplayableChatMessage(m: any) {
@@ -1009,7 +1014,7 @@ export default function CreateStudio({
 
   // 注意：messages 里不放 system；发送给后端时会自动拼接 systemPrompt
   const [messages, setMessages] = useState<ChatMsg[]>(() => [
-    { role: "assistant", content: "你好！把你想做的小游戏告诉我吧（玩法、按钮、胜负条件、画面风格）。" },
+    { role: "assistant", content: "你好！把你想做的小应用告诉我吧（玩法、按钮、目标、画面风格）。" },
   ]);
 
   const viewMessages = useMemo(
@@ -1102,7 +1107,7 @@ export default function CreateStudio({
           setMessages(nextMsgs);
           chatOwnerGameIdRef.current = gameId;
         } else if (!saved?.messages?.length) {
-          setMessages([{ role: "assistant", content: "好耶！我们从一个全新的小游戏开始吧～你想做什么？" }]);
+          setMessages([{ role: "assistant", content: "好耶！我们从一个全新的小应用开始吧～你想做什么？" }]);
           chatOwnerGameIdRef.current = gameId;
         }
       } catch {
@@ -1196,7 +1201,7 @@ export default function CreateStudio({
   }
 
   async function ensureSeed(gid: string) {
-    // 初始化该小游戏文件（seed 模式下 index.html 不会覆盖已存在内容）
+    // 初始化该小应用文件（seed 模式下 index.html 不会覆盖已存在内容）
     const r = await creatorFetch("/api/creator/write", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1209,9 +1214,9 @@ export default function CreateStudio({
             content:
               "<!doctype html><html lang='zh-CN'><head><meta charset='UTF-8'/>" +
               "<meta name='viewport' content='width=device-width,initial-scale=1.0'/>" +
-              "<title>我的小游戏</title><link rel='stylesheet' href='./style.css'/>" +
+              "<title>我的小应用</title><link rel='stylesheet' href='./style.css'/>" +
               "</head><body><main class='wrap'><section class='card'>" +
-              "<header class='header'><h1>我的小游戏</h1><p class='desc'>在左侧对话生成/修改这个游戏。</p></header>" +
+              "<header class='header'><h1>我的小应用</h1><p class='desc'>在左侧对话生成/修改这个应用。</p></header>" +
               "<div id='app' class='card' style='margin-top:10px'></div>" +
               "</section></main><script src='./game.js'></script></body></html>",
           },
@@ -1230,7 +1235,7 @@ export default function CreateStudio({
           },
           {
             path: "prompt.md",
-            content: "我想做一个什么小游戏呢？\n\n（你可以在左边对 AI 说：我想做一个……）\n",
+            content: "我想做一个什么小应用呢？\n\n（你可以在左边对 AI 说：我想做一个……）\n",
           },
         ],
       }),
@@ -1274,7 +1279,7 @@ export default function CreateStudio({
     const baseAssistant: ChatMsg[] = [
       {
         role: "assistant",
-        content: "好耶！我们从一个全新的小游戏开始吧～你想做什么？",
+        content: "好耶！我们从一个全新的小应用开始吧～你想做什么？",
       },
     ];
 
@@ -2132,7 +2137,7 @@ export default function CreateStudio({
       const type = e?.detail?.type;
       if (type === "new") {
         (async () => {
-          setMessages([{ role: "assistant", content: "好耶！我们从一个全新的小游戏开始吧～你想做什么？" }]);
+          setMessages([{ role: "assistant", content: "好耶！我们从一个全新的小应用开始吧～你想做什么？" }]);
           setMsg("");
           try {
             await newGame();
@@ -2209,7 +2214,7 @@ export default function CreateStudio({
             const gid = await newGame();
             void refreshProjects().catch(() => null);
             chatOwnerGameIdRef.current = gid;
-            setMessages([{ role: "assistant", content: "我帮你新建了一个空白小游戏～你想做什么？" }]);
+            setMessages([{ role: "assistant", content: "我帮你新建了一个空白小应用～你想做什么？" }]);
           } catch (err: any) {
             setMsg(`删除失败：${err?.message || "未知错误"}`);
           } finally {

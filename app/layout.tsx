@@ -5,7 +5,8 @@ import { getLegalConfig } from "@/lib/legal";
 
 export const metadata: Metadata = {
   title: "奇点小匠",
-  description: "用 AI 对话，让创意成真。把想法做成可分享的应用与互动作品。",
+  description:
+    "奇点小匠是一款 AI 互动小应用创作工具，提供自然语言生成 H5 小应用、在线预览修改、发布分享、社区展示和教学互动素材创作服务。",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -24,7 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* 复用原有静态样式（位于 public/） */}
         {/* 注意：public 下的 css 可能被浏览器/CDN 缓存；这里加版本号方便样式立即生效 */}
         <link rel="stylesheet" href="/styles.css?v=21" />
-        <link rel="stylesheet" href="/home.css?v=31" />
+        <link rel="stylesheet" href="/home.css?v=32" />
         <link rel="stylesheet" href="/creators.css?v=22" />
         <link rel="stylesheet" href="/create.css?v=31" />
       </head>

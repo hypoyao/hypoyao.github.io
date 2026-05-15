@@ -49,9 +49,9 @@ export async function POST(req: Request) {
     const indexHtml =
       "<!doctype html><html lang='zh-CN'><head><meta charset='UTF-8'/>" +
       "<meta name='viewport' content='width=device-width,initial-scale=1.0'/>" +
-      "<title>我的小游戏</title><link rel='stylesheet' href='./style.css'/>" +
+      "<title>我的小应用</title><link rel='stylesheet' href='./style.css'/>" +
       "</head><body><main class='wrap'><section class='card'>" +
-      "<header class='header'><h1>我的小游戏</h1><p class='desc'>在左侧对话生成/修改这个游戏。</p></header>" +
+      "<header class='header'><h1>我的小应用</h1><p class='desc'>在左侧对话生成/修改这个应用。</p></header>" +
       "<div id='app' class='card' style='margin-top:10px'></div>" +
       "</section></main><script src='./game.js'></script></body></html>";
     const styleCss =
@@ -61,7 +61,7 @@ export async function POST(req: Request) {
     const gameJs =
       "(()=>{const el=document.getElementById('app');" +
       "if(!el) return; el.innerHTML=\"<div style='font-weight:900'>准备就绪 ✅</div>\";})();";
-    const promptMd = "我想做一个什么小游戏呢？\n\n（你可以在左边对 AI 说：我想做一个……）\n";
+    const promptMd = "我想做一个什么小应用呢？\n\n（你可以在左边对 AI 说：我想做一个……）\n";
 
     await db.execute(sql`
       insert into creator_draft_files (game_id, path, content)

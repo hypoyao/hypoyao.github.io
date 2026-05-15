@@ -7,7 +7,7 @@ export const LEGAL_EFFECTIVE_DATE = "2026-04-28";
 export function getLegalConfig() {
   const currentYear = new Date().getFullYear();
   const siteName = "奇点小匠";
-  const operatorName = cleanEnv(process.env.NEXT_PUBLIC_OPERATOR_NAME) || "广州奇点小匠有限责任公司";
+  const operatorName = cleanEnv(process.env.NEXT_PUBLIC_OPERATOR_NAME) || "广州妙点小匠人工智能科技有限责任公司";
   const contactEmail = cleanEnv(process.env.NEXT_PUBLIC_LEGAL_EMAIL) || "hypoyao@qq.com";
   const governingLaw = cleanEnv(process.env.NEXT_PUBLIC_GOVERNING_LAW) || "中华人民共和国法律";
   const disputeForum = cleanEnv(process.env.NEXT_PUBLIC_DISPUTE_FORUM) || "广州市有管辖权的人民法院";

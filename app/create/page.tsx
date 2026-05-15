@@ -15,18 +15,18 @@ function WechatMiniProgramGuide() {
       <div className="createPageMarker" aria-hidden="true" />
       <main className="wrap createWrap">
         <section className="card createCard miniProgramGuideCard" aria-label="小程序创作引导">
-          <div className="miniProgramGuideBadge">微信内创作请使用小程序</div>
-          <h1>打开「妙点小匠」小程序继续创作</h1>
+          <div className="miniProgramGuideBadge">长按识别，使用小程序创作</div>
+          <h1>在「妙点小匠」小程序里继续创作</h1>
           <p>
-            为了保证生成、预览和发布体验稳定，微信浏览器内不再进入 Web 创作台。请长按识别下方小程序码，在小程序里开始创作。
+            请长按识别下方小程序码，进入后就可以继续生成、预览、修改和发布你的小应用。
           </p>
           <div className="miniProgramCodeBox">
             <img src="/assets/screenshots/miniprogram-code.jpg" alt="妙点小匠小程序码" />
           </div>
           <div className="miniProgramGuideTips">
-            <span>长按图片</span>
-            <span>识别小程序码</span>
-            <span>进入后开始创作</span>
+            <span>长按识别</span>
+            <span>打开小程序</span>
+            <span>开始创作</span>
           </div>
           <a className="miniProgramBackHome" href="/">
             返回首页
@@ -65,7 +65,7 @@ export default async function CreatePage({
         <section className="card createCard createBento">
           <header className="header">
             <div className="homeHeaderRow">
-              <h1>创作我的游戏</h1>
+              <h1>创作我的小应用</h1>
               <div className="homeHeaderActions">
                 <TopActions />
               </div>

@@ -20,7 +20,7 @@ const useCases = [
     title: "学生",
     tone: "blue",
     image: "🧑‍💻",
-    points: ["自己动手做小游戏", "分享给同学和朋友", "展示创意与作品", "边玩边学，提升兴趣"],
+    points: ["自己动手做小应用", "分享给同学和朋友", "展示创意与作品", "边玩边学，提升兴趣"],
   },
 ];
 
@@ -35,7 +35,7 @@ const generationTypes = [
 
 const creationSteps = [
   { no: "1", title: "说出需求", desc: "输入一句自然语言描述", icon: "💬" },
-  { no: "2", title: "AI 自动生成", desc: "快速生成互动素材或小游戏", icon: "🤖" },
+  { no: "2", title: "AI 自动生成", desc: "快速生成互动素材或小应用", icon: "🤖" },
   { no: "3", title: "一键分享", desc: "发布给学生、同学或活动参与者", icon: "🔗" },
 ];
 
@@ -86,7 +86,7 @@ export default async function HomePage() {
           <h1>
             一句话，生成
             <br />
-            教学<span>互动素材</span>和<span>小游戏</span>
+            教学<span>互动素材</span>和<span>小应用</span>
           </h1>
           <p>
             面向老师、学校与教育机构，也适合学生自由创作。内测期间开放免费使用，输入一个想法，即可生成课堂互动、知识闯关、练习游戏与分享作品。
